@@ -3123,10 +3123,23 @@ function tokenSetsEqual(a, b) {
   return true;
 }
 
+// Nombre de mots qui diffèrent entre deux ensembles (dans un sens ou dans l'autre) -- contrairement
+// à une distance de Levenshtein sur la chaîne entière, un mot ENTIER en trop (ex. nom de mariage/
+// double nom de famille : "HUYNH CHARLIER Isabelle" vs "Isabelle Huynh") ne coûte qu'1 ici, pas la
+// longueur du mot en caractères -- retrouvé le 23/07/2026 après un vrai cas manqué par la seule
+// distance de Levenshtein (trop chère pour un mot ajouté, même si la personne est évidemment la même).
+function tokenSetDiffSize(a, b) {
+  let diff = 0;
+  for (const t of a) if (!b.has(t)) diff++;
+  for (const t of b) if (!a.has(t)) diff++;
+  return diff;
+}
+
 // Cherche la personne de state.staff correspondant à un nom brut venu d'ARI. "exact" = mêmes mots,
 // peu importe l'ordre/la casse/les accents/les tirets. "fuzzy" = rien d'exact mais une personne est
-// à une distance d'édition <= 2 (typo probable) -- à confirmer manuellement avant d'être appliqué.
-// "none" = rien d'assez proche, ignoré silencieusement (juste listé pour information).
+// assez proche pour être proposée à confirmation -- soit par mot(s) entier(s) en trop/manquant(s)
+// (nom de mariage, second nom de famille...), soit par une petite distance d'édition classique
+// (typo). "none" = rien d'assez proche, ignoré silencieusement (juste listé pour information).
 function matchAriNameToStaff(ariRawName) {
   const ariTokens = ariNameTokenSet(ariRawName);
   if (ariTokens.size === 0) return { status: "none" };
@@ -3140,11 +3153,23 @@ function matchAriNameToStaff(ariRawName) {
   const ariSorted = [...ariTokens].sort().join(" ");
   let best = null;
   state.staff.forEach((person) => {
-    const personSorted = [...ariNameTokenSet(`${person.prenom} ${person.nom}`)].sort().join(" ");
-    const dist = levenshteinDistance(ariSorted, personSorted);
-    if (!best || dist < best.dist) best = { person, dist };
+    const personTokens = ariNameTokenSet(`${person.prenom} ${person.nom}`);
+    const tokenDiff = tokenSetDiffSize(ariTokens, personTokens);
+    const charDist = levenshteinDistance(ariSorted, [...personTokens].sort().join(" "));
+    // Le raccourci "mot(s) entier(s) en trop/manquant(s)" n'est fiable que si les DEUX noms ont au
+    // moins 2 mots distincts -- sinon un nom réduit à un seul mot unique (ex. doublon prénom/nom
+    // "Virginie Virginie", une erreur de saisie déjà présente dans le personnel) matcherait à tort
+    // n'importe quel nom ARI contenant ce seul mot. Faux positif réel trouvé en testant le
+    // 23/07/2026 ("Guyenne Virginie" matchait "Virginie Virginie") -- corrigé par ce garde-fou.
+    const minTokenCount = Math.min(ariTokens.size, personTokens.size);
+    const tokenScore = minTokenCount >= 2 ? tokenDiff * 2 : Infinity;
+    // Un mot entier en trop/manquant compte pour 2 points de "distance équivalente" (arbitraire mais
+    // volontairement moins cher qu'un mot de 6+ lettres en Levenshtein) -- le score retenu est le
+    // meilleur des deux angles, pour capter aussi bien un mot ajouté qu'une simple faute de frappe.
+    const score = Math.min(tokenScore, charDist);
+    if (!best || score < best.score) best = { person, score, tokenDiff, charDist };
   });
-  if (best && best.dist <= 2) return { status: "fuzzy", person: best.person, distance: best.dist };
+  if (best && best.score <= 2) return { status: "fuzzy", person: best.person, distance: best.charDist, tokenDiff: best.tokenDiff };
   return { status: "none" };
 }
 
