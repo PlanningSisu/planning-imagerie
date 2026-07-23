@@ -1,0 +1,1192 @@
+:root {
+  /* Couleur = spécialité */
+  --spec-digestif-bg: #dcfce7;
+  --spec-digestif-border: #22c55e;
+  --spec-digestif-text: #14532d;
+  --spec-uro-bg: #dbeafe;
+  --spec-uro-border: #3b82f6;
+  --spec-uro-text: #1e3a8a;
+  --spec-gyneco-bg: #fce7f3;
+  --spec-gyneco-border: #ec4899;
+  --spec-gyneco-text: #9d174d;
+  --spec-thorax-bg: #fef9c3;
+  --spec-thorax-border: #eab308;
+  --spec-thorax-text: #713f12;
+  --spec-os-bg: #ffffff;
+  --spec-os-border: #64748b;
+  --spec-os-text: #1e293b;
+  --spec-none-bg: #f1f5f9;
+  --spec-none-border: #94a3b8;
+  --spec-none-text: #334155;
+
+  --border: #d1d5db;
+  --header-bg: #1f2937;
+  --header-text: #f9fafb;
+  --bg: #f8fafc;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  background: var(--bg);
+  color: #111827;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  background: var(--header-bg);
+  color: var(--header-text);
+  padding: 12px 20px;
+}
+
+.topbar h1 {
+  font-size: 18px;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.week-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.week-nav button {
+  background: #374151;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.week-nav button:hover { background: #4b5563; }
+
+/* Bouton "Aujourd'hui" (22/07/2026) -- .week-nav button fixe width/height à 30px pour les flèches
+   ← →, ne convient pas à un libellé texte : largeur auto + padding horizontal ici. */
+.week-nav button.btn-today {
+  width: auto;
+  height: auto;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.actions button {
+  background: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 12px;
+  margin-left: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.actions button:hover { background: #1d4ed8; }
+#btnReset { background: #6b7280; }
+#btnReset:hover { background: #4b5563; }
+.actions button.btn-accent { background: #7c3aed; }
+.actions button.btn-accent:hover { background: #6d28d9; }
+.actions button.btn-accent2 { background: #0d9488; }
+.actions button.btn-accent2:hover { background: #0f766e; }
+.actions button.btn-accent2.btn-active { background: #334155; }
+.actions button.btn-accent2.btn-active:hover { background: #1e293b; }
+.actions button.btn-accent3 { background: #b45309; }
+.actions button.btn-accent3:hover { background: #92400e; }
+.actions button.btn-accent3.btn-active { background: #334155; }
+.actions button.btn-accent3.btn-active:hover { background: #1e293b; }
+.actions button.btn-accent4 { background: #4338ca; }
+.actions button.btn-accent4:hover { background: #3730a3; }
+
+/* Fichier partagé (22/07/2026) -- statut affiché en permanence dans la topbar, à côté du bouton
+   "Fichier partagé", pour repérer d'un coup d'œil si la dernière modif a bien été écrite sur le
+   drive avant de fermer l'onglet. */
+.file-sync-status {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 9px;
+  border-radius: 6px;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+.file-sync-status.file-sync-disconnected { background: #374151; color: #d1d5db; }
+.file-sync-status.file-sync-ok { background: #065f46; color: #d1fae5; }
+.file-sync-status.file-sync-saving { background: #374151; color: #fbbf24; }
+.file-sync-status.file-sync-error { background: #7f1d1d; color: #fecaca; }
+.file-sync-status.file-sync-needs-permission { background: #78350f; color: #fde68a; }
+
+/* ---------- Modale Gestion Personnel ---------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px;
+  z-index: 100;
+}
+.modal-overlay.hidden { display: none; }
+
+.modal {
+  background: white;
+  border-radius: 10px;
+  width: 560px;
+  max-width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: white;
+  border-radius: 10px 10px 0 0;
+}
+.modal-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.modal-header .close-btn {
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 18px;
+  color: #6b7280;
+}
+
+.modal-body {
+  padding: 16px 20px 20px;
+}
+
+.btn-primary {
+  background: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+.btn-primary:hover { background: #1d4ed8; }
+
+.staff-form {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+}
+.staff-form h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.form-row label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+.form-row input,
+.form-row select {
+  padding: 7px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  font-family: inherit;
+}
+.form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.form-actions button {
+  border: none;
+  border-radius: 6px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+#formSubmit { background: #16a34a; color: white; }
+#formSubmit:hover { background: #15803d; }
+#formCancel { background: #e5e7eb; color: #1f2937; }
+#formCancel:hover { background: #d1d5db; }
+.form-error {
+  color: #b91c1c;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.staff-modal-section {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #64748b;
+  margin: 16px 0 6px;
+}
+.staff-modal-section:first-child { margin-top: 0; }
+
+.staff-modal-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+.staff-modal-spec {
+  font-size: 12px;
+  color: #64748b;
+  flex: 1;
+}
+.staff-modal-edit {
+  background: transparent;
+  border: 1px solid #93c5fd;
+  color: #1d4ed8;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.staff-modal-edit:hover {
+  background: #dbeafe;
+}
+.staff-modal-delete {
+  background: transparent;
+  border: 1px solid #fca5a5;
+  color: #b91c1c;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.staff-modal-delete:hover {
+  background: #fee2e2;
+}
+.staff-modal-empty {
+  color: #9ca3af;
+  font-size: 13px;
+  font-style: italic;
+}
+
+.staff-modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.btn-primary.btn-outline {
+  background: white;
+  color: #2563eb;
+  border: 1px solid #2563eb;
+}
+.btn-primary.btn-outline:hover {
+  background: #eff6ff;
+}
+
+.bulk-hint {
+  font-size: 12px;
+  color: #64748b;
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+#bulkText {
+  width: 100%;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  resize: vertical;
+}
+.bulk-preview-list {
+  margin-top: 12px;
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.bulk-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #f1f5f9;
+  cursor: pointer;
+  font-size: 13px;
+}
+.bulk-preview-row:last-child { border-bottom: none; }
+.bulk-preview-row:hover { background: #f8fafc; }
+.bulk-preview-duplicate { opacity: 0.55; }
+.bulk-preview-info {
+  font-size: 12px;
+  color: #64748b;
+}
+.bulk-ignored {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+.bulk-ignored pre {
+  white-space: pre-wrap;
+  font-size: 11px;
+  background: #f8fafc;
+  padding: 8px;
+  border-radius: 6px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+#bulkPreview > .btn-primary {
+  margin-top: 12px;
+}
+
+main {
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  align-items: flex-start;
+}
+
+.planning-column {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  background: white;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+/* ---------- Bandeau congés de la semaine (au-dessus du planning, 22/07/2026) ---------- */
+/* Ne montre que les personnes en congé la semaine affichée -- masqué entièrement (voir .hidden,
+   ajouté/retiré en JS par renderWeekCongesBar()) si personne n'est concerné, pour ne pas polluer
+   la vue le reste du temps. Réutilise volontairement les classes .conges-bar/.conges-day-mark de
+   la vue Congés (6.10) pour un rendu visuel identique. */
+.week-conges-bar {
+  background: white;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  overflow-x: auto;
+}
+.week-conges-table {
+  border-collapse: collapse;
+  width: auto;
+}
+.week-conges-table th, .week-conges-table td {
+  padding: 6px 10px;
+}
+.week-conges-corner {
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  white-space: nowrap;
+}
+.week-conges-person-header {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-align: center;
+}
+.week-conges-cell {
+  text-align: center;
+  vertical-align: middle;
+  min-width: 70px;
+}
+
+/* ---------- Zone de validation (moteur de règles, sous le planning) ---------- */
+
+.validation-zone {
+  background: white;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  display: flex;
+  overflow: hidden; /* pour que les fonds teintés des colonnes respectent le rayon arrondi */
+}
+.validation-col {
+  flex: 1;
+  min-width: 0;
+  padding: 14px 18px;
+}
+.validation-col-violations {
+  background: #fef2f2;
+  border-right: 1px solid var(--border);
+}
+.validation-col-recommendations {
+  background: #fefce8;
+}
+
+.validation-title {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.validation-title.violation-title { color: #b91c1c; }
+.validation-title.recommendation-title { color: #92400e; }
+
+.validation-ok {
+  font-size: 13px;
+  color: #15803d;
+  font-weight: 600;
+}
+.validation-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.validation-list li {
+  font-size: 13px;
+  color: #374151;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.validation-rg {
+  flex-shrink: 0;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.validation-rg.rg-violation {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+.validation-rg.rg-recommendation {
+  background: #fde68a;
+  color: #92400e;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 900px;
+}
+
+th, td {
+  border: 1px solid var(--border);
+  padding: 14px 10px;
+  vertical-align: top;
+}
+
+thead th {
+  background: #f1f5f9;
+  position: sticky;
+  top: 0;
+  font-size: 13px;
+}
+
+.day-header {
+  text-align: center;
+  font-weight: 700;
+  background: #e2e8f0 !important;
+}
+
+.day-header-label {
+  margin-bottom: 3px;
+}
+
+/* RG-015 : personnes de garde du jour, affichées sous le nom du jour. Chips en flux (pas de
+   glisser-déposer/retrait, contrairement aux pastilles assignées -- voir buildGardeChip()). */
+.day-header-garde {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  font-weight: 400;
+}
+
+.chip-garde {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+
+.creneau-header {
+  text-align: center;
+  font-size: 12px;
+  color: #475569;
+}
+
+.modalite-header {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.view-toggle-btn {
+  font: inherit;
+  font-weight: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.view-toggle-btn:hover {
+  text-decoration: underline;
+  color: #2563eb;
+}
+
+.activity-cell {
+  font-weight: 600;
+  font-size: 13px;
+  background: #f8fafc;
+  white-space: nowrap;
+  min-width: 90px;
+}
+
+.activity-cell.urgence {
+  background: #fee2e2;
+  color: #b91c1c;
+  border-color: #ef4444;
+}
+
+/* Vue Personnel (22/07/2026) : nom abrégé "P. Nom" -- colonne bien plus étroite que la colonne
+   activité de la vue Modalité (qui partage .activity-cell), pour que Vendredi tienne sans scroll
+   horizontal. Une classe à part plutôt que de réduire .activity-cell lui-même, pour ne pas
+   resserrer aussi les noms de modalités ("Scan U", "IRM 1.5 T"...) qui n'ont pas ce problème. */
+.person-name-cell {
+  min-width: 68px;
+}
+
+/* Regroupement visuel des deux lignes IRM : séparateur épais avec le reste,
+   séparateur normal (fin) entre les deux lignes du bloc. */
+tr.group-start td {
+  border-top: 3px solid #334155;
+}
+tr.group-end td {
+  border-bottom: 3px solid #334155;
+}
+
+.slot-cell {
+  min-width: 110px;
+  cursor: pointer;
+  transition: background 0.1s;
+  position: relative; /* nécessaire pour centrer .modalite-spec-label en absolu, voir plus bas */
+}
+.slot-cell:hover {
+  background: #f0f9ff;
+}
+.slot-cell.drag-over {
+  background: #dbeafe;
+  outline: 2px dashed #3b82f6;
+  outline-offset: -2px;
+}
+
+/* Fond = spécialité "propriétaire" de la vacation (structurel, voir vacationSpecKey). Mêmes teintes
+   que le fond des pastilles de spécialité (SPECIALITES[x].bg dans app.js) — assombri le 20/07/2026
+   à la demande de Samir (les valeurs très pâles d'origine étaient trop peu lisibles).
+   Spécificité (.slot-cell + classe) volontairement plus faible que :hover / .drag-over ci-dessus,
+   qui doivent rester visibles par-dessus. */
+.slot-cell.tint-digestif { background: #dcfce7; }
+.slot-cell.tint-uro { background: #dbeafe; }
+.slot-cell.tint-gyneco { background: #fce7f3; }
+.slot-cell.tint-thorax { background: #fef9c3; }
+.slot-cell.tint-os { background: #ffffff; }
+
+/* RG-010 : vacation fermée cette semaine (state.fermetures, hebdomadaire, distinct de la teinte
+   spécialité ci-dessus qui reste affichée en dessous). Placé après :hover/.drag-over/.tint-xxx dans
+   la feuille pour gagner sur eux à spécificité égale -- voir aussi la règle :hover dédiée plus bas. */
+.slot-cell.cell-closed {
+  background: #e2e8f0;
+  cursor: not-allowed;
+}
+.slot-cell.cell-closed:hover {
+  background: #e2e8f0;
+}
+.closed-mark {
+  display: block;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 700;
+  color: #111827;
+}
+
+/* Vue Modalité : rappel textuel de la spécialité "Os" (fond blanc, sinon invisible sur la page).
+   Centré (horizontal + vertical) dans la case via position absolue -- voir .slot-cell{position:relative}. */
+.modalite-spec-label {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 11px;
+  font-weight: 400;
+  color: #1e293b;
+}
+
+/* RG-011 : vacation "Os" non assignable (comportement identique à .cell-closed niveau interaction,
+   mais sans la croix -- le libellé "Os" suffit à signaler pourquoi). */
+.slot-cell.cell-os-blocked {
+  cursor: not-allowed;
+}
+.slot-cell.cell-os-blocked:hover {
+  background: #ffffff;
+}
+
+/* Vue Personnel (22/07/2026) : une personne en congé ou en repos de garde (RG-013) n'est plus
+   assignable ce jour-là -- même logique bloquante que .cell-closed/.cell-os-blocked (pas de clic,
+   pas de glisser-déposer). Rouge uniforme pour les deux statuts (changé le 22/07/2026, congé
+   n'a plus sa propre teinte jaune) -- cohérent avec .conges-day-mark, toute absence est rouge. */
+.slot-cell.cell-absence-blocked {
+  cursor: not-allowed;
+}
+.slot-cell.cell-absence-conge,
+.slot-cell.cell-absence-repos {
+  background: #fecaca;
+}
+.slot-cell.cell-absence-conge:hover,
+.slot-cell.cell-absence-repos:hover {
+  background: #fecaca;
+}
+.absence-label {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 11px;
+  font-weight: 600;
+  color: #1f2937;
+  white-space: nowrap;
+}
+
+/* RG-014 (22/07/2026, vue Modalité) : une personne assignée qui s'avère absente ce jour-là (congé
+   ou repos de garde) -- normalement empêché en amont par le glisser-déposer (voir .drop-rejected
+   plus bas), mais peut encore arriver via le popover d'ajout ou une donnée existante. Contour
+   rouge qui prime visuellement sur la teinte de spécialité de la case (.tint-xxx). */
+.slot-cell.cell-absence-violation {
+  outline: 3px solid #dc2626;
+  outline-offset: -3px;
+}
+/* Flash bref sur un glisser-déposer refusé (RG-014) -- signale que rien ne s'est passé plutôt
+   qu'un échec silencieux qui pourrait passer pour un bug. Retiré après 400ms en JS. */
+.slot-cell.drop-rejected {
+  background: #fecaca;
+}
+
+.chip.vacation-spec-tag {
+  border-radius: 4px;
+}
+.chip.vacation-spec-tag.fermeture-tag {
+  background: #111827;
+  border-color: #111827;
+  color: #ffffff;
+}
+
+.popover-select-option.fermeture-option {
+  background: #111827;
+  color: #ffffff;
+  font-weight: 600;
+}
+.popover-select-option.fermeture-option:hover {
+  background: #1f2937;
+}
+
+/* Réutilise le style de liste du popover-select, mais affichée en flux normal (pas de dropdown
+   flottant à ouvrir/fermer : ici la liste des 4 spécialités est toujours visible dans le popover). */
+.vacation-spec-options {
+  position: static;
+  box-shadow: none;
+  margin-top: 8px;
+}
+
+/* Regroupe séniors et internes sur deux lignes distinctes au sein d'une case. */
+.cell-group {
+  display: block;
+}
+.cell-group + .cell-group {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed #e2e8f0;
+}
+
+.chip {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  margin: 2px 3px 2px 0;
+  border: 1px solid;
+  white-space: nowrap;
+}
+/* Couleur = spécialité */
+.chip.spec-digestif { background: var(--spec-digestif-bg); border-color: var(--spec-digestif-border); color: var(--spec-digestif-text); }
+.chip.spec-uro { background: var(--spec-uro-bg); border-color: var(--spec-uro-border); color: var(--spec-uro-text); }
+.chip.spec-gyneco { background: var(--spec-gyneco-bg); border-color: var(--spec-gyneco-border); color: var(--spec-gyneco-text); }
+.chip.spec-thorax { background: var(--spec-thorax-bg); border-color: var(--spec-thorax-border); color: var(--spec-thorax-text); }
+.chip.spec-os { background: var(--spec-os-bg); border-color: var(--spec-os-border); color: var(--spec-os-text); }
+.chip.spec-none { background: var(--spec-none-bg); border-color: var(--spec-none-border); color: var(--spec-none-text); }
+
+/* Deux spécialités (internes spécialisés) : dégradé bicolore avec bordure/texte neutres,
+   le fond (linear-gradient) est fixé en inline style par chipVisual() en JS. */
+.chip.spec-split {
+  border-color: #64748b;
+  color: #1f2937;
+}
+
+/* Forme = grade : rectangle pour les séniors, arrondi (par défaut) pour les internes */
+.chip.rect {
+  border-radius: 4px;
+  font-weight: 700;
+}
+
+/* Étiquette de modalité (vue Personnel) : neutre, sauf urgences en rouge comme ailleurs. */
+.chip.modalite-tag {
+  border-radius: 4px;
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  color: #1f2937;
+}
+.chip.modalite-tag.urgence-tag {
+  background: #fee2e2;
+  border-color: #ef4444;
+  color: #b91c1c;
+}
+
+.chip .remove {
+  margin-left: 5px;
+  cursor: pointer;
+  font-weight: bold;
+  opacity: 0.6;
+}
+.chip .remove:hover { opacity: 1; }
+
+.empty-hint {
+  color: #9ca3af;
+  font-size: 11px;
+  font-style: italic;
+}
+
+#staffPanel {
+  width: 230px;
+  background: white;
+  border-radius: 10px;
+  padding: 14px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  flex-shrink: 0;
+}
+#staffPanel h2 {
+  font-size: 15px;
+  margin-top: 0;
+}
+/* Déplacée au-dessus du tableau principal (22/07/2026, avant dans #staffPanel) : reste accessible
+   même quand le panneau de droite est masqué (vue Personnel, voir #staffPanel.hidden plus bas) --
+   fond blanc + carte légère pour rester lisible au-dessus du tableau plutôt qu'un simple flottement
+   sur le fond de page, cohérent avec .week-conges-bar/.table-wrap juste en dessous. */
+.legend-top {
+  background: white;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  padding: 10px 14px;
+}
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.legend-chip {
+  cursor: pointer;
+  transition: box-shadow 0.1s, filter 0.1s;
+}
+.legend-chip:hover {
+  filter: brightness(0.96);
+}
+.legend-chip.active {
+  box-shadow: 0 0 0 2px #1f2937;
+  font-weight: 700;
+}
+.legend-reset {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: #2563eb;
+  cursor: pointer;
+  margin-top: 2px;
+}
+.legend-reset:hover {
+  text-decoration: underline;
+}
+#staffList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 13px;
+}
+#staffList li {
+  padding: 4px 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+#staffList li.staff-draggable {
+  cursor: grab;
+}
+#staffList li.staff-draggable:active {
+  cursor: grabbing;
+}
+#staffList li.specialite-divider {
+  border-top: 1px dashed #cbd5e1;
+  margin-top: 4px;
+  padding-top: 8px;
+}
+
+/* En-tête de premier niveau (Séniors / Internes) : pliable, pas de cadre. */
+#staffList li.staff-group-header {
+  border-bottom: none;
+  padding: 12px 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #64748b;
+  cursor: pointer;
+  user-select: none;
+}
+#staffList li.staff-group-header:hover {
+  color: #1f2937;
+}
+#staffList li.staff-group-header:first-child {
+  padding-top: 0;
+}
+
+/* Sous-bloc encadré en pointillés (ex: Spécialisés / Socle), pliable. */
+#staffList li.staff-subblock-header {
+  cursor: pointer;
+  user-select: none;
+  margin-top: 8px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #475569;
+  background: #f8fafc;
+  border: 1px dashed #94a3b8;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+}
+#staffList li.staff-subblock-header:hover {
+  background: #f1f5f9;
+}
+#staffList li.staff-subblock-header.subblock-solo {
+  border-bottom: 1px dashed #94a3b8;
+  border-radius: 6px;
+}
+#staffList li.subblock-item {
+  border-left: 1px dashed #94a3b8;
+  border-right: 1px dashed #94a3b8;
+  border-bottom: none;
+  padding-left: 10px;
+}
+#staffList li.subblock-item.subblock-end {
+  border-bottom: 1px dashed #94a3b8;
+  border-radius: 0 0 6px 6px;
+  padding-bottom: 6px;
+}
+
+.popover {
+  position: absolute;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+  padding: 10px;
+  z-index: 50;
+  min-width: 220px;
+}
+.popover.hidden { display: none; }
+
+/* Liste déroulante personnalisée (remplace un <select> natif pour permettre le bicolore
+   prénom/nom des internes à double spécialité, impossible dans un <option> natif). */
+.popover-select {
+  position: relative;
+  margin-top: 6px;
+}
+.popover-select-trigger {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: white;
+  text-align: left;
+  font-size: 13px;
+  color: #6b7280;
+  cursor: pointer;
+}
+.popover-select-trigger:hover {
+  border-color: #94a3b8;
+}
+.popover-select-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.15);
+  z-index: 60;
+}
+.popover-select-list.hidden { display: none; }
+.popover-select-option {
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.popover-select-option:hover {
+  background: #f1f5f9;
+}
+.popover-select-empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  font-style: italic;
+  color: #9ca3af;
+}
+.popover-assigned {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.popover .close-btn {
+  float: right;
+  cursor: pointer;
+  font-weight: bold;
+  color: #6b7280;
+}
+
+/* ---------- Vue Congés ---------- */
+
+.conges-nav {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 16px;
+}
+.quarter-tabs {
+  display: flex;
+  gap: 6px;
+}
+.quarter-tab {
+  background: #f1f5f9;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+.quarter-tab:hover { background: #e2e8f0; }
+.quarter-tab.active {
+  background: #b45309;
+  border-color: #b45309;
+  color: white;
+}
+
+/* Table plus dense que le planning principal (beaucoup de colonnes) -- padding réduit,
+   pas de min-width forcée (celle du tableau principal ne convient pas à cette grille). */
+.conges-table {
+  min-width: auto;
+}
+.conges-table th, .conges-table td {
+  padding: 3px 2px;
+}
+.conges-table th.conges-person-header {
+  height: 66px;
+  vertical-align: bottom;
+  padding-bottom: 4px;
+  /* La rotation (transform-origin left bottom, voir span ci-dessous) fait déborder le texte
+     d'environ 6-9px vers la GAUCHE de sa propre case (pas vers la droite comme on pourrait le
+     penser à l'œil) -- mesuré en direct dans le navigateur le 22/07/2026 sur toutes les colonnes,
+     jamais de débordement à droite. padding-left absorbe ce décalage avant que le texte n'atteigne
+     le bord gauche, pour qu'overflow:hidden n'ait plus rien à couper (un 1er essai avec juste
+     overflow:hidden, sans ce padding, coupait la 1re lettre de chaque nom -- pire que le problème
+     d'origine). Valeur choisie avec une marge de sécurité au-delà du strict nécessaire (10px). */
+  padding-left: 12px;
+  overflow: hidden;
+}
+.conges-person-header span {
+  display: inline-block;
+  transform: rotate(-40deg);
+  transform-origin: left bottom;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 400;
+  /* Pas de couleur ici : hérite du fond/texte de spécialité posé en style inline sur le <th>
+     (personCellStyle(), voir renderCongesView()) -- ne pas remettre de couleur fixe. */
+}
+/* Sépare visuellement Séniors / Internes spécialisés / Internes socle -- même principe que
+   .group-start sur les lignes du planning principal, mais en colonnes ici. */
+.conges-table th.conges-group-start,
+.conges-table td.conges-group-start {
+  border-left: 2px solid #94a3b8;
+}
+.conges-week-label {
+  white-space: nowrap;
+  color: #475569;
+  font-size: 13px;
+  text-align: center;
+  vertical-align: middle;
+}
+/* Semaine en cours (getMonday(0), indépendant de state.weekOffset) -- repère "on est ici",
+   demandé le 21/07/2026, en violet (pas vert, pour ne pas se confondre avec .conges-full qui
+   est une case personne, pas une ligne -- ambiguïté remontée par Samir le 21/07/2026). */
+.conges-week-label.conges-current-week {
+  background: #ede9fe;
+  border-left: 3px solid #7c3aed;
+  font-weight: 600;
+}
+/* ⚠️ `display: flex` posé directement sur un <td> a été essayé le 21/07/2026 pour faire
+   remplir .conges-bar sur toute la hauteur de la ligne -- **testé en vrai dans le navigateur
+   et confirmé cassé** : le calcul de hauteur de ligne du tableau part en vrille (une case
+   mesurée à 232px de haut alors que son contenu réel ne fait que 2px). Ne jamais remettre
+   display:flex sur .conges-cell/td -- rester en table-cell standard, quitte à ce qu'une case
+   "Semaine" (courte) et une case à 3-4 jours empilés (plus haute) n'aient pas exactement la
+   même hauteur visuelle dans une même ligne. */
+.conges-cell {
+  text-align: center;
+  vertical-align: middle;
+  /* Assez large pour un nom de jour complet ("Mercredi") en toutes lettres dans une case. */
+  min-width: 46px;
+}
+.conges-bar {
+  border-radius: 3px;
+  cursor: pointer;
+}
+/* Absences (congé + repos de garde, RG-013) -- utilisé à la fois par la vue Congés principale et
+   le bandeau au-dessus du planning (6.11), via la même fonction buildAbsenceBar(). Depuis le
+   22/07/2026, une seule couleur pour toute absence (plus de vert "semaine pleine" ni de jaune
+   "congé partiel" -- voir .conges-day-mark) : la case "semaine entièrement absente" n'est plus
+   qu'un cas particulier de texte ("Semaine" au lieu d'empiler les jours), pas un style à part.
+   Jours en toutes lettres (pas une abréviation), empilés en colonne, en texte horizontal normal. Un
+   texte pivoté à la verticale a été essayé le 21/07/2026 pour gagner en largeur, mais jugé
+   illisible ("couché") -- ne pas y revenir. Le survol garde le détail complet via l'attribut title. */
+.conges-bar.conges-mixed {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 1px;
+  padding: 2px 0;
+}
+/* Surbrillance des en-têtes (ligne semaine + colonne personne) au survol d'une case, 22/07/2026 --
+   voir personHeaderCells dans renderCongesView(). outline (pas background) sur le th personne car
+   son fond est déjà coloré par spécialité en style inline (personCellStyle()). */
+.conges-week-label.conges-highlight {
+  background: #e0e7ff;
+  font-weight: 700;
+}
+.conges-person-header.conges-highlight {
+  outline: 3px solid #4338ca;
+  outline-offset: -3px;
+}
+/* Rouge uniforme pour toute absence (congé ou repos de garde, RG-013) -- changé le 22/07/2026,
+   remplace l'ancien jaune congé / vert "semaine pleine" / indigo garde. Le jour de garde lui-même
+   n'est plus affiché du tout ici (voir buildAbsenceBar()) : seule son conséquence, le repos de
+   garde, compte comme absence. Rouge plus pâle qu'un jour isolé qu'une semaine entière ("Semaine",
+   voir .conges-day-mark-week) -- demandé le 22/07/2026 pour distinguer les deux d'un coup d'œil. */
+.conges-day-mark {
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  border-radius: 3px;
+  padding: 1px 3px;
+  background: #fee2e2;
+  color: #7f1d1d;
+}
+.conges-day-mark-week {
+  background: #fca5a5;
+}
+
+/* Popover congés/gardes (22/07/2026) : bouton "toute la semaine" + deux rangées de pilules jour
+   par jour. Vert = congé, indigo = garde -- ce sont des contrôles de saisie (est-ce déclaré ou
+   pas), pas l'affichage en lecture seule des absences (.conges-day-mark, rouge uniforme depuis le
+   22/07/2026) : les deux couleurs restent volontairement différentes de cette teinte d'absence.
+   Couleur indigo pas utilisée ailleurs dans l'appli pour bien distinguer garde et congé (donnée
+   structurelle à part, voir 4.8 CLAUDE.md). */
+.conge-week-btn {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  border: 1px solid #22c55e;
+  border-radius: 6px;
+  padding: 7px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  background: #eafaf1;
+  color: #166534;
+}
+.conge-week-btn:hover { background: #bbf7d0; }
+/* Bouton "toute la semaine" en toggle (22/07/2026) : plein vert quand la semaine est déjà
+   entièrement en congé (le bouton devient alors une action de retrait, voir renderCongePopoverContent()). */
+.conge-week-btn.active {
+  background: #22c55e;
+  color: white;
+  border-color: #16a34a;
+}
+.conge-week-btn.active:hover { background: #16a34a; }
+.conge-pill-group { margin-top: 10px; }
+.conge-pill-label {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-bottom: 4px;
+}
+.conge-pill-row {
+  display: flex;
+  gap: 4px;
+}
+.conge-pill {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 8px 4px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+  background: white;
+  color: #475569;
+}
+.conge-pill-conge.active {
+  background: #eafaf1;
+  color: #166534;
+  border-color: #22c55e;
+}
+.conge-pill-garde.active {
+  background: #e0e7ff;
+  color: #3730a3;
+  border-color: #4338ca;
+}
+
+/* Utilitaire générique -- volontairement tout en bas du fichier : à spécificité égale (une seule
+   classe), la règle déclarée en dernier gagne. Placé plus haut, il perdait contre .validation-zone
+   { display: flex } (déclarée plus bas) et #validationZone.hidden restait visible -- bug réel
+   rencontré le 21/07/2026. Ne jamais redéplacer cette règle avant une autre déclarant `display`. */
+.hidden { display: none; }

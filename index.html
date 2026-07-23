@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Planning Imagerie</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Planning — Imagerie</h1>
+    <div class="week-nav">
+      <button id="prevWeek" title="Semaine précédente">&larr;</button>
+      <span id="weekLabel">Semaine du ...</span>
+      <button id="nextWeek" title="Semaine suivante">&rarr;</button>
+      <button id="btnCurrentWeek" class="btn-today" title="Revenir à la semaine actuelle">Aujourd'hui</button>
+    </div>
+    <div class="actions">
+      <button id="btnManageStaff" class="btn-accent">Gestion Personnel</button>
+      <button id="btnVacationSpecs" class="btn-accent2">Spécialités Vacations</button>
+      <button id="btnConges" class="btn-accent3">Congés</button>
+      <button id="btnFileSync" class="btn-accent4">Fichier partagé</button>
+      <span id="fileSyncStatus" class="file-sync-status"></span>
+      <button id="btnExport">Exporter (JSON)</button>
+      <button id="btnImport">Importer (JSON)</button>
+      <button id="btnReset">Réinitialiser le planning</button>
+      <input type="file" id="fileInput" accept="application/json" hidden>
+    </div>
+  </header>
+
+  <main>
+    <div class="planning-column">
+      <div id="weekCongesBar" class="week-conges-bar hidden"></div>
+      <div class="table-wrap" id="tableWrap">
+        <table id="planningTable"></table>
+      </div>
+
+      <div id="validationZone" class="validation-zone"></div>
+
+      <div id="congesView" class="hidden"></div>
+    </div>
+
+    <aside id="staffPanel">
+      <h2>Personnel</h2>
+      <div class="legend" id="legend"></div>
+      <ul id="staffList"></ul>
+    </aside>
+  </main>
+
+  <div id="assignPopover" class="popover hidden"></div>
+
+  <div id="staffModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Gestion du personnel</h2>
+        <span class="close-btn" id="staffModalClose">×</span>
+      </div>
+      <div class="modal-body" id="staffModalBody"></div>
+    </div>
+  </div>
+
+  <div id="fileSyncModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Fichier partagé (drive)</h2>
+        <span class="close-btn" id="fileSyncModalClose">×</span>
+      </div>
+      <div class="modal-body" id="fileSyncModalBody"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

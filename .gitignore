@@ -1,0 +1,8 @@
+# Donnees reelles -- ne doivent JAMAIS etre publiees dans ce depot (public).
+# Le vrai fichier de planning (personnel, affectations, conges, gardes...) ne doit vivre que dans
+# le depot prive planning-imagerie-data, jamais ici.
+*.json
+planning-imagerie.json
+
+# Config locale de l'environnement de dev (Claude Code) -- pas necessaire a l'hebergement.
+.claude/
