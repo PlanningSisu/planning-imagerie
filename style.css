@@ -51,6 +51,14 @@ body {
   white-space: nowrap;
 }
 
+/* Regroupe le titre et le statut de synchro (23/07/2026) -- volontairement à gauche, séparé des
+   vrais boutons d'action, pour ne pas laisser croire que c'est cliquable (c'est un simple indicateur). */
+.topbar-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .week-nav {
   display: flex;
   align-items: center;
@@ -105,6 +113,64 @@ body {
 .actions button.btn-accent3.btn-active:hover { background: #1e293b; }
 .actions button.btn-accent4 { background: #4338ca; }
 .actions button.btn-accent4:hover { background: #3730a3; }
+
+/* Menu "⚙" (23/07/2026) -- regroupe Synchro GitHub / Export / Import / Réinitialiser, des actions
+   ponctuelles/techniques qui n'ont pas besoin d'être en permanence visibles comme les 3 boutons de
+   changement de vue (Gestion Personnel/Spécialités Vacations/Congés), qui restent en clair. */
+.more-menu-wrap {
+  position: relative;
+  display: inline-block;
+  margin-left: 8px;
+}
+/* .actions button (générique) a la même spécificité qu'un simple .btn-gear (1 type + 1 classe des
+   deux côtés) -- sans le préfixe .actions ici, l'ordre de déclaration aurait fait gagner le bleu
+   générique plutôt que le gris voulu (repéré en testant en vrai le 23/07/2026). */
+.actions button.btn-gear {
+  background: #374151;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  width: 34px;
+  height: 34px;
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+}
+.actions button.btn-gear:hover { background: #4b5563; }
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+  z-index: 50;
+}
+.dropdown-menu.hidden { display: none; }
+.dropdown-menu button {
+  background: transparent;
+  color: #1f2937;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-left: 0;
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dropdown-menu button:hover { background: #f1f5f9; }
+/* #btnReset a son propre fond gris (voir règle générique plus haut, héritée de l'époque où c'était
+   un bouton isolé dans la topbar) -- transparent ici pour rester cohérent avec le reste du menu,
+   seule la couleur du texte signale l'action destructive. */
+.dropdown-menu #btnReset { background: transparent; color: #b91c1c; }
+.dropdown-menu #btnReset:hover { background: #fef2f2; }
 
 /* Synchro GitHub (23/07/2026, remplace le "Fichier partagé" du 22/07/2026) -- statut affiché en
    permanence dans la topbar, à côté du bouton "Synchro GitHub", pour repérer d'un coup d'œil si la

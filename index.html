@@ -8,7 +8,10 @@
 </head>
 <body>
   <header class="topbar">
-    <h1>Planning — Imagerie</h1>
+    <div class="topbar-title">
+      <h1>Planning — Imagerie</h1>
+      <span id="fileSyncStatus" class="file-sync-status"></span>
+    </div>
     <div class="week-nav">
       <button id="prevWeek" title="Semaine précédente">&larr;</button>
       <span id="weekLabel">Semaine du ...</span>
@@ -19,11 +22,15 @@
       <button id="btnManageStaff" class="btn-accent">Gestion Personnel</button>
       <button id="btnVacationSpecs" class="btn-accent2">Spécialités Vacations</button>
       <button id="btnConges" class="btn-accent3">Congés</button>
-      <button id="btnFileSync" class="btn-accent4">Synchro GitHub</button>
-      <span id="fileSyncStatus" class="file-sync-status"></span>
-      <button id="btnExport">Exporter (JSON)</button>
-      <button id="btnImport">Importer (JSON)</button>
-      <button id="btnReset">Réinitialiser le planning</button>
+      <div class="more-menu-wrap">
+        <button id="btnMoreMenu" class="btn-gear" title="Plus d'options">⚙</button>
+        <div id="moreMenu" class="dropdown-menu hidden">
+          <button type="button" id="btnFileSync">Synchro GitHub</button>
+          <button type="button" id="btnExport">Exporter (JSON)</button>
+          <button type="button" id="btnImport">Importer (JSON)</button>
+          <button type="button" id="btnReset">Réinitialiser le planning</button>
+        </div>
+      </div>
       <input type="file" id="fileInput" accept="application/json" hidden>
     </div>
   </header>

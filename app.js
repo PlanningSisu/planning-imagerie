@@ -516,7 +516,7 @@ function setFileSyncStatus(status) {
   fileSyncStatus = status;
   const el = document.getElementById("fileSyncStatus");
   if (!el) return;
-  el.textContent = `GitHub : ${fileSyncStatusLabel()}`;
+  el.textContent = `Synchro : ${fileSyncStatusLabel()}`;
   el.className = "file-sync-status file-sync-" + status;
 }
 
@@ -2594,6 +2594,25 @@ document.addEventListener("click", (e) => {
   const list = document.getElementById("popList");
   if (list && !list.classList.contains("hidden") && !e.target.closest("#popCustomSelect")) {
     list.classList.add("hidden");
+  }
+  // Menu "⚙" (Synchro GitHub / Export / Import / Réinitialiser, 23/07/2026) : se ferme au clic
+  // extérieur, comme les autres menus/popovers de l'appli.
+  const moreMenu = document.getElementById("moreMenu");
+  if (moreMenu && !moreMenu.classList.contains("hidden") && !e.target.closest(".more-menu-wrap")) {
+    moreMenu.classList.add("hidden");
+  }
+});
+
+// Bouton "⚙" : ouvre/ferme le menu. Chaque action à l'intérieur (Synchro GitHub, Export, Import,
+// Réinitialiser) referme le menu après coup -- écouteur additionnel, ne remplace pas les handlers
+// propres à chaque bouton (déjà câblés ailleurs), juste une fermeture en plus.
+document.getElementById("btnMoreMenu").addEventListener("click", (e) => {
+  e.stopPropagation();
+  document.getElementById("moreMenu").classList.toggle("hidden");
+});
+document.getElementById("moreMenu").addEventListener("click", (e) => {
+  if (e.target.tagName === "BUTTON") {
+    document.getElementById("moreMenu").classList.add("hidden");
   }
 });
 
