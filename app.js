@@ -392,9 +392,8 @@ let state = {
 };
 
 function loadState() {
-  // Cache de démarrage rapide + filet de secours si aucun fichier partagé n'est encore connecté
-  // (voir tryAutoConnectFile() plus bas) -- plus jamais la source de vérité une fois un fichier
-  // connecté, contrairement à avant le 22/07/2026.
+  // Cache de démarrage rapide + filet de secours si aucun jeton GitHub n'est encore connecté
+  // (voir tryAutoConnectGitHub() plus bas) -- plus jamais la source de vérité une fois connecté.
   const raw = localStorage.getItem(STORAGE_KEY);
   if (raw) {
     try {
@@ -410,88 +409,96 @@ function saveState() {
   scheduleFileSave();
 }
 
-// ---------- Fichier partagé (drive, File System Access API, 22/07/2026) ----------
-// Remplace le localStorage comme SOURCE DE VÉRITÉ : le fichier JSON choisi par l'utilisateur
-// (typiquement sur un drive synchronisé type OneDrive, accessible depuis plusieurs postes) devient
-// la donnée de production. Le localStorage reste en place comme cache de démarrage rapide + filet
-// de secours si aucun fichier n'est encore connecté ou temporairement inaccessible -- jamais comme
-// source de vérité une fois un fichier connecté (voir saveState()/loadState() plus haut).
-// Uniquement Chrome/Edge (File System Access API non supportée par Firefox/Safari à cette date) --
-// accepté, l'utilisateur n'utilise que Chrome sur les deux postes concernés.
+// ---------- Synchro GitHub (23/07/2026, remplace le fichier sur drive) ----------
+// Remplace le localStorage comme SOURCE DE VÉRITÉ : les données vivent dans un fichier JSON du
+// dépôt PRIVÉ planning-imagerie-data, lu/écrit directement via l'API GitHub (pas de File System
+// Access API, pas de fichier local, pas de limite Chrome-only -- fonctionne sur tout navigateur).
+// Le localStorage reste en place comme cache de démarrage rapide + filet de secours si aucun jeton
+// n'est encore renseigné -- jamais comme source de vérité une fois connecté.
+//
+// Le jeton d'accès (PAT) n'est JAMAIS écrit dans ce fichier (qui est publié publiquement sur
+// GitHub Pages) : l'utilisateur le colle une fois dans la modale, stocké uniquement dans le
+// localStorage de son navigateur. Un jeton fine-grained scope au SEUL dépôt privé, permission
+// "Contents: Read and write", limite le risque en cas de fuite.
 
-const FILE_HANDLE_DB_NAME = "planningAppFileHandleDB";
-const FILE_HANDLE_STORE = "handles";
-const FILE_HANDLE_KEY = "planningFile";
+const GITHUB_OWNER = "PlanningSisu";
+const GITHUB_REPO = "planning-imagerie-data";
+const GITHUB_FILE_PATH = "planning-imagerie.json";
+const GITHUB_BRANCH = "main";
+const GITHUB_TOKEN_KEY = "planningAppGitHubToken";
 
-let fileHandle = null; // FileSystemFileHandle courant, ou null si aucun fichier connecté cette session.
+let githubFileSha = null; // sha du blob actuellement connu -- exigé par l'API pour toute écriture (évite d'écraser une modif faite ailleurs entre-temps).
 let fileWriteTimer = null;
 let fileWriteInFlight = false;
 let fileWritePending = false; // une modif est arrivée PENDANT une écriture déjà en cours -- à rejouer une fois celle-ci terminée.
-let fileSyncStatus = "disconnected"; // "disconnected" | "ok" | "saving" | "error" | "needs-permission"
+let fileSyncStatus = "disconnected"; // "disconnected" | "ok" | "saving" | "error" | "invalid-token" | "conflict"
 
-function openFileHandleDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(FILE_HANDLE_DB_NAME, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(FILE_HANDLE_STORE);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+function getGitHubToken() {
+  return localStorage.getItem(GITHUB_TOKEN_KEY) || "";
+}
+
+function setGitHubToken(token) {
+  localStorage.setItem(GITHUB_TOKEN_KEY, token);
+}
+
+function clearGitHubToken() {
+  localStorage.removeItem(GITHUB_TOKEN_KEY);
+}
+
+// L'API GitHub encode le contenu en base64 -- atob()/btoa() seuls ne gèrent que du Latin1, pas
+// l'UTF-8 (accents des noms de famille, ex. "Léodagan") -- passer par TextEncoder/TextDecoder pour
+// un aller-retour fidèle.
+function utf8ToBase64(str) {
+  const bytes = new TextEncoder().encode(str);
+  let binary = "";
+  bytes.forEach((b) => { binary += String.fromCharCode(b); });
+  return btoa(binary);
+}
+
+function base64ToUtf8(base64) {
+  const binary = atob(base64.replace(/\n/g, ""));
+  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
+async function githubContentsRequest(method, body) {
+  const token = getGitHubToken();
+  return fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
   });
 }
 
-// Un FileSystemFileHandle n'est pas une chaîne de caractères (contrairement à ce que localStorage
-// sait stocker) mais IL EST structured-clonable -- IndexedDB est fait pour ça, on l'utilise
-// uniquement pour retenir CE handle d'une session à l'autre, jamais pour les données du planning
-// elles-mêmes (qui vivent dans le fichier lui-même, plus dans le navigateur).
-async function storeFileHandle(handle) {
-  const db = await openFileHandleDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(FILE_HANDLE_STORE, "readwrite");
-    tx.objectStore(FILE_HANDLE_STORE).put(handle, FILE_HANDLE_KEY);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+async function readStateFromGitHub() {
+  const res = await githubContentsRequest("GET");
+  if (res.status === 401 || res.status === 403) throw Object.assign(new Error("Jeton invalide ou sans accès à ce dépôt."), { code: "invalid-token" });
+  if (!res.ok) throw new Error(`Lecture impossible (HTTP ${res.status}).`);
+  const data = await res.json();
+  githubFileSha = data.sha;
+  return JSON.parse(base64ToUtf8(data.content));
 }
 
-async function loadStoredFileHandle() {
-  const db = await openFileHandleDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(FILE_HANDLE_STORE, "readonly");
-    const req = tx.objectStore(FILE_HANDLE_STORE).get(FILE_HANDLE_KEY);
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function clearStoredFileHandle() {
-  const db = await openFileHandleDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(FILE_HANDLE_STORE, "readwrite");
-    tx.objectStore(FILE_HANDLE_STORE).delete(FILE_HANDLE_KEY);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-// requestPermission() DOIT être appelé suite à un geste utilisateur -- le navigateur l'ignore
-// silencieusement sinon (jamais possible de la redemander tout seul au chargement de la page).
-// allowRequest=false se contente donc de lire la permission actuelle, sans en redemander une.
-async function hasReadWritePermission(handle, allowRequest) {
-  const opts = { mode: "readwrite" };
-  if ((await handle.queryPermission(opts)) === "granted") return true;
-  if (!allowRequest) return false;
-  return (await handle.requestPermission(opts)) === "granted";
-}
-
-async function readStateFromFile(handle) {
-  const file = await handle.getFile();
-  const text = await file.text();
-  return JSON.parse(text);
-}
-
-async function writeStateToFile(handle) {
-  const writable = await handle.createWritable();
-  await writable.write(JSON.stringify(buildPersistedState(), null, 2));
-  await writable.close();
+async function writeStateToGitHub() {
+  const body = {
+    message: `Mise à jour du planning (${new Date().toISOString()})`,
+    content: utf8ToBase64(JSON.stringify(buildPersistedState(), null, 2)),
+    branch: GITHUB_BRANCH,
+  };
+  if (githubFileSha) body.sha = githubFileSha;
+  const res = await githubContentsRequest("PUT", body);
+  if (res.status === 401 || res.status === 403) throw Object.assign(new Error("Jeton invalide ou sans accès à ce dépôt."), { code: "invalid-token" });
+  if (res.status === 409) throw Object.assign(new Error("Le fichier a été modifié ailleurs entre-temps."), { code: "conflict" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `Écriture impossible (HTTP ${res.status}).`);
+  }
+  const data = await res.json();
+  githubFileSha = data.content.sha;
 }
 
 function fileSyncStatusLabel() {
@@ -499,7 +506,8 @@ function fileSyncStatusLabel() {
     case "ok": return "à jour";
     case "saving": return "enregistrement...";
     case "error": return "erreur d'enregistrement";
-    case "needs-permission": return "accès à réautoriser";
+    case "invalid-token": return "jeton invalide";
+    case "conflict": return "conflit -- recharger";
     default: return "non connecté";
   }
 }
@@ -508,21 +516,21 @@ function setFileSyncStatus(status) {
   fileSyncStatus = status;
   const el = document.getElementById("fileSyncStatus");
   if (!el) return;
-  el.textContent = `Fichier : ${fileSyncStatusLabel()}`;
+  el.textContent = `GitHub : ${fileSyncStatusLabel()}`;
   el.className = "file-sync-status file-sync-" + status;
 }
 
-// Debounce (~400ms après la dernière modif) pour ne pas écrire à chaque frappe/action individuelle,
-// + garde fileWriteInFlight/fileWritePending pour ne jamais avoir deux écritures concurrentes sur le
-// même handle (une modif arrivant pendant une écriture en cours est rejouée juste après, pas perdue).
+// Debounce (~400ms après la dernière modif) pour ne pas écrire à chaque action individuelle, +
+// garde fileWriteInFlight/fileWritePending pour ne jamais avoir deux écritures concurrentes (une
+// modif arrivant pendant une écriture en cours est rejouée juste après, jamais perdue).
 function scheduleFileSave() {
-  if (!fileHandle) return; // pas de fichier connecté -- localStorage seul, rien à faire ici.
+  if (!getGitHubToken()) return; // pas connecté -- localStorage seul, rien à faire ici.
   clearTimeout(fileWriteTimer);
   fileWriteTimer = setTimeout(flushFileSave, 400);
 }
 
 async function flushFileSave() {
-  if (!fileHandle) return;
+  if (!getGitHubToken()) return;
   if (fileWriteInFlight) {
     fileWritePending = true;
     return;
@@ -530,16 +538,11 @@ async function flushFileSave() {
   fileWriteInFlight = true;
   setFileSyncStatus("saving");
   try {
-    const granted = await hasReadWritePermission(fileHandle, false);
-    if (!granted) {
-      setFileSyncStatus("needs-permission");
-      return;
-    }
-    await writeStateToFile(fileHandle);
+    await writeStateToGitHub();
     setFileSyncStatus("ok");
   } catch (err) {
-    console.error("Échec de l'écriture du fichier planning partagé :", err);
-    setFileSyncStatus("error");
+    console.error("Échec de l'écriture vers GitHub :", err);
+    setFileSyncStatus(err.code || "error");
   } finally {
     fileWriteInFlight = false;
     if (fileWritePending) {
@@ -549,108 +552,56 @@ async function flushFileSave() {
   }
 }
 
-// Crée un nouveau fichier sur le drive (choisi par l'utilisateur dans la fenêtre native) et y écrit
-// l'état courant -- premier usage typique : rien n'existe encore côté drive.
-async function createNewPlanningFile() {
-  const handle = await window.showSaveFilePicker({
-    suggestedName: "planning-imagerie.json",
-    types: [{ description: "Fichier JSON", accept: { "application/json": [".json"] } }],
-  });
-  await writeStateToFile(handle);
-  fileHandle = handle;
-  await storeFileHandle(handle);
-  setFileSyncStatus("ok");
-}
-
-// Ouvre un fichier de planning déjà existant sur le drive et remplace le state en mémoire par son
-// contenu -- ne JAMAIS écrire avant d'avoir lu (contrairement à createNewPlanningFile()), pour ne
-// jamais écraser une version plus récente posée par l'autre poste avant que ce navigateur n'ait eu
-// l'occasion de la lire.
-async function openExistingPlanningFile() {
-  const [handle] = await window.showOpenFilePicker({
-    types: [{ description: "Fichier JSON", accept: { "application/json": [".json"] } }],
-  });
-  const data = await readStateFromFile(handle);
+// Connexion initiale : valide le jeton en tentant une lecture, puis remplace le state en mémoire
+// par le contenu du dépôt -- ne JAMAIS écrire avant d'avoir lu, pour ne jamais écraser une version
+// plus récente posée par un autre poste avant même de l'avoir consultée.
+async function connectGitHubToken(token) {
+  setGitHubToken(token);
+  const data = await readStateFromGitHub();
   applyPersistedState(data);
-  fileHandle = handle;
-  await storeFileHandle(handle);
   setFileSyncStatus("ok");
   render();
 }
 
-async function disconnectPlanningFile() {
-  fileHandle = null;
-  await clearStoredFileHandle();
+function disconnectGitHub() {
+  clearGitHubToken();
+  githubFileSha = null;
   setFileSyncStatus("disconnected");
 }
 
-// Relit le fichier connecté et remplace le state en mémoire par son contenu -- pur rechargement,
-// n'écrit jamais. Utilisé au démarrage (tryAutoConnectFile()), par le bouton "Recharger" de la
-// modale, et automatiquement quand l'onglet reprend le focus (voir plus bas).
-async function reloadFromFile() {
-  if (!fileHandle) return;
-  const data = await readStateFromFile(fileHandle);
+// Relit le contenu GitHub et remplace le state en mémoire -- pur rechargement, n'écrit jamais.
+// Utilisé au démarrage (tryAutoConnectGitHub()), par le bouton "Recharger" de la modale, et
+// automatiquement quand l'onglet reprend le focus (voir plus bas).
+async function reloadFromGitHub() {
+  if (!getGitHubToken()) return;
+  const data = await readStateFromGitHub();
   applyPersistedState(data);
   render();
 }
 
-// Au démarrage : si un fichier a été connecté lors d'une session précédente (handle retrouvé en
-// IndexedDB), on tente de le reprendre silencieusement. La permission n'est pas forcément encore
-// valide (le navigateur peut l'avoir oubliée après une fermeture complète) -- dans ce cas on NE force
-// rien (requestPermission exige un geste utilisateur, impossible à cet instant), on affiche juste le
-// statut "à réautoriser" (voir renderFileSyncModal()) avec un bouton que l'utilisateur pourra cliquer.
-async function tryAutoConnectFile() {
-  if (!("showOpenFilePicker" in window)) return; // navigateur non supporté (Firefox/Safari) -- reste en mode localStorage seul.
-  let handle;
+// Au démarrage : si un jeton a été enregistré lors d'une session précédente, tente une lecture
+// silencieuse -- contrairement à l'ancien système de fichier local, aucun geste utilisateur n'est
+// nécessaire ici (un simple jeton HTTP, pas une permission de navigateur), donc ça peut se faire
+// automatiquement au chargement de la page, sans clic.
+async function tryAutoConnectGitHub() {
+  if (!getGitHubToken()) return;
   try {
-    handle = await loadStoredFileHandle();
-  } catch (e) {
-    console.warn("Impossible de lire le fichier de planning mémorisé.", e);
-    return;
-  }
-  if (!handle) return;
-  fileHandle = handle; // gardé en mémoire même si la permission n'est pas encore accordée, pour que
-                        // le clic "Autoriser" (geste utilisateur) puisse le réutiliser directement.
-  const granted = await hasReadWritePermission(handle, false);
-  if (!granted) {
-    setFileSyncStatus("needs-permission");
-    return;
-  }
-  try {
-    const data = await readStateFromFile(handle);
+    const data = await readStateFromGitHub();
     applyPersistedState(data);
     setFileSyncStatus("ok");
     render();
   } catch (e) {
-    console.error("Impossible de lire le fichier de planning connecté.", e);
-    setFileSyncStatus("error");
-  }
-}
-
-// Doit être appelé depuis un vrai geste utilisateur (clic du bouton "Autoriser l'accès") --
-// requestPermission() est ignoré silencieusement sinon.
-async function grantFilePermission() {
-  if (!fileHandle) return;
-  const granted = await hasReadWritePermission(fileHandle, true);
-  if (!granted) return;
-  try {
-    const data = await readStateFromFile(fileHandle);
-    applyPersistedState(data);
-    setFileSyncStatus("ok");
-    render();
-  } catch (e) {
-    console.error("Impossible de lire le fichier après autorisation.", e);
-    setFileSyncStatus("error");
+    console.error("Impossible de lire le planning depuis GitHub.", e);
+    setFileSyncStatus(e.code || "error");
   }
 }
 
 // Re-tente une lecture silencieuse quand l'onglet reprend le focus -- utile si l'autre poste a
-// modifié le fichier (via le drive synchronisé) pendant que cet onglet restait ouvert en arrière-
-// plan. Ignoré si une écriture locale est en cours/en attente, pour ne jamais écraser une modif pas
-// encore sauvegardée par une lecture qui la remplacerait.
+// modifié le fichier pendant que cet onglet restait ouvert en arrière-plan. Ignoré si une écriture
+// locale est en cours/en attente, pour ne jamais écraser une modif pas encore sauvegardée.
 window.addEventListener("focus", () => {
-  if (!fileHandle || fileWriteInFlight || fileWritePending) return;
-  reloadFromFile().catch((e) => console.warn("Rechargement au focus impossible.", e));
+  if (!getGitHubToken() || fileWriteInFlight || fileWritePending) return;
+  reloadFromGitHub().catch((e) => console.warn("Rechargement au focus impossible.", e));
 });
 
 function openFileSyncModal() {
@@ -665,69 +616,46 @@ function closeFileSyncModal() {
 function renderFileSyncModal() {
   const body = document.getElementById("fileSyncModalBody");
 
-  if (!("showOpenFilePicker" in window)) {
-    body.innerHTML = `<p>Ton navigateur ne supporte pas cette fonctionnalité (Chrome ou Edge nécessaire). Les données restent enregistrées uniquement sur cet ordinateur.</p>`;
-    return;
-  }
-
-  if (fileSyncStatus === "needs-permission") {
+  if (getGitHubToken()) {
     body.innerHTML = `
-      <p>L'accès au fichier connecté doit être réautorisé (le navigateur redemande parfois cette permission après un redémarrage complet).</p>
-      <button type="button" id="btnGrantFilePermission" class="btn-primary">Autoriser l'accès</button>
-      <button type="button" id="btnDisconnectFile" class="btn-primary btn-outline">Déconnecter ce fichier</button>
-    `;
-    document.getElementById("btnGrantFilePermission").addEventListener("click", async () => {
-      await grantFilePermission();
-      renderFileSyncModal();
-    });
-    document.getElementById("btnDisconnectFile").addEventListener("click", async () => {
-      await disconnectPlanningFile();
-      renderFileSyncModal();
-    });
-    return;
-  }
-
-  if (fileHandle) {
-    body.innerHTML = `
-      <p>Fichier connecté : <strong>${fileHandle.name}</strong></p>
+      <p>Connecté au dépôt <strong>${GITHUB_OWNER}/${GITHUB_REPO}</strong>.</p>
       <p>Statut : ${fileSyncStatusLabel()}</p>
-      <button type="button" id="btnReloadFile" class="btn-primary btn-outline">Recharger depuis le fichier</button>
-      <button type="button" id="btnDisconnectFile" class="btn-primary btn-outline">Déconnecter ce fichier</button>
+      <button type="button" id="btnReloadFile" class="btn-primary btn-outline">Recharger depuis GitHub</button>
+      <button type="button" id="btnDisconnectFile" class="btn-primary btn-outline">Déconnecter (retirer le jeton)</button>
     `;
     document.getElementById("btnReloadFile").addEventListener("click", async () => {
       try {
-        await reloadFromFile();
-        renderFileSyncModal();
+        await reloadFromGitHub();
+        setFileSyncStatus("ok");
       } catch (e) {
-        alert("Impossible de relire le fichier : " + e.message);
+        setFileSyncStatus(e.code || "error");
+        alert("Impossible de recharger : " + e.message);
       }
+      renderFileSyncModal();
     });
-    document.getElementById("btnDisconnectFile").addEventListener("click", async () => {
-      await disconnectPlanningFile();
+    document.getElementById("btnDisconnectFile").addEventListener("click", () => {
+      disconnectGitHub();
       renderFileSyncModal();
     });
     return;
   }
 
   body.innerHTML = `
-    <p>Connecte un fichier JSON sur ton drive (OneDrive, disque réseau...) pour que le planning se synchronise automatiquement entre plusieurs postes.</p>
-    <button type="button" id="btnCreateFile" class="btn-primary">Créer un nouveau fichier</button>
-    <button type="button" id="btnOpenFile" class="btn-primary btn-outline">Ouvrir un fichier existant</button>
+    <p>Colle ici ton jeton d'accès personnel GitHub (fine-grained, limité au dépôt <strong>${GITHUB_REPO}</strong>, permission "Contents: Read and write"). Il reste uniquement dans ce navigateur, jamais dans le code de l'appli.</p>
+    <input type="password" id="githubTokenInput" placeholder="github_pat_..." style="width:100%;padding:7px 8px;border-radius:6px;border:1px solid var(--border);font-size:13px;margin-bottom:10px;">
+    <button type="button" id="btnConnectGitHub" class="btn-primary">Connecter</button>
   `;
-  document.getElementById("btnCreateFile").addEventListener("click", async () => {
+  document.getElementById("btnConnectGitHub").addEventListener("click", async () => {
+    const input = document.getElementById("githubTokenInput");
+    const token = input.value.trim();
+    if (!token) return;
     try {
-      await createNewPlanningFile();
+      await connectGitHubToken(token);
       renderFileSyncModal();
     } catch (e) {
-      if (e.name !== "AbortError") alert("Impossible de créer le fichier : " + e.message);
-    }
-  });
-  document.getElementById("btnOpenFile").addEventListener("click", async () => {
-    try {
-      await openExistingPlanningFile();
-      renderFileSyncModal();
-    } catch (e) {
-      if (e.name !== "AbortError") alert("Impossible d'ouvrir le fichier : " + e.message);
+      clearGitHubToken();
+      setFileSyncStatus("disconnected");
+      alert("Connexion impossible : " + e.message);
     }
   });
 }
@@ -3105,4 +3033,4 @@ document.getElementById("fileSyncModal").addEventListener("click", (e) => {
 loadState();
 render();
 setFileSyncStatus(fileSyncStatus); // affiche "non connecté" dans la topbar avant même la tentative de connexion auto ci-dessous.
-tryAutoConnectFile(); // async -- re-render si un fichier connecté est retrouvé et lisible.
+tryAutoConnectGitHub(); // async -- re-render si un jeton est déjà enregistré et valide.
