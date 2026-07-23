@@ -554,13 +554,20 @@ async function flushFileSave() {
 
 // Connexion initiale : valide le jeton en tentant une lecture, puis remplace le state en mémoire
 // par le contenu du dépôt -- ne JAMAIS écrire avant d'avoir lu, pour ne jamais écraser une version
-// plus récente posée par un autre poste avant même de l'avoir consultée.
+// plus récente posée par un autre poste avant même de l'avoir consultée. Se nettoie elle-même en
+// cas d'échec (retire le jeton invalide) plutôt que de compter sur l'appelant pour le faire.
 async function connectGitHubToken(token) {
   setGitHubToken(token);
-  const data = await readStateFromGitHub();
-  applyPersistedState(data);
-  setFileSyncStatus("ok");
-  render();
+  try {
+    const data = await readStateFromGitHub();
+    applyPersistedState(data);
+    setFileSyncStatus("ok");
+    render();
+  } catch (e) {
+    clearGitHubToken();
+    setFileSyncStatus("disconnected");
+    throw e;
+  }
 }
 
 function disconnectGitHub() {
@@ -613,10 +620,40 @@ function closeFileSyncModal() {
   document.getElementById("fileSyncModal").classList.add("hidden");
 }
 
+// Formulaire de saisie du jeton, réutilisé pour la première connexion ET pour le cas "jeton
+// invalide" (23/07/2026) -- avant cette factorisation, un jeton expiré/révoqué affichait quand même
+// l'écran "Connecté" (basé uniquement sur la présence d'un jeton en storage, pas sur sa validité
+// réelle), ce qui était trompeur : impossible de recoller un nouveau jeton sans d'abord cliquer
+// "Déconnecter". Le message affiché est le seul élément qui change entre les deux cas.
+function renderTokenForm(body, message) {
+  body.innerHTML = `
+    <p>${message}</p>
+    <input type="password" id="githubTokenInput" placeholder="github_pat_..." style="width:100%;padding:7px 8px;border-radius:6px;border:1px solid var(--border);font-size:13px;margin-bottom:10px;">
+    <button type="button" id="btnConnectGitHub" class="btn-primary">Connecter</button>
+  `;
+  document.getElementById("btnConnectGitHub").addEventListener("click", async () => {
+    const input = document.getElementById("githubTokenInput");
+    const token = input.value.trim();
+    if (!token) return;
+    try {
+      await connectGitHubToken(token);
+    } catch (e) {
+      alert("Connexion impossible : " + e.message);
+    }
+    renderFileSyncModal();
+  });
+}
+
 function renderFileSyncModal() {
   const body = document.getElementById("fileSyncModalBody");
+  const hasToken = !!getGitHubToken();
 
-  if (getGitHubToken()) {
+  if (hasToken && fileSyncStatus === "invalid-token") {
+    renderTokenForm(body, `Le jeton enregistré ne fonctionne plus (expiré ou révoqué) -- colle-en un nouveau pour reconnecter le dépôt <strong>${GITHUB_REPO}</strong>.`);
+    return;
+  }
+
+  if (hasToken) {
     body.innerHTML = `
       <p>Connecté au dépôt <strong>${GITHUB_OWNER}/${GITHUB_REPO}</strong>.</p>
       <p>Statut : ${fileSyncStatusLabel()}</p>
@@ -640,24 +677,7 @@ function renderFileSyncModal() {
     return;
   }
 
-  body.innerHTML = `
-    <p>Colle ici ton jeton d'accès personnel GitHub (fine-grained, limité au dépôt <strong>${GITHUB_REPO}</strong>, permission "Contents: Read and write"). Il reste uniquement dans ce navigateur, jamais dans le code de l'appli.</p>
-    <input type="password" id="githubTokenInput" placeholder="github_pat_..." style="width:100%;padding:7px 8px;border-radius:6px;border:1px solid var(--border);font-size:13px;margin-bottom:10px;">
-    <button type="button" id="btnConnectGitHub" class="btn-primary">Connecter</button>
-  `;
-  document.getElementById("btnConnectGitHub").addEventListener("click", async () => {
-    const input = document.getElementById("githubTokenInput");
-    const token = input.value.trim();
-    if (!token) return;
-    try {
-      await connectGitHubToken(token);
-      renderFileSyncModal();
-    } catch (e) {
-      clearGitHubToken();
-      setFileSyncStatus("disconnected");
-      alert("Connexion impossible : " + e.message);
-    }
-  });
+  renderTokenForm(body, `Colle ici ton jeton d'accès personnel GitHub (fine-grained, limité au dépôt <strong>${GITHUB_REPO}</strong>, permission "Contents: Read and write"). Il reste uniquement dans ce navigateur, jamais dans le code de l'appli.`);
 }
 
 // ---------- Semaine ----------

@@ -106,9 +106,9 @@ body {
 .actions button.btn-accent4 { background: #4338ca; }
 .actions button.btn-accent4:hover { background: #3730a3; }
 
-/* Fichier partagé (22/07/2026) -- statut affiché en permanence dans la topbar, à côté du bouton
-   "Fichier partagé", pour repérer d'un coup d'œil si la dernière modif a bien été écrite sur le
-   drive avant de fermer l'onglet. */
+/* Synchro GitHub (23/07/2026, remplace le "Fichier partagé" du 22/07/2026) -- statut affiché en
+   permanence dans la topbar, à côté du bouton "Synchro GitHub", pour repérer d'un coup d'œil si la
+   dernière modif a bien été écrite sur GitHub avant de fermer l'onglet. */
 .file-sync-status {
   font-size: 12px;
   font-weight: 600;
@@ -121,7 +121,8 @@ body {
 .file-sync-status.file-sync-ok { background: #065f46; color: #d1fae5; }
 .file-sync-status.file-sync-saving { background: #374151; color: #fbbf24; }
 .file-sync-status.file-sync-error { background: #7f1d1d; color: #fecaca; }
-.file-sync-status.file-sync-needs-permission { background: #78350f; color: #fde68a; }
+.file-sync-status.file-sync-invalid-token { background: #78350f; color: #fde68a; }
+.file-sync-status.file-sync-conflict { background: #78350f; color: #fde68a; }
 
 /* ---------- Modale Gestion Personnel ---------- */
 
