@@ -165,6 +165,11 @@ function compareSpecialiteKeys(personA, personB) {
 // "sensiblement la même chose que la vue personnel à droite", pas un tri par nom de famille séparé
 // (un premier jet allait dans ce sens le même jour, retiré aussitôt corrigé).
 function compareStaffOrder(personA, personB) {
+  // RG-016 (23/07/2026) : les personnes "Hors Sisu" passent toujours tout en bas, triées entre
+  // elles par ordre alphabétique pur (nom puis prénom) -- pas de regroupement par grade/spécialité,
+  // qu'elles n'ont pas forcément (voir regles-gestion.md).
+  if (!!personA.horsSisu !== !!personB.horsSisu) return personA.horsSisu ? 1 : -1;
+  if (personA.horsSisu) return compareNomPrenom(personA, personB);
   if (personA.grade !== personB.grade) return personA.grade === "senior" ? -1 : 1;
   return compareSpecialiteKeys(personA, personB);
 }
@@ -193,6 +198,7 @@ const staffPanelCollapsed = {
   internes: false,
   internesSpecialises: false,
   internesSocle: false,
+  horsSisu: false,
 };
 
 // Vue du tableau principal : "modalite" (lignes = vacations, défaut) ou "personnel"
@@ -215,12 +221,18 @@ let congesQuarter = currentQuarter(new Date());
 // Réutilisés tels quels par la vue Congés (colonnes filtrées par les mêmes puces, voir 6.x
 // CLAUDE.md) -- volontairement le même state partagé, pas une copie, pour rester cohérent
 // entre les deux vues sans dupliquer la logique de filtre.
+// showHorsSisu (23/07/2026) : bascule à part, PAS un 3e Set -- sémantique différente des deux
+// autres catégories (qui RESTREIGNENT la liste quand actives). Ici, par défaut les personnes
+// "Hors Sisu" sont invisibles PARTOUT où personMatchesFilters() fait la loi ; cocher la puce les
+// RÉVÈLE en plus du reste, ça ne cache pas les autres. Voir RG-016 (regles-gestion.md).
 const staffFilters = {
   grades: new Set(),
   specialites: new Set(),
+  showHorsSisu: false,
 };
 
 function personMatchesFilters(person) {
+  if (person.horsSisu && !staffFilters.showHorsSisu) return false;
   if (staffFilters.grades.size > 0 && !staffFilters.grades.has(person.grade)) return false;
   if (staffFilters.specialites.size > 0) {
     const specs = person.specialites || [];
@@ -1485,13 +1497,28 @@ function renderLegend() {
   });
   addChip("Socle", "specialites", "socle", "background:#f1f5f9;border-color:#94a3b8;color:#334155;");
 
-  if (staffFilters.grades.size > 0 || staffFilters.specialites.size > 0) {
+  // "Hors Sisu" (23/07/2026) : bascule à part, pas un chip de plus dans grades/specialites (voir
+  // staffFilters -- sémantique "révèle" et non "restreint", RG-016). Style pointillé pour la
+  // distinguer visuellement des vrais filtres de grade/spécialité.
+  const horsSisuChip = document.createElement("span");
+  horsSisuChip.className = "chip legend-chip" + (staffFilters.showHorsSisu ? " active" : "");
+  horsSisuChip.style.cssText = "background:#f1f5f9;border-color:#94a3b8;color:#334155;border-style:dashed;";
+  horsSisuChip.textContent = "Hors Sisu";
+  horsSisuChip.title = "Afficher aussi les personnes \"Hors Sisu\" (masquées par défaut)";
+  horsSisuChip.addEventListener("click", () => {
+    staffFilters.showHorsSisu = !staffFilters.showHorsSisu;
+    refreshAfterFilterChange();
+  });
+  legend.appendChild(horsSisuChip);
+
+  if (staffFilters.grades.size > 0 || staffFilters.specialites.size > 0 || staffFilters.showHorsSisu) {
     const reset = document.createElement("span");
     reset.className = "legend-reset";
     reset.textContent = "× Réinitialiser les filtres";
     reset.addEventListener("click", () => {
       staffFilters.grades.clear();
       staffFilters.specialites.clear();
+      staffFilters.showHorsSisu = false;
       refreshAfterFilterChange();
     });
     legend.appendChild(reset);
@@ -2029,11 +2056,15 @@ function renderStaffPerson(ul, person, { divider = false, boxed = false, boxEnd 
   if (divider) li.classList.add("specialite-divider");
   if (boxed) li.classList.add("subblock-item");
   if (boxEnd) li.classList.add("subblock-end");
-  const gradeLabel = person.grade === "senior" ? "Sénior" : "Interne";
+  // RG-016 : une personne "Hors Sisu" sans grade renseigné n'est ni "Sénior" ni "Interne" -- éviter
+  // de retomber par défaut sur "Interne — socle" (trompeur, laisse croire à un grade qu'elle n'a
+  // pas). "socle" lui-même n'a de sens que pour un interne sans spécialité encore.
+  const gradeLabel = person.grade === "senior" ? "Sénior" : person.grade === "interne" ? "Interne" : "Hors Sisu";
   const specs = orderedSpecialites(person);
-  const specLabel = specs.length ? specs.map((s) => SPECIALITES[s].label).join(" + ") : "socle";
+  const specLabel = specs.length ? specs.map((s) => SPECIALITES[s].label).join(" + ") : person.grade === "interne" ? "socle" : "";
+  const suffix = specLabel ? ` — ${specLabel}` : "";
   const { className, style } = chipVisual(person);
-  li.innerHTML = `<span class="${className}" style="margin-right:6px;${style}">${person.prenom[0]}.${person.nom}</span> ${gradeLabel} — ${specLabel}`;
+  li.innerHTML = `<span class="${className}" style="margin-right:6px;${style}">${person.prenom[0]}.${person.nom}</span> ${gradeLabel}${suffix}`;
 
   li.draggable = true;
   li.classList.add("staff-draggable");
@@ -2100,12 +2131,16 @@ function renderStaffList() {
   ul.innerHTML = "";
 
   const visible = state.staff.filter(personMatchesFilters).filter((p) => !isFullyOnLeaveThisWeek(p));
+  const normalVisible = visible.filter((p) => !p.horsSisu);
+  // RG-016 : à part, jamais mélangées aux séniors/internes (pas forcément de grade/spécialité) --
+  // triées alphabétiquement, toujours en dernier (voir compareStaffOrder()/renderFoldableHeader ci-dessous).
+  const horsSisuVisible = visible.filter((p) => p.horsSisu).sort(compareNomPrenom);
 
-  const seniors = visible.filter((p) => p.grade === "senior").sort(compareSpecialiteKeys);
-  const internesSpecialises = visible
+  const seniors = normalVisible.filter((p) => p.grade === "senior").sort(compareSpecialiteKeys);
+  const internesSpecialises = normalVisible
     .filter((p) => p.grade !== "senior" && (p.specialites || []).length > 0)
     .sort(compareSpecialiteKeys);
-  const internesSocle = visible.filter((p) => p.grade !== "senior" && (p.specialites || []).length === 0);
+  const internesSocle = normalVisible.filter((p) => p.grade !== "senior" && (p.specialites || []).length === 0);
   const internesTotal = internesSpecialises.length + internesSocle.length;
 
   if (seniors.length > 0) {
@@ -2128,7 +2163,14 @@ function renderStaffList() {
     }
   }
 
-  if (seniors.length === 0 && internesTotal === 0) {
+  if (horsSisuVisible.length > 0) {
+    renderFoldableHeader(ul, "horsSisu", `Hors Sisu (${horsSisuVisible.length})`);
+    if (!staffPanelCollapsed.horsSisu) {
+      horsSisuVisible.forEach((person) => renderStaffPerson(ul, person, {}));
+    }
+  }
+
+  if (seniors.length === 0 && internesTotal === 0 && horsSisuVisible.length === 0) {
     const empty = document.createElement("li");
     empty.className = "empty-hint";
     empty.textContent = "Aucune personne ne correspond aux filtres sélectionnés.";
@@ -2186,9 +2228,12 @@ function renderCongesView() {
   container.appendChild(nav);
 
   const people = state.staff.filter(personMatchesFilters).slice().sort(compareStaffOrder);
-  const firstInterneIdx = people.findIndex((p) => p.grade !== "senior");
-  const firstSocleIdx = people.findIndex((p) => p.grade !== "senior" && (p.specialites || []).length === 0);
-  const boundaryClass = (i) => (i === firstInterneIdx || i === firstSocleIdx ? " conges-group-start" : "");
+  const firstInterneIdx = people.findIndex((p) => !p.horsSisu && p.grade !== "senior");
+  const firstSocleIdx = people.findIndex((p) => !p.horsSisu && p.grade !== "senior" && (p.specialites || []).length === 0);
+  // RG-016 : séparateur supplémentaire avant le groupe Hors Sisu (visible seulement si la puce
+  // "Hors Sisu" est cochée, sinon findIndex renvoie -1 et ne matche jamais).
+  const firstHorsSisuIdx = people.findIndex((p) => p.horsSisu);
+  const boundaryClass = (i) => (i === firstInterneIdx || i === firstSocleIdx || i === firstHorsSisuIdx ? " conges-group-start" : "");
 
   const wrap = document.createElement("div");
   wrap.className = "table-wrap";
@@ -2728,8 +2773,12 @@ function renderStaffModal() {
 
 function renderStaffModalList(container) {
   container.innerHTML = "";
-  const seniors = state.staff.filter((p) => p.grade === "senior").sort(compareSpecialiteKeys);
-  const internes = state.staff.filter((p) => p.grade !== "senior").sort(compareSpecialiteKeys);
+  const normal = state.staff.filter((p) => !p.horsSisu);
+  const seniors = normal.filter((p) => p.grade === "senior").sort(compareSpecialiteKeys);
+  const internes = normal.filter((p) => p.grade !== "senior").sort(compareSpecialiteKeys);
+  // RG-016 (23/07/2026) : à part, jamais mélangées aux séniors/internes -- pas forcément de grade,
+  // triées alphabétiquement (voir regles-gestion.md).
+  const horsSisu = state.staff.filter((p) => p.horsSisu).sort(compareNomPrenom);
 
   const addSection = (label, people) => {
     if (people.length === 0) return;
@@ -2750,7 +2799,7 @@ function renderStaffModalList(container) {
       const specs = orderedSpecialites(person);
       const specLabel = specs.length
         ? specs.map((s) => SPECIALITES[s].label).join(" + ")
-        : person.grade === "senior" ? "" : "Socle";
+        : person.horsSisu ? "" : person.grade === "senior" ? "" : "Socle";
       const specSpan = document.createElement("span");
       specSpan.className = "staff-modal-spec";
       specSpan.textContent = specLabel;
@@ -2781,6 +2830,7 @@ function renderStaffModalList(container) {
 
   addSection("Séniors", seniors);
   addSection("Internes", internes);
+  addSection("Hors Sisu", horsSisu);
 
   if (state.staff.length === 0) {
     const empty = document.createElement("div");
@@ -2800,11 +2850,20 @@ function deleteStaffMember(personId) {
   renderStaffModalList(document.getElementById("staffModalList"));
 }
 
+// Comme specialiteOptionsHtml(), avec une option vide en tête -- réservé au formulaire Hors Sisu
+// (23/07/2026, RG-016), où une spécialité n'est jamais obligatoire. Fonction à part plutôt que de
+// modifier specialiteOptionsHtml() elle-même, qui reste utilisée ici pour le cas normal (senior/
+// interne) où le premier vrai choix doit rester présélectionné par défaut.
+function specialiteOptionsHtmlWithNone() {
+  return `<option value="">Aucune</option>${specialiteOptionsHtml()}`;
+}
+
 // existingPerson non fourni -> mode "ajouter". Fourni -> mode "modifier" (formulaire pré-rempli,
 // mise à jour en place au lieu d'un push).
 function renderStaffAddForm(container, existingPerson = null) {
   const specs = existingPerson ? orderedSpecialites(existingPerson) : [];
-  const initialGrade = existingPerson ? existingPerson.grade : "senior";
+  const initialHorsSisu = existingPerson ? !!existingPerson.horsSisu : false;
+  const initialGrade = existingPerson ? existingPerson.grade || "" : "senior";
   const initialType = specs.length === 2 ? "specialise" : "socle";
 
   container.innerHTML = `
@@ -2818,9 +2877,14 @@ function renderStaffAddForm(container, existingPerson = null) {
         <label for="formNom">Nom</label>
         <input type="text" id="formNom" autocomplete="off">
       </div>
-      <div class="form-row">
+      <div class="form-row form-row-checkbox">
+        <label for="formHorsSisu"><input type="checkbox" id="formHorsSisu"> Hors Sisu</label>
+        <span class="form-hint">Personne à suivre (congés, gardes...) mais jamais postée sur une vacation -- grade et spécialité(s) deviennent optionnels.</span>
+      </div>
+      <div class="form-row" id="formGradeRow">
         <label for="formGrade">Grade</label>
         <select id="formGrade">
+          <option value="">Non renseigné</option>
           <option value="senior">Sénior</option>
           <option value="interne">Interne</option>
         </select>
@@ -2837,7 +2901,7 @@ function renderStaffAddForm(container, existingPerson = null) {
         <select id="formSpec1">${specialiteOptionsHtml()}</select>
       </div>
       <div class="form-row" id="formSpec2Row">
-        <label for="formSpec2">2e spécialité</label>
+        <label id="formSpec2Label" for="formSpec2">2e spécialité</label>
         <select id="formSpec2">${specialiteOptionsHtml()}</select>
       </div>
       <div class="form-actions">
@@ -2848,32 +2912,77 @@ function renderStaffAddForm(container, existingPerson = null) {
     </div>
   `;
 
+  const horsSisuCheckbox = document.getElementById("formHorsSisu");
   const gradeSelect = document.getElementById("formGrade");
   const typeSelect = document.getElementById("formInterneType");
   const spec1Select = document.getElementById("formSpec1");
   const spec2Select = document.getElementById("formSpec2");
+
+  horsSisuCheckbox.checked = initialHorsSisu;
 
   if (existingPerson) {
     document.getElementById("formPrenom").value = existingPerson.prenom;
     document.getElementById("formNom").value = existingPerson.nom;
     gradeSelect.value = initialGrade;
     typeSelect.value = initialType;
-    if (specs[0]) spec1Select.value = specs[0];
-    spec2Select.value = specs[1] || (specs[0] === "uro" ? "digestif" : "uro");
+    if (initialHorsSisu) {
+      // Formulaire Hors Sisu : les 2 selects deviennent "Aucune"/spécialité 1/spécialité 2 sans
+      // contrainte -- reconstruits avec l'option vide avant d'y remettre les valeurs existantes.
+      spec1Select.innerHTML = specialiteOptionsHtmlWithNone();
+      spec2Select.innerHTML = specialiteOptionsHtmlWithNone();
+      spec1Select.value = specs[0] || "";
+      spec2Select.value = specs[1] || "";
+    } else {
+      if (specs[0]) spec1Select.value = specs[0];
+      spec2Select.value = specs[1] || (specs[0] === "uro" ? "digestif" : "uro");
+    }
   } else {
+    gradeSelect.value = "senior";
     spec2Select.selectedIndex = 1; // évite spé1 = spé2 par défaut
   }
 
   const updateVisibility = () => {
+    const horsSisu = horsSisuCheckbox.checked;
+    document.getElementById("formGradeRow").style.display = "flex"; // toujours visible (juste plus obligatoire si Hors Sisu)
+
+    if (horsSisu) {
+      // Pas de notion de "socle"/"spécialisé" pour Hors Sisu -- les 2 spécialités sont montrées
+      // directement, chacune optionnelle (option "Aucune" en tête, voir specialiteOptionsHtmlWithNone()).
+      document.getElementById("formInterneTypeRow").style.display = "none";
+      document.getElementById("formSpec1Row").style.display = "flex";
+      document.getElementById("formSpec2Row").style.display = "flex";
+      document.getElementById("formSpec1Label").textContent = "Spécialité (optionnel)";
+      document.getElementById("formSpec2Label").textContent = "2e spécialité (optionnel)";
+      return;
+    }
+
     const isInterne = gradeSelect.value === "interne";
     document.getElementById("formInterneTypeRow").style.display = isInterne ? "flex" : "none";
     const isSpecialise = !isInterne || typeSelect.value === "specialise";
     document.getElementById("formSpec1Row").style.display = isSpecialise ? "flex" : "none";
     document.getElementById("formSpec2Row").style.display = isInterne && isSpecialise ? "flex" : "none";
     document.getElementById("formSpec1Label").textContent = isInterne ? "1ère spécialité" : "Spécialité";
+    document.getElementById("formSpec2Label").textContent = "2e spécialité";
   };
   gradeSelect.addEventListener("change", updateVisibility);
   typeSelect.addEventListener("change", updateVisibility);
+  horsSisuCheckbox.addEventListener("change", () => {
+    // Bascule vers les selects "avec option vide" (ou l'inverse) -- reconstruit les <option> plutôt
+    // que de juste changer la visibilité, pour que "Aucune" existe seulement quand pertinent.
+    if (horsSisuCheckbox.checked) {
+      spec1Select.innerHTML = specialiteOptionsHtmlWithNone();
+      spec2Select.innerHTML = specialiteOptionsHtmlWithNone();
+      spec1Select.value = "";
+      spec2Select.value = "";
+      gradeSelect.value = "";
+    } else {
+      spec1Select.innerHTML = specialiteOptionsHtml();
+      spec2Select.innerHTML = specialiteOptionsHtml();
+      spec2Select.selectedIndex = 1;
+      gradeSelect.value = "senior";
+    }
+    updateVisibility();
+  });
   updateVisibility();
 
   document.getElementById("formCancel").addEventListener("click", () => {
@@ -2883,8 +2992,7 @@ function renderStaffAddForm(container, existingPerson = null) {
   document.getElementById("formSubmit").addEventListener("click", () => {
     const prenom = document.getElementById("formPrenom").value.trim();
     const nom = document.getElementById("formNom").value.trim();
-    const grade = gradeSelect.value;
-    const isInterne = grade === "interne";
+    const horsSisu = horsSisuCheckbox.checked;
     const errorEl = document.getElementById("formError");
     errorEl.textContent = "";
 
@@ -2893,26 +3001,48 @@ function renderStaffAddForm(container, existingPerson = null) {
       return;
     }
 
+    let grade;
     let specialites = [];
-    if (!isInterne) {
-      specialites = [spec1Select.value];
-    } else if (typeSelect.value === "specialise") {
-      const s1 = spec1Select.value;
-      const s2 = spec2Select.value;
-      if (s1 === s2) {
+
+    if (horsSisu) {
+      // RG-016 : tout devient optionnel -- grade libre (y compris non renseigné), 0 à 2 spécialités
+      // sans contrainte de correspondance avec le grade.
+      grade = gradeSelect.value || null;
+      const s1 = spec1Select.value || null;
+      const s2 = spec2Select.value || null;
+      if (s1 && s2 && s1 === s2) {
         errorEl.textContent = "Les deux spécialités doivent être différentes.";
         return;
       }
-      specialites = [s1, s2];
+      specialites = [s1, s2].filter(Boolean);
+    } else {
+      grade = gradeSelect.value;
+      if (!grade) {
+        errorEl.textContent = "Le grade est obligatoire (sauf pour une personne \"Hors Sisu\").";
+        return;
+      }
+      const isInterne = grade === "interne";
+      if (!isInterne) {
+        specialites = [spec1Select.value];
+      } else if (typeSelect.value === "specialise") {
+        const s1 = spec1Select.value;
+        const s2 = spec2Select.value;
+        if (s1 === s2) {
+          errorEl.textContent = "Les deux spécialités doivent être différentes.";
+          return;
+        }
+        specialites = [s1, s2];
+      }
     }
 
     if (existingPerson) {
       existingPerson.prenom = prenom;
       existingPerson.nom = nom;
+      existingPerson.horsSisu = horsSisu;
       existingPerson.grade = grade;
       existingPerson.specialites = specialites;
     } else {
-      state.staff.push({ id: generateStaffId(), prenom, nom, grade, specialites });
+      state.staff.push({ id: generateStaffId(), prenom, nom, horsSisu, grade, specialites });
     }
     saveState();
     render();
