@@ -6,3 +6,8 @@ planning-imagerie.json
 
 # Config locale de l'environnement de dev (Claude Code) -- pas necessaire a l'hebergement.
 .claude/
+
+# Doc interne (regles de gestion, contexte projet) -- volontairement HORS du depot public.
+# Vit uniquement en local + dans le depot prive planning-imagerie-data (voir README).
+CLAUDE.md
+regles-gestion.md
