@@ -1532,7 +1532,13 @@ function refreshAfterFilterChange() {
   renderLegend();
   renderStaffList();
   if (editingConges) renderCongesView();
-  if (!editingConges && !editingVacationSpecs && currentView === "personnel") renderTable();
+  // Manquait à l'ajout de la vue Stats (24/07/2026) -- bug réel remonté par Samir : filtrer depuis
+  // la vue Stats (ou y arriver avec un filtre déjà actif) ne mettait jamais à jour son tableau, qui
+  // gardait le filtre "initial" quoi qu'on fasse ensuite. Cette fonction duplique volontairement la
+  // logique de render() (voir le commentaire au-dessus) plutôt que de l'appeler telle quelle --
+  // penser à répercuter ici tout nouveau mode plein-écran qui dépend de staffFilters.
+  if (editingStats) renderStatsView();
+  if (!editingConges && !editingVacationSpecs && !editingStats && currentView === "personnel") renderTable();
 }
 
 function toggleStaffFilter(category, value) {
