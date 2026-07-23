@@ -282,6 +282,11 @@ let editingConges = false;
 let congesYear = new Date().getFullYear();
 let congesQuarter = currentQuarter(new Date());
 
+// Vue Stats (24/07/2026, bouton dédié) : 3e mode plein-écran, mutuellement exclusif avec
+// editingVacationSpecs/editingConges (voir render()). Pas d'état de navigation propre -- utilise
+// directement la semaine déjà sélectionnée (state.weekOffset) comme le reste de l'appli.
+let editingStats = false;
+
 // Filtres du panneau Personnel : OR à l'intérieur d'une catégorie, ET entre les deux catégories.
 // grades: "senior" | "interne". specialites: "digestif"|"uro"|"gyneco"|"thorax"|"socle".
 // Réutilisés tels quels par la vue Congés (colonnes filtrées par les mêmes puces, voir 6.x
@@ -1468,15 +1473,15 @@ function handleAssignmentDrop(e, targetKey, day) {
 function render() {
   document.getElementById("weekLabel").textContent = currentWeekLabel();
 
-  document.getElementById("weekCongesBar").classList.toggle("hidden", editingConges);
-  document.getElementById("tableWrap").classList.toggle("hidden", editingConges);
-  document.getElementById("validationZone").classList.toggle("hidden", editingConges);
+  document.getElementById("weekCongesBar").classList.toggle("hidden", editingConges || editingStats);
+  document.getElementById("tableWrap").classList.toggle("hidden", editingConges || editingStats);
+  document.getElementById("validationZone").classList.toggle("hidden", editingConges || editingStats);
   document.getElementById("congesView").classList.toggle("hidden", !editingConges);
-  // La liste du personnel n'a aucune utilité en vue Congés et peut être très haute (une ligne par
-  // personne) : la masquer y libère la hauteur d'écran nécessaire à sizeCongesRows() pour tenir
-  // sans scroll vertical (trouvé le 21/07/2026 en testant en vrai -- c'était le vrai facteur
-  // bloquant, pas la hauteur des lignes du tableau congés lui-même).
-  document.getElementById("staffList").classList.toggle("hidden", editingConges);
+  document.getElementById("statsView").classList.toggle("hidden", !editingStats);
+  // La liste du personnel n'a aucune utilité en vue Congés/Stats et peut être très haute (une ligne
+  // par personne) : la masquer y libère la hauteur d'écran nécessaire (trouvé le 21/07/2026 en
+  // testant en vrai pour la vue Congés -- même raisonnement appliqué à la vue Stats).
+  document.getElementById("staffList").classList.toggle("hidden", editingConges || editingStats);
 
   // Panneau de droite entier masqué UNIQUEMENT en vue Personnel du planning principal (22/07/2026) :
   // ses lignes y dupliquent exactement celles du tableau (une par personne), donc plus aucune
@@ -1489,7 +1494,7 @@ function render() {
   // dans les vues où le panneau reste visible, donc elle doit physiquement y rester présente.
   const legend = document.getElementById("legend");
   const staffPanel = document.getElementById("staffPanel");
-  const inPersonnelView = currentView === "personnel" && !editingConges && !editingVacationSpecs;
+  const inPersonnelView = currentView === "personnel" && !editingConges && !editingVacationSpecs && !editingStats;
 
   if (inPersonnelView) {
     // Remontée au-dessus du tableau (avant `#weekCongesBar`), pour rester accessible pendant que
@@ -1508,6 +1513,8 @@ function render() {
 
   if (editingConges) {
     renderCongesView();
+  } else if (editingStats) {
+    renderStatsView();
   } else {
     renderTable();
     renderValidationZone();
@@ -2537,6 +2544,183 @@ function renderCongePopoverContent(person, monday) {
   document.getElementById("popClose").addEventListener("click", () => pop.classList.add("hidden"));
 }
 
+// ---------- Vue Stats (24/07/2026) ----------
+// But : voir en un coup d'œil si la répartition des vacations est équitable sur la semaine
+// affichée. Même structure de lignes que la vue Personnel (personMatchesFilters()/compareStaffOrder()),
+// mais les colonnes Jour x Créneau sont remplacées par un total + des badges par "famille" de
+// modalité, regroupés par COULEUR de spécialité (demande explicite de Samir) plutôt que par type.
+
+const STATS_FAMILY_LABELS = { scan: "Scan", irm: "IRM", ecn: "ECN", mammo: "Mammo" };
+const STATS_TYPE_ORDER = ["Scan", "IRM", "ECN", "Mammo"];
+
+// Scan A/B, IRM 1.5T/3T et ECN 1/2 doivent être fusionnés ("on s'en fiche de savoir si c'est A ou
+// B") -- réutilise le champ `group` déjà existant sur ACTIVITIES (ex. "scan-start"/"scan-end") en
+// retirant son suffixe, plutôt que d'inventer un nouveau mapping. Mammo n'a pas de `group` (une
+// seule modalité, pas de fusion nécessaire) -- retombe sur son id.
+function activityStatsFamily(activity) {
+  return activity.group ? activity.group.replace(/-(start|end)$/, "") : activity.id;
+}
+
+// Parcourt toutes les cases de la semaine donnée et compte, par personne, un badge par (famille,
+// spécialité) -- Scan U/Echo U (activity.urgence) restent toujours à part, jamais fusionnés, sans
+// notion de spécialité (demande explicite de Samir : "en rouge, pas flashy", voir statBadgeClass()).
+// Une case fermée (RG-010) ne compte jamais : rien n'a réellement été fait dessus cette semaine-là.
+function computeVacationStatsForWeek(monday) {
+  const stats = new Map(); // staffId -> { total, badges: Map(groupKey -> {count, label, specialite, isUrgence, activityId}) }
+
+  state.activities.forEach((activity) => {
+    DAYS.forEach((day) => {
+      CRENEAUX.forEach((creneau) => {
+        if (!isCreneauApplicable(activity.id, creneau.id)) return;
+        const key = cellKey(activity.id, day, creneau.id);
+        if (state.fermetures[key]) return;
+        const assigned = (state.assignments[key] || []).filter(Boolean);
+        if (assigned.length === 0) return;
+
+        let groupKey, label, specialite, isUrgence;
+        if (activity.urgence) {
+          groupKey = `urgence:${activity.id}`;
+          label = activity.nom;
+          specialite = null;
+          isUrgence = true;
+        } else {
+          const family = activityStatsFamily(activity);
+          specialite = state.vacationSpecialites[vacationSpecKey(activity.id, day, creneau.id)] || null;
+          groupKey = `${family}:${specialite || "none"}`;
+          label = STATS_FAMILY_LABELS[family] || activity.nom;
+          isUrgence = false;
+        }
+
+        assigned.forEach((staffId) => {
+          if (!staffById(staffId)) return; // id orphelin (personne supprimée depuis) -- ignoré comme partout ailleurs.
+          if (!stats.has(staffId)) stats.set(staffId, { total: 0, badges: new Map() });
+          const entry = stats.get(staffId);
+          entry.total++;
+          if (!entry.badges.has(groupKey)) {
+            entry.badges.set(groupKey, { count: 0, label, specialite, isUrgence, activityId: activity.id });
+          }
+          entry.badges.get(groupKey).count++;
+        });
+      });
+    });
+  });
+
+  return stats;
+}
+
+// Ordre des badges d'une personne : le rouge (urgences, sans spécialité) toujours en premier, puis
+// regroupés par COULEUR dans l'ordre canonique des spécialités (SPECIALITE_ORDER, le même partout
+// ailleurs dans l'appli) -- pas par type de modalité. Demande explicite de Samir le 24/07/2026 :
+// repérer d'un coup d'œil qui fait beaucoup d'une même spécialité, peu importe sur quelle modalité.
+// À couleur égale, Scan avant IRM avant ECN avant Mammo (STATS_TYPE_ORDER).
+function sortedStatsBadges(entry) {
+  const list = [...entry.badges.values()];
+  list.sort((a, b) => {
+    if (a.isUrgence !== b.isUrgence) return a.isUrgence ? -1 : 1;
+    if (a.isUrgence) {
+      return state.activities.findIndex((x) => x.id === a.activityId) - state.activities.findIndex((x) => x.id === b.activityId);
+    }
+    const aIdx = a.specialite ? SPECIALITE_ORDER.indexOf(a.specialite) : SPECIALITE_ORDER.length;
+    const bIdx = b.specialite ? SPECIALITE_ORDER.indexOf(b.specialite) : SPECIALITE_ORDER.length;
+    if (aIdx !== bIdx) return aIdx - bIdx;
+    return STATS_TYPE_ORDER.indexOf(a.label) - STATS_TYPE_ORDER.indexOf(b.label);
+  });
+  return list;
+}
+
+// Réutilise les classes de couleur déjà existantes : .chip.spec-xxx pour une spécialité connue, le
+// rouge "urgence" déjà utilisé ailleurs (.modalite-tag.urgence-tag) pour Scan U/Echo U, .spec-none
+// (gris) pour une vacation sans spécialité propriétaire renseignée -- aucune nouvelle couleur créée
+// pour cette vue, tout est déjà cohérent avec le reste de l'appli.
+function statBadgeClass(badge) {
+  if (badge.isUrgence) return "chip modalite-tag urgence-tag";
+  if (!badge.specialite) return "chip spec-none";
+  return `chip spec-${badge.specialite}`;
+}
+
+function renderStatsView() {
+  const container = document.getElementById("statsView");
+  container.innerHTML = "";
+
+  const monday = getMonday(state.weekOffset);
+  const stats = computeVacationStatsForWeek(monday);
+  const people = state.staff.filter(personMatchesFilters).sort(compareStaffOrder);
+
+  if (people.length === 0) {
+    container.innerHTML = '<p class="empty-hint">Aucune personne ne correspond aux filtres sélectionnés.</p>';
+    return;
+  }
+
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
+  const table = document.createElement("table");
+  table.className = "stats-table";
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th class="activity-cell person-name-cell">Personnel</th>
+        <th class="stats-total-header">Total</th>
+        <th>Vacations (${currentWeekLabel()})</th>
+      </tr>
+    </thead>
+  `;
+
+  const tbody = document.createElement("tbody");
+
+  people.forEach((person) => {
+    const tr = document.createElement("tr");
+
+    const nameCell = document.createElement("td");
+    nameCell.textContent = `${person.prenom[0]}. ${person.nom}`;
+    nameCell.title = `${person.prenom} ${person.nom}`;
+    nameCell.className = "activity-cell person-name-cell";
+    nameCell.style.cssText += personCellStyle(person);
+    tr.appendChild(nameCell);
+
+    const entry = stats.get(person.id);
+
+    const totalCell = document.createElement("td");
+    totalCell.className = "stats-total-cell";
+    const totalBadge = document.createElement("span");
+    totalBadge.className = "stats-total-badge";
+    totalBadge.textContent = entry ? entry.total : 0;
+    totalCell.appendChild(totalBadge);
+    tr.appendChild(totalCell);
+
+    const badgesCell = document.createElement("td");
+    badgesCell.className = "stats-badges-cell";
+
+    if (isFullyOnLeaveThisWeek(person)) {
+      // Ligne gardée visible plutôt que masquée (contrairement au panneau Personnel, voir
+      // isFullyOnLeaveThisWeek()) : un total à 0 sans explication laisserait croire à un oubli
+      // plutôt qu'à une absence -- voir aussi buildAbsenceBar() pour la même logique ailleurs.
+      const absence = document.createElement("span");
+      absence.className = "stats-absence-label";
+      absence.textContent = "Congés toute la semaine";
+      badgesCell.appendChild(absence);
+    } else if (!entry) {
+      const empty = document.createElement("span");
+      empty.className = "empty-hint";
+      empty.textContent = "Aucune vacation cette semaine.";
+      badgesCell.appendChild(empty);
+    } else {
+      sortedStatsBadges(entry).forEach((badge) => {
+        const span = document.createElement("span");
+        span.className = statBadgeClass(badge) + " stats-badge";
+        span.textContent = `${badge.count} ${badge.label}`;
+        badgesCell.appendChild(span);
+      });
+    }
+
+    tr.appendChild(badgesCell);
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  container.appendChild(wrap);
+}
+
 // ---------- Assignation ----------
 
 function removeAssignment(key, staffId) {
@@ -3235,29 +3419,50 @@ document.getElementById("staffModal").addEventListener("click", (e) => {
   if (e.target.id === "staffModal") closeStaffModal();
 });
 
-// Les deux modes plein-écran (Spécialités Vacations / Congés) remplacent tous deux le contenu
-// principal (voir render()) : ils sont mutuellement exclusifs, activer l'un désactive l'autre.
+// Les trois modes plein-écran (Spécialités Vacations / Congés / Stats) remplacent tous le contenu
+// principal (voir render()) : mutuellement exclusifs, activer l'un désactive les deux autres.
+// resetFullScreenModeButtons() factorise la remise à zéro du texte/état des boutons non concernés
+// (ajouté le 24/07/2026 avec Stats -- avant, dupliqué à la main dans chaque handler pour 2 boutons).
+function resetFullScreenModeButtons(exceptId) {
+  [
+    { id: "btnVacationSpecs", label: "Spécialités Vacations" },
+    { id: "btnConges", label: "Congés" },
+    { id: "btnStats", label: "Stats" },
+  ].forEach(({ id, label }) => {
+    if (id === exceptId) return;
+    const btn = document.getElementById(id);
+    btn.textContent = label;
+    btn.classList.remove("btn-active");
+  });
+}
+
 document.getElementById("btnVacationSpecs").addEventListener("click", () => {
   editingVacationSpecs = !editingVacationSpecs;
-  if (editingVacationSpecs) editingConges = false;
+  if (editingVacationSpecs) { editingConges = false; editingStats = false; }
   const btn = document.getElementById("btnVacationSpecs");
   btn.textContent = editingVacationSpecs ? "← Retour au planning" : "Spécialités Vacations";
   btn.classList.toggle("btn-active", editingVacationSpecs);
-  const congesBtn = document.getElementById("btnConges");
-  congesBtn.textContent = "Congés";
-  congesBtn.classList.remove("btn-active");
+  resetFullScreenModeButtons("btnVacationSpecs");
   render();
 });
 
 document.getElementById("btnConges").addEventListener("click", () => {
   editingConges = !editingConges;
-  if (editingConges) editingVacationSpecs = false;
+  if (editingConges) { editingVacationSpecs = false; editingStats = false; }
   const btn = document.getElementById("btnConges");
   btn.textContent = editingConges ? "← Retour au planning" : "Congés";
   btn.classList.toggle("btn-active", editingConges);
-  const specsBtn = document.getElementById("btnVacationSpecs");
-  specsBtn.textContent = "Spécialités Vacations";
-  specsBtn.classList.remove("btn-active");
+  resetFullScreenModeButtons("btnConges");
+  render();
+});
+
+document.getElementById("btnStats").addEventListener("click", () => {
+  editingStats = !editingStats;
+  if (editingStats) { editingVacationSpecs = false; editingConges = false; }
+  const btn = document.getElementById("btnStats");
+  btn.textContent = editingStats ? "← Retour au planning" : "Stats";
+  btn.classList.toggle("btn-active", editingStats);
+  resetFullScreenModeButtons("btnStats");
   render();
 });
 

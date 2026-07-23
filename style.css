@@ -113,6 +113,8 @@ body {
 .actions button.btn-accent3.btn-active:hover { background: #1e293b; }
 .actions button.btn-accent4 { background: #4338ca; }
 .actions button.btn-accent4:hover { background: #3730a3; }
+.actions button.btn-accent4.btn-active { background: #334155; }
+.actions button.btn-accent4.btn-active:hover { background: #1e293b; }
 
 /* Menu "⚙" (23/07/2026) -- regroupe Synchro GitHub / Export / Import / Réinitialiser, des actions
    ponctuelles/techniques qui n'ont pas besoin d'être en permanence visibles comme les 3 boutons de
@@ -1268,6 +1270,52 @@ tr.group-end td {
   background: #e0e7ff;
   color: #3730a3;
   border-color: #4338ca;
+}
+
+/* ---------- Vue Stats (24/07/2026) ---------- */
+/* Colonnes Total + badges par famille de modalité, à la place des colonnes Jour x Créneau -- même
+   structure de lignes que la vue Personnel (voir .person-name-cell, déjà défini plus haut). */
+.stats-table {
+  min-width: auto;
+}
+.stats-total-header {
+  text-align: center;
+  width: 60px;
+}
+.stats-total-cell {
+  text-align: center;
+  vertical-align: middle;
+}
+.stats-total-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: #334155;
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+}
+.stats-badges-cell {
+  padding: 8px;
+}
+/* .chip.stats-badge : légère majoration du poids/de la taille par rapport à un .chip normal (qui
+   sert surtout de petite pastille dans une case de planning) -- ici c'est le contenu principal de
+   la colonne, doit se lire aussi facilement que le total. Couleurs héritées de .chip.spec-xxx /
+   .modalite-tag.urgence-tag / .spec-none, aucune nouvelle couleur définie ici. */
+.chip.stats-badge {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 9px;
+  margin: 2px 4px 2px 0;
+}
+.stats-absence-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #7f1d1d;
 }
 
 /* Utilitaire générique -- volontairement tout en bas du fichier : à spécificité égale (une seule
