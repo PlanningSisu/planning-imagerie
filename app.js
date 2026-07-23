@@ -72,6 +72,59 @@ function matchSpecialiteHeader(line) {
   return [...new Set(resolved)];
 }
 
+// RG-016 (24/07/2026) : reconnaît une ligne "Hors Sisu" auto-suffisante, ex.
+// "VILTART Sylvain - Hors sisu sénior OS" ou juste "MAAREK Kevin - Hors Sisu" -- indépendante des
+// en-têtes de grade/spécialité en cours (pas besoin d'un bloc "Seniors"/"Internes" au-dessus,
+// contrairement au format historique). Découpe sur le PREMIER " - " : tout avant = le nom, tout
+// après = à analyser pour grade/spécialité. Ne matche que sur le mot-clé "hors" seul (pas "hors
+// sisu" en entier) -- tolère une coquille comme "Hors siso" rencontrée dans un cas réel, sans avoir
+// besoin de distance de Levenshtein ici (le mot "hors" seul seul suffit à ne jamais matcher une
+// ligne normale par accident).
+function matchHorsSisuLine(line) {
+  const idx = line.indexOf(" - ");
+  if (idx === -1) return null;
+  const namePart = line.slice(0, idx).trim();
+  const restTokens = line.slice(idx + 3).split(/[\s-]+/).map(normalizeToken).filter(Boolean);
+  if (!restTokens.includes("hors")) return null;
+
+  let grade = null;
+  if (restTokens.includes("senior") || restTokens.includes("seniors")) grade = "senior";
+  else if (restTokens.includes("interne") || restTokens.includes("internes")) grade = "interne";
+
+  const specialite = restTokens.map((t) => SPECIALITE_ALIASES[t]).find((s) => s && s !== "__socle__") || null;
+
+  return { namePart, grade, specialite };
+}
+
+// Découpe un nom brut au format ARI (voir aussi ariNameTokenSet() dans la section import ARI) en
+// {prenom, nom} -- nécessaire ici (contrairement à l'import ARI) car on CRÉE une nouvelle personne,
+// pas juste une comparaison insensible à l'ordre. Heuristique en 3 temps, du plus fiable au moins
+// fiable :
+// 1. Un seul mot (ex. "Sassoui-Abdelhakim") : coupé sur le tiret si possible (mieux qu'un prénom
+//    vide, qui casserait l'affichage -- ex. person.prenom[0] -- un peu partout dans l'appli).
+// 2. Au moins un mot TOUT EN MAJUSCULES : c'est le nom de famille (ARI écrit indifféremment
+//    "NOM Prénom" ou "Prénom NOM"), le reste = prénom.
+// 3. Aucune casse distinctive (ex. "Sajust de Bergues de Escalup Aurore") : le dernier mot = prénom
+//    (cas réel confirmé), le reste = nom -- convention la plus fréquente pour un nom de famille
+//    composé avec particule.
+function splitAriStyleName(namePart) {
+  const tokens = namePart.split(/\s+/).filter(Boolean);
+  if (tokens.length === 1) {
+    const hyphenParts = tokens[0].split("-");
+    if (hyphenParts.length >= 2) {
+      return { prenom: hyphenParts[0], nom: hyphenParts.slice(1).join("-") };
+    }
+    return { prenom: tokens[0], nom: tokens[0] };
+  }
+  const isAllCaps = (t) => t === t.toUpperCase() && t !== t.toLowerCase();
+  const capsTokens = tokens.filter(isAllCaps);
+  const normalTokens = tokens.filter((t) => !isAllCaps(t));
+  if (capsTokens.length > 0 && normalTokens.length > 0) {
+    return { nom: capsTokens.join(" "), prenom: normalTokens.join(" ") };
+  }
+  return { prenom: tokens[tokens.length - 1], nom: tokens.slice(0, -1).join(" ") };
+}
+
 // Analyse le texte collé et renvoie { results, ignored }. results = personnes détectées, avec un
 // flag "duplicate" si quelqu'un du même nom existe déjà (pour ne pas le recréer par mégarde).
 function parseBulkStaffText(text) {
@@ -95,6 +148,19 @@ function parseBulkStaffText(text) {
     const specs = matchSpecialiteHeader(line);
     if (specs !== null) {
       currentSpecialites = specs;
+      return;
+    }
+
+    // RG-016 : ligne "Hors Sisu" auto-suffisante -- indépendante de currentGrade/currentSpecialites,
+    // reconnue même sans en-tête "Seniors"/"Internes" au-dessus (voir matchHorsSisuLine()).
+    const horsSisuMatch = matchHorsSisuLine(line);
+    if (horsSisuMatch) {
+      const { prenom, nom } = splitAriStyleName(horsSisuMatch.namePart);
+      const specialites = horsSisuMatch.specialite ? [horsSisuMatch.specialite] : [];
+      const duplicate = state.staff.some(
+        (p) => normalizeToken(p.prenom) === normalizeToken(prenom) && normalizeToken(p.nom) === normalizeToken(nom)
+      );
+      results.push({ prenom, nom, grade: horsSisuMatch.grade, specialites, horsSisu: true, duplicate, include: !duplicate });
       return;
     }
 
@@ -3114,15 +3180,21 @@ function renderBulkPreview(container, parseResult) {
     chip.textContent = `${r.prenom} ${r.nom}`;
     row.appendChild(chip);
 
-    const gradeLabel = r.grade === "senior" ? "Sénior" : "Interne";
+    // RG-016 : un grade absent (personne Hors Sisu sans grade renseigné) n'est ni "Sénior" ni
+    // "Interne" -- éviter de retomber sur "Interne" par défaut (trompeur, voir même piège déjà
+    // corrigé dans renderStaffPerson()).
+    const gradeLabel = r.grade === "senior" ? "Sénior" : r.grade === "interne" ? "Interne" : "Hors Sisu";
     const specLabel = r.specialites.length
       ? r.specialites.map((s) => SPECIALITES[s].label).join(" + ")
       : r.grade === "interne"
       ? "Socle"
-      : "spécialité non détectée";
+      : r.grade === "senior"
+      ? "spécialité non détectée"
+      : "";
+    const horsSisuSuffix = r.horsSisu && r.grade ? " · Hors Sisu" : ""; // grade absent -> déjà dit par gradeLabel, pas de doublon
     const info = document.createElement("span");
     info.className = "bulk-preview-info";
-    info.textContent = `${gradeLabel} — ${specLabel}${r.duplicate ? " · déjà existant" : ""}`;
+    info.textContent = `${gradeLabel}${specLabel ? " — " + specLabel : ""}${horsSisuSuffix}${r.duplicate ? " · déjà existant" : ""}`;
     row.appendChild(info);
 
     list.appendChild(row);
@@ -3147,7 +3219,7 @@ function renderBulkPreview(container, parseResult) {
     results
       .filter((r) => r.include)
       .forEach((r) => {
-        state.staff.push({ id: generateStaffId(), prenom: r.prenom, nom: r.nom, grade: r.grade, specialites: r.specialites });
+        state.staff.push({ id: generateStaffId(), prenom: r.prenom, nom: r.nom, grade: r.grade, specialites: r.specialites, horsSisu: !!r.horsSisu });
       });
     saveState();
     render();
