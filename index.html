@@ -26,12 +26,14 @@
         <button id="btnMoreMenu" class="btn-gear" title="Plus d'options">⚙</button>
         <div id="moreMenu" class="dropdown-menu hidden">
           <button type="button" id="btnFileSync">Synchro GitHub</button>
+          <button type="button" id="btnImportAri">Importer extract ARI (absences)</button>
           <button type="button" id="btnExport">Exporter (JSON)</button>
           <button type="button" id="btnImport">Importer (JSON)</button>
           <button type="button" id="btnReset">Réinitialiser le planning</button>
         </div>
       </div>
       <input type="file" id="fileInput" accept="application/json" hidden>
+      <input type="file" id="ariFileInput" accept=".xlsx" hidden>
     </div>
   </header>
 
@@ -76,6 +78,21 @@
     </div>
   </div>
 
+  <div id="ariImportModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Importer extract ARI (absences)</h2>
+        <span class="close-btn" id="ariImportModalClose">×</span>
+      </div>
+      <div class="modal-body" id="ariImportModalBody"></div>
+    </div>
+  </div>
+
+  <!-- SheetJS (23/07/2026) -- seule dépendance externe de tout le projet, nécessaire pour lire un
+       vrai fichier .xlsx côté navigateur (le format .xlsx est une archive ZIP+XML, pas quelque
+       chose de raisonnable à re-coder à la main). Version figée (pas de "@latest") pour ne jamais
+       changer de comportement sans qu'on s'en rende compte. Voir CLAUDE.md pour la justification. -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
