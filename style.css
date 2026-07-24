@@ -232,12 +232,15 @@ body {
   border-radius: 6px;
   margin-left: 4px;
   white-space: nowrap;
-  /* Largeur fixe (24/07/2026) : le texte varie beaucoup selon le statut ("à jour" ~102px vs
-     "erreur d'enregistrement" ~201px, mesuré en vrai) -- sans min-width, chaque changement de
-     statut redimensionnait cette pastille et décalait tout ce qui suit dans la topbar (flèches de
-     semaine, boutons). 205px couvre le texte le plus long avec une petite marge ; centré pour ne
-     pas laisser un texte court collé à gauche dans une pastille plus large que nécessaire. */
-  min-width: 205px;
+  /* Largeur fixe (24/07/2026) : le texte varie selon le statut -- sans min-width, chaque
+     changement de statut redimensionnait cette pastille et décalait tout ce qui suit dans la
+     topbar (flèches de semaine, boutons). Revu le même jour, une fois les libellés raccourcis
+     (fileSyncStatusShortLabel() -- "À jour"/"Enregistrement"/"Erreur"/... au lieu de "Synchro :
+     erreur d'enregistrement" en toutes lettres) : 110px suffit désormais ("Enregistrement" ~101px
+     mesuré en vrai est le plus long), au lieu des 205px nécessaires avant. Libellé complet toujours
+     disponible au survol (attribut title). Centré pour ne pas laisser un texte court collé à
+     gauche dans une pastille plus large que nécessaire. */
+  min-width: 110px;
   text-align: center;
 }
 .file-sync-status.file-sync-disconnected { background: #374151; color: #d1d5db; }

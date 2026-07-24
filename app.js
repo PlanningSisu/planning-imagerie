@@ -545,6 +545,18 @@ let githubFileSha = null; // sha du blob actuellement connu -- exigé par l'API 
 let fileWriteTimer = null;
 let fileWriteInFlight = false;
 let fileWritePending = false; // une modif est arrivée PENDANT une écriture déjà en cours -- à rejouer une fois celle-ci terminée.
+// Bug réel remonté par Samir le 24/07/2026 : "Réinitialiser le planning" (ou toute action utilisant
+// confirm()) faisait réapparaître les affectations juste effacées. Cause -- confirm()/alert() sont
+// des dialogues natifs qui déclenchent un blur/focus de la fenêtre ; l'événement "focus" (voir plus
+// bas) ne peut s'exécuter qu'une fois le code synchrone du clic terminé (JS mono-thread), donc APRÈS
+// que saveState() ait DÉJÀ programmé une écriture différée de 400ms (scheduleFileSave()) -- mais
+// fileWriteInFlight/fileWritePending sont encore tous les deux `false` à ce moment précis (l'écriture
+// n'a pas encore DÉMARRÉ). Le focus déclenchait donc un reloadFromGitHub() qui relisait l'ANCIEN
+// contenu (pas encore écrasé par notre reset, toujours dans les 400ms d'attente) et l'appliquait
+// par-dessus l'état tout juste réinitialisé. `hasUnflushedChange` comble ce trou : positionné de
+// façon SYNCHRONE dès qu'un changement est programmé (avant que le focus différé ait pu s'exécuter),
+// et retiré seulement après une écriture réussie ET sans changement plus récent en attente derrière.
+let hasUnflushedChange = false;
 let fileSyncStatus = "disconnected"; // "disconnected" | "ok" | "saving" | "error" | "invalid-token" | "conflict"
 
 function getGitHubToken() {
@@ -626,11 +638,28 @@ function fileSyncStatusLabel() {
   }
 }
 
+// Libellé court pour la pastille de la topbar (24/07/2026, demande de Samir : "Synchro :
+// erreur d'enregistrement" prenait trop de place). fileSyncStatusLabel() reste la version complète
+// -- utilisée dans la modale "Synchro GitHub" (`Statut : ...`), qui n'a pas cette contrainte de place.
+function fileSyncStatusShortLabel() {
+  switch (fileSyncStatus) {
+    case "ok": return "À jour";
+    case "saving": return "Enregistrement";
+    case "error": return "Erreur";
+    case "invalid-token": return "Jeton invalide";
+    case "conflict": return "Conflit";
+    default: return "Non connecté";
+  }
+}
+
 function setFileSyncStatus(status) {
   fileSyncStatus = status;
   const el = document.getElementById("fileSyncStatus");
   if (!el) return;
-  el.textContent = `Synchro : ${fileSyncStatusLabel()}`;
+  el.textContent = fileSyncStatusShortLabel();
+  // Le préfixe "Synchro" a disparu du texte visible (trop long) mais reste accessible au survol,
+  // avec le libellé complet -- pour ne pas perdre le contexte "c'est le statut de synchro GitHub".
+  el.title = `Synchro GitHub : ${fileSyncStatusLabel()}`;
   el.className = "file-sync-status file-sync-" + status;
 }
 
@@ -639,6 +668,7 @@ function setFileSyncStatus(status) {
 // modif arrivant pendant une écriture en cours est rejouée juste après, jamais perdue).
 function scheduleFileSave() {
   if (!getGitHubToken()) return; // pas connecté -- localStorage seul, rien à faire ici.
+  hasUnflushedChange = true; // positionné en synchrone, avant même le délai de 400ms -- voir plus haut.
   clearTimeout(fileWriteTimer);
   fileWriteTimer = setTimeout(flushFileSave, 400);
 }
@@ -654,9 +684,14 @@ async function flushFileSave() {
   try {
     await writeStateToGitHub();
     setFileSyncStatus("ok");
+    // Ne retire le "changement non sauvegardé" que si rien de plus récent n'attend déjà derrière
+    // (sinon la relance juste en dessous s'en chargera à SA propre réussite).
+    if (!fileWritePending) hasUnflushedChange = false;
   } catch (err) {
     console.error("Échec de l'écriture vers GitHub :", err);
     setFileSyncStatus(err.code || "error");
+    // hasUnflushedChange reste `true` : l'échec laisse un changement local toujours pas persisté,
+    // un rechargement au focus ne doit surtout pas l'écraser avec l'ancien contenu.
   } finally {
     fileWriteInFlight = false;
     if (fileWritePending) {
@@ -719,9 +754,11 @@ async function tryAutoConnectGitHub() {
 
 // Re-tente une lecture silencieuse quand l'onglet reprend le focus -- utile si l'autre poste a
 // modifié le fichier pendant que cet onglet restait ouvert en arrière-plan. Ignoré si une écriture
-// locale est en cours/en attente, pour ne jamais écraser une modif pas encore sauvegardée.
+// locale est en cours/en attente/programmée (hasUnflushedChange, voir sa déclaration plus haut --
+// bug réel corrigé le 24/07/2026 : confirm()/alert() déclenchent un focus dont le traitement était
+// jusque-là plus rapide que le début effectif de l'écriture différée de 400ms).
 window.addEventListener("focus", () => {
-  if (!getGitHubToken() || fileWriteInFlight || fileWritePending) return;
+  if (!getGitHubToken() || fileWriteInFlight || fileWritePending || hasUnflushedChange) return;
   reloadFromGitHub().catch((e) => console.warn("Rechargement au focus impossible.", e));
 });
 
@@ -3429,7 +3466,13 @@ document.getElementById("fileInput").addEventListener("change", (e) => {
 
 document.getElementById("btnReset").addEventListener("click", () => {
   // Ne touche plus au personnel (devenu une vraie donnée éditée à la main) : uniquement le planning.
-  if (!confirm("Réinitialiser le planning ? Toutes les affectations (qui est posté où) et les fermetures de la semaine seront supprimées. Le personnel et les spécialités de vacation ne sont pas concernés.")) return;
+  // RG-017 (24/07/2026) : depuis la Trame Personnel, vider state.assignments ne suffit plus à tout
+  // effacer visuellement -- les cases jamais touchées cette semaine retombent automatiquement sur
+  // la trame (effectiveAssignedIds()), donc réapparaissent aussitôt après ce reset. Confirmé avec
+  // Samir le 24/07/2026 que c'est le comportement VOULU (pas un bug) : seul un retrait manuel (×)
+  // découple une case précise de la trame. Le texte de confirmation l'explique maintenant
+  // explicitement, pour ne plus laisser croire à un reset cassé.
+  if (!confirm("Réinitialiser le planning ? Toutes les affectations posées à la main (qui est posté où) et les fermetures de la semaine seront supprimées. Les cases qui suivent la Trame Personnel réapparaîtront automatiquement (retire-les à la main, avec le ×, si tu ne veux pas qu'elles reviennent). Le personnel et les spécialités de vacation ne sont pas concernés.")) return;
   state.assignments = {};
   state.fermetures = {};
   saveState();
