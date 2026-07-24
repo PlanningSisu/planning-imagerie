@@ -1426,6 +1426,31 @@ tr.group-end td {
   color: #7f1d1d;
 }
 
+/* Trame Personnel (24/07/2026) : Samir veut voir toute la semaine (5 jours x 3 créneaux) sans
+   scroll horizontal sur cette page précise. `table` fixe un `min-width: 900px` global -- neutralisé
+   ici comme .stats-table le fait déjà. Padding resserré par rapport aux 14px/10px génériques, mais
+   le vrai verrou était ailleurs : `.slot-cell` (la case assignable, partagée avec la vue Modalité/
+   Personnel) fixe `min-width: 110px` -- confirmé en mesurant en vrai que réduire juste le padding
+   ne changeait quasiment rien (1773px -> 1761px seulement) tant que ce min-width tenait bon.
+   Rabaissé ici à 70px, scopé à `.trame-personnel-table` uniquement pour ne pas resserrer les cases
+   du tableau principal (RG-015, colonnes de garde, pastilles plus grandes...) qui n'ont pas été
+   concernées par la demande. Une case qui accueille effectivement plusieurs modalités reste libre
+   de dépasser ce plancher (min-width, pas une largeur fixe) -- seules les cases vides (la majorité)
+   se resserrent. */
+.trame-personnel-table {
+  min-width: auto;
+}
+.trame-personnel-table th,
+.trame-personnel-table td {
+  padding: 8px 4px;
+}
+.trame-personnel-table .creneau-header {
+  font-size: 11px;
+}
+.trame-personnel-table .slot-cell {
+  min-width: 70px;
+}
+
 /* Utilitaire générique -- volontairement tout en bas du fichier : à spécificité égale (une seule
    classe), la règle déclarée en dernier gagne. Placé plus haut, il perdait contre .validation-zone
    { display: flex } (déclarée plus bas) et #validationZone.hidden restait visible -- bug réel

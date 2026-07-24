@@ -1590,7 +1590,14 @@ function render() {
   // dans les vues où le panneau reste visible, donc elle doit physiquement y rester présente.
   const legend = document.getElementById("legend");
   const staffPanel = document.getElementById("staffPanel");
-  const inPersonnelView = currentView === "personnel" && !editingConges && !editingVacationSpecs && !editingStats && !editingTramePersonnel;
+  // Trame Personnel (24/07/2026) rejoint ce même traitement -- demandé par Samir ("filtres en haut
+  // comme sur cette page", en référence à la vraie vue Personnel) : ses lignes sont aussi une par
+  // personne, la liste de droite y est tout aussi redondante, et masquer tout le panneau libère la
+  // largeur nécessaire pour voir Vendredi sans scroll horizontal, exactement la même raison qui a
+  // fait remonter la légende ici pour la vraie vue Personnel (voir juste en dessous).
+  const inPersonnelView =
+    editingTramePersonnel ||
+    (currentView === "personnel" && !editingConges && !editingVacationSpecs && !editingStats);
 
   if (inPersonnelView) {
     // Remontée au-dessus du tableau (avant `#weekCongesBar`), pour rester accessible pendant que
