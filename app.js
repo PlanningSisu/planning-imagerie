@@ -2626,8 +2626,12 @@ function activityStatsFamily(activity) {
 // spécialité) -- Scan U/Echo U (activity.urgence) restent toujours à part, jamais fusionnés, sans
 // notion de spécialité (demande explicite de Samir : "en rouge, pas flashy", voir statBadgeClass()).
 // Une case fermée (RG-010) ne compte jamais : rien n'a réellement été fait dessus cette semaine-là.
+// `days` (Set des jours DAYS couverts par au moins une assignation, toutes activités/créneaux
+// confondus) alimente le regroupement par disponibilité de renderStatsView() (24/07/2026, voir
+// statsAvailabilityTier()) -- pas juste `total`, qui ne dit rien de la répartition dans la semaine
+// (5 vacations le même jour vs 1 par jour ont le même total mais pas la même disponibilité).
 function computeVacationStatsForWeek(monday) {
-  const stats = new Map(); // staffId -> { total, badges: Map(groupKey -> {count, label, specialite, isUrgence, activityId}) }
+  const stats = new Map(); // staffId -> { total, badges: Map(groupKey -> {count, label, specialite, isUrgence, activityId}), days: Set }
 
   state.activities.forEach((activity) => {
     DAYS.forEach((day) => {
@@ -2654,9 +2658,10 @@ function computeVacationStatsForWeek(monday) {
 
         assigned.forEach((staffId) => {
           if (!staffById(staffId)) return; // id orphelin (personne supprimée depuis) -- ignoré comme partout ailleurs.
-          if (!stats.has(staffId)) stats.set(staffId, { total: 0, badges: new Map() });
+          if (!stats.has(staffId)) stats.set(staffId, { total: 0, badges: new Map(), days: new Set() });
           const entry = stats.get(staffId);
           entry.total++;
+          entry.days.add(day);
           if (!entry.badges.has(groupKey)) {
             entry.badges.set(groupKey, { count: 0, label, specialite, isUrgence, activityId: activity.id });
           }
@@ -2667,6 +2672,21 @@ function computeVacationStatsForWeek(monday) {
   });
 
   return stats;
+}
+
+// Regroupement par disponibilité (24/07/2026, demande de Samir) : au-delà du tri habituel
+// (compareStaffOrder -- grade/spécialité/alphabétique), les lignes de la vue Stats sont d'abord
+// réparties en 3 blocs selon le nombre de jours couverts par au moins une vacation cette semaine :
+// 0 (haut) = a des vacations mais pas tous les jours -- probablement encore de la place, à regarder
+//            en priorité pour compléter le planning ;
+// 1 (milieu) = aucune vacation du tout cette semaine ;
+// 2 (bas) = postée tous les jours ouvrés -- plus de marge, pas la peine de la regarder en premier.
+// `stats` est le résultat de computeVacationStatsForWeek(), déjà calculé une fois par rendu.
+function statsAvailabilityTier(person, stats) {
+  const daysCount = stats.has(person.id) ? stats.get(person.id).days.size : 0;
+  if (daysCount === 0) return 1;
+  if (daysCount === DAYS.length) return 2;
+  return 0;
 }
 
 // Ordre des badges d'une personne : le rouge (urgences, sans spécialité) toujours en premier, puis
@@ -2705,7 +2725,13 @@ function renderStatsView() {
 
   const monday = getMonday(state.weekOffset);
   const stats = computeVacationStatsForWeek(monday);
-  const people = state.staff.filter(personMatchesFilters).sort(compareStaffOrder);
+  // Tri à deux niveaux : d'abord le bloc de disponibilité (statsAvailabilityTier(), voir plus haut),
+  // puis à l'intérieur d'un bloc le tri habituel (grade/spécialité/alphabétique, comme partout ailleurs).
+  const people = state.staff.filter(personMatchesFilters).sort((a, b) => {
+    const tierDiff = statsAvailabilityTier(a, stats) - statsAvailabilityTier(b, stats);
+    if (tierDiff !== 0) return tierDiff;
+    return compareStaffOrder(a, b);
+  });
 
   if (people.length === 0) {
     container.innerHTML = '<p class="empty-hint">Aucune personne ne correspond aux filtres sélectionnés.</p>';
