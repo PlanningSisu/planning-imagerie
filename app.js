@@ -2998,15 +2998,41 @@ function computeVacationStatsForWeek(monday) {
 // elle-même). Exemple donné par Samir : en semaine 5, la colonne montre le total des semaines
 // 4-3-2-1, jamais la semaine 5 en cours.
 //
-// Parcourt directement les clés de state.assignments (pas effectiveAssignedIds()/la trame : RG-017
-// exclut déjà explicitement les semaines passées de tout mécanisme de repli -- une semaine passée
-// jamais remplie doit rester comptée pour 0, pas se faire deviner depuis la trame). Astreinte n'est
-// possible que sur Scan U (RG-012), donc seules les clés "<semaine>|scan-u|<jour>|astreinte" sont
-// concernées ; comparaison de `weekKeyPart` en chaîne ISO (comme partout ailleurs dans l'appli,
-// l'ordre lexicographique suffit pour des dates "YYYY-MM-DD").
+// Repli sur la trame ajouté le 24/07/2026 (bug remonté par Samir : "je ne vois pas le compteur
+// s'incrémenter") -- une astreinte posée uniquement via la Trame Personnel (RG-017) n'est JAMAIS
+// matérialisée dans state.assignments pour une semaine précise tant que personne n'y touche à la
+// main ; une fois cette semaine passée, elle restait donc invisible ici pour toujours (comptée 0)
+// alors qu'elle avait bien eu lieu selon la trame -- confirmé en reproduisant : effectiveAssignedIds()
+// montrait bien la trame pour la semaine affichée, mais state.assignments n'avait aucune entrée, et
+// le compteur restait à 0 une fois la semaine devenue passée. Question posée à Samir (compter la
+// trame au risque qu'un futur changement de trame modifie rétroactivement l'historique, vs ne
+// compter que ce qui a été matérialisé à la main) -- il a choisi de compter la trame aussi.
+// Astreinte n'est possible que sur Scan U (RG-012), donc seules les clés
+// "<semaine>|scan-u|<jour>|astreinte" sont concernées ; comparaison de `weekKeyPart` en chaîne ISO
+// (comme partout ailleurs dans l'appli, l'ordre lexicographique suffit pour des dates "YYYY-MM-DD").
 function computePastAstreinteCounts(monday) {
   const counts = new Map(); // staffId -> nombre d'astreintes sur des semaines strictement avant `monday`.
   const currentWeekKey = weekKey(monday);
+
+  // Semaines pour lesquelles l'outil a une preuve d'usage réel (au moins une affectation posée,
+  // n'importe quelle activité) -- sert de borne au repli trame ci-dessous, pour ne jamais inventer
+  // une semaine antérieure à l'usage réel de l'outil (une trame configurée aujourd'hui ne doit pas
+  // fabriquer de fausses astreintes pour des semaines d'avant que l'outil n'existe/ne soit utilisé).
+  const trackedWeeks = new Set();
+  Object.keys(state.assignments).forEach((key) => trackedWeeks.add(key.split("|")[0]));
+
+  trackedWeeks.forEach((wk) => {
+    if (wk >= currentWeekKey) return; // semaine affichée ou future -- jamais comptée ici.
+    DAYS.forEach((day) => {
+      const key = `${wk}|scan-u|${day}|astreinte`;
+      if (Object.prototype.hasOwnProperty.call(state.assignments, key)) return; // vraie valeur déjà là, traitée juste en dessous, prioritaire sur la trame.
+      if (state.fermetures[key]) return; // RG-010 : case fermée cette semaine-là, rien de réel dessus.
+      (state.trame[`scan-u|${day}|astreinte`] || []).forEach((staffId) => {
+        if (!staffById(staffId)) return;
+        counts.set(staffId, (counts.get(staffId) || 0) + 1);
+      });
+    });
+  });
 
   Object.keys(state.assignments).forEach((key) => {
     const [weekKeyPart, activityId, , creneauId] = key.split("|");
