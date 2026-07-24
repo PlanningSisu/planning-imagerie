@@ -1621,7 +1621,9 @@ function renderTable() {
   const thead = document.createElement("thead");
 
   const dayRow = document.createElement("tr");
-  dayRow.appendChild(document.createElement("th"));
+  const cornerTh = document.createElement("th");
+  cornerTh.className = "corner-cell";
+  dayRow.appendChild(cornerTh);
   const headerMonday = getMonday(state.weekOffset);
   const headerWeekDates = weekIsoDates(headerMonday);
   DAYS.forEach((day, dayIdx) => {
@@ -2376,7 +2378,9 @@ function renderCongesView() {
 
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
-  headRow.appendChild(document.createElement("th"));
+  const congesCornerTh = document.createElement("th");
+  congesCornerTh.className = "corner-cell";
+  headRow.appendChild(congesCornerTh);
   const personHeaderCells = []; // parallèle à `people`, pour surligner la colonne au survol d'une case.
   people.forEach((p, i) => {
     const th = document.createElement("th");

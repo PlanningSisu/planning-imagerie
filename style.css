@@ -589,6 +589,43 @@ thead th {
   position: sticky;
   top: 0;
   font-size: 13px;
+  z-index: 2;
+}
+
+/* Colonne figée (24/07/2026, demande de Samir -- comportement par défaut, façon "figer les
+   volets" Excel) : la 1re colonne de chaque tableau (nom de modalité/personne en vue Modalité/
+   Personnel/Spécialités Vacations/Stats via .activity-cell, date de semaine en vue Congés via
+   .conges-week-label) reste visible pendant le défilement horizontal du tableau (.table-wrap,
+   déjà overflow-x:auto). Fonctionne car chaque variante a déjà un fond opaque (uni ou en style
+   inline selon la spécialité) -- une cellule de tableau sans fond explicite est transparente par
+   défaut, ce qui laisserait les colonnes défilées apparaître par transparence en dessous pendant
+   le scroll. .conges-week-label n'avait justement aucun fond par défaut (seuls ses variantes
+   .conges-current-week/.conges-highlight en posent un) : ajouté ici en blanc, identique au fond
+   de .table-wrap donc invisible en temps normal, mais nécessaire dès que la colonne devient figée. */
+.activity-cell {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+
+.conges-week-label {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #ffffff;
+}
+
+/* Coin haut-gauche de chaque tableau (au-dessus de la colonne figée) : sticky à la fois en haut
+   ET à gauche, avec un z-index plus élevé que les autres cellules d'en-tête (thead th ci-dessus,
+   sticky en haut seulement) -- sinon, à z-index égal, l'ordre du DOM ferait passer les en-têtes
+   de jour/créneau/personne (plus loin dans le <tr>) AU-DESSUS du coin pendant le défilement
+   horizontal. `.modalite-header` (bouton de bascule Modalité/Personnel, ou libellé "Spécialité de
+   la vacation") joue ce rôle de coin dans le tableau principal ; `.corner-cell` est posée en JS
+   sur les <th> vides équivalents (1re ligne d'en-tête du tableau principal, coin de la vue Congés). */
+.modalite-header,
+.corner-cell {
+  left: 0;
+  z-index: 3;
 }
 
 .day-header {
