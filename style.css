@@ -622,6 +622,30 @@ thead th {
   color: #475569;
 }
 
+/* Focus jour / demi-journée (24/07/2026) : cliquer sur un en-tête filtre le panneau Personnel
+   (voir toggleStaffFocusFilter() dans app.js). `.day-header` fixe déjà son fond en !important
+   (voir plus haut) -- la variante focus doit faire de même pour gagner, la spécificité seule
+   (deux classes) ne suffit pas à battre un !important. */
+.day-header-focusable,
+.creneau-header-focusable {
+  cursor: pointer;
+}
+
+.day-header-focusable:hover,
+.creneau-header-focusable:hover {
+  background: #e0e7ff;
+}
+
+.day-header.focus-active {
+  background: #a5b4fc !important;
+}
+
+.creneau-header.focus-active {
+  background: #a5b4fc;
+  color: #1e1b4b;
+  font-weight: 700;
+}
+
 .modalite-header {
   text-align: left;
   font-size: 12px;

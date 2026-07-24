@@ -287,6 +287,16 @@ let congesQuarter = currentQuarter(new Date());
 // directement la semaine déjà sélectionnée (state.weekOffset) comme le reste de l'appli.
 let editingStats = false;
 
+// Focus jour / demi-journée (24/07/2026) : cliquer sur l'en-tête d'un jour (ou d'un créneau précis
+// sous ce jour) dans le tableau principal filtre le panneau Personnel (#staffList) pour ne montrer
+// que les personnes PRÉSENTES ce jour-là (RG-014 : ni congé ni repos de garde) ET PAS DÉJÀ POSTÉES
+// sur ce jour/créneau. `creneauId: null` = jour entier (les 3 créneaux comptent comme "posté" s'ils
+// ont ne serait-ce qu'une assignation) ; `creneauId` renseigné = seul ce créneau précis compte.
+// Non persisté (comme currentView) -- state transitoire d'UI, remis à zéro au rechargement.
+// Un second clic sur exactement la même cible (même day + même creneauId) l'annule -- voir
+// toggleStaffFocusFilter().
+let staffFocusFilter = null;
+
 // Filtres du panneau Personnel : OR à l'intérieur d'une catégorie, ET entre les deux catégories.
 // grades: "senior" | "interne". specialites: "digestif"|"uro"|"gyneco"|"thorax"|"socle".
 // Réutilisés tels quels par la vue Congés (colonnes filtrées par les mêmes puces, voir 6.x
@@ -1617,7 +1627,12 @@ function renderTable() {
   DAYS.forEach((day, dayIdx) => {
     const th = document.createElement("th");
     th.colSpan = CRENEAUX.length;
-    th.className = "day-header";
+    th.className = "day-header day-header-focusable";
+    if (staffFocusFilter && staffFocusFilter.day === day && staffFocusFilter.creneauId === null) {
+      th.classList.add("focus-active");
+    }
+    th.title = "Cliquer pour filtrer le personnel présent et disponible ce jour";
+    th.addEventListener("click", () => toggleStaffFocusFilter(day, null));
 
     const label = document.createElement("div");
     label.className = "day-header-label";
@@ -1656,11 +1671,16 @@ function renderTable() {
     modaliteTh.appendChild(toggleBtn);
   }
   creneauRow.appendChild(modaliteTh);
-  DAYS.forEach(() => {
+  DAYS.forEach((day) => {
     CRENEAUX.forEach((c) => {
       const th = document.createElement("th");
       th.textContent = c.label;
-      th.className = "creneau-header";
+      th.className = "creneau-header creneau-header-focusable";
+      if (staffFocusFilter && staffFocusFilter.day === day && staffFocusFilter.creneauId === c.id) {
+        th.classList.add("focus-active");
+      }
+      th.title = "Cliquer pour filtrer le personnel présent et disponible sur ce créneau";
+      th.addEventListener("click", () => toggleStaffFocusFilter(day, c.id));
       creneauRow.appendChild(th);
     });
   });
@@ -1686,6 +1706,38 @@ function renderTable() {
 function isPersonAbsentOnDay(staffId, day) {
   const iso = weekIsoDates(getMonday(state.weekOffset))[DAYS.indexOf(day)];
   return isOnCongeDay(staffId, iso) || isOnReposGardeDay(staffId, iso);
+}
+
+// Bascule le focus jour/demi-journée (voir déclaration de staffFocusFilter) : un clic sur exactement
+// la même cible (même day + même creneauId, `null` compris pour "jour entier") l'annule, un clic sur
+// une cible différente (autre jour, ou même jour mais créneau différent) la remplace.
+function toggleStaffFocusFilter(day, creneauId) {
+  if (staffFocusFilter && staffFocusFilter.day === day && staffFocusFilter.creneauId === creneauId) {
+    staffFocusFilter = null;
+  } else {
+    staffFocusFilter = { day, creneauId };
+  }
+  render();
+}
+
+// `staffId` est-elle déjà postée sur le jour/créneau du focus actif -- toutes activités confondues ?
+// creneauId `null` (jour entier) regarde les 3 créneaux ; un créneau précis n'en regarde qu'un seul
+// (ex. "Lundi Matin" ignore une éventuelle présence l'après-midi du même jour).
+function isPersonPostedInFocus(staffId, day, creneauId) {
+  const creneauIds = creneauId ? [creneauId] : CRENEAUX.map((c) => c.id);
+  return state.activities.some((activity) =>
+    creneauIds.some((cId) => (state.assignments[cellKey(activity.id, day, cId)] || []).includes(staffId))
+  );
+}
+
+// Filtre du panneau Personnel dérivé du focus actif (voir staffFocusFilter) : présente ce jour-là
+// (RG-014, ni congé ni repos de garde) ET pas déjà postée sur le jour/créneau ciblé. Renvoie true
+// (rien à filtrer) si aucun focus n'est actif.
+function personMatchesFocusFilter(person) {
+  if (!staffFocusFilter) return true;
+  const { day, creneauId } = staffFocusFilter;
+  if (isPersonAbsentOnDay(person.id, day)) return false;
+  return !isPersonPostedInFocus(person.id, day, creneauId);
 }
 
 // Construit une case assignable de la vue Modalité pour une activité/jour/créneau donnés.
@@ -2209,7 +2261,10 @@ function renderStaffList() {
   const ul = document.getElementById("staffList");
   ul.innerHTML = "";
 
-  const visible = state.staff.filter(personMatchesFilters).filter((p) => !isFullyOnLeaveThisWeek(p));
+  const visible = state.staff
+    .filter(personMatchesFilters)
+    .filter((p) => !isFullyOnLeaveThisWeek(p))
+    .filter(personMatchesFocusFilter);
   const normalVisible = visible.filter((p) => !p.horsSisu);
   // RG-016 : à part, jamais mélangées aux séniors/internes (pas forcément de grade/spécialité) --
   // triées alphabétiquement, toujours en dernier (voir compareStaffOrder()/renderFoldableHeader ci-dessous).
