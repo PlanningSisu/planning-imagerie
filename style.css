@@ -966,6 +966,18 @@ tr.group-end td {
   color: #b91c1c;
 }
 
+/* RG-017 (24/07/2026) : teinte l'étiquette de modalité selon la spécialité "propriétaire" de la
+   vacation (Trame Vacation), même palette que .chip.spec-xxx (pastilles de personnel) et .tint-xxx
+   (fond des cases en vue Modalité). `.chip.modalite-tag` (2 classes) et `.chip.spec-xxx` (2 classes)
+   ont la même spécificité -- sans ce préfixe à 3 classes, `.chip.modalite-tag` (déclaré après)
+   gagnerait et l'étiquette resterait grise. Pas de variante `.spec-none` : sans spécialité
+   renseignée, l'étiquette reste neutre (comme une case sans teinte en vue Modalité). */
+.chip.modalite-tag.spec-digestif { background: var(--spec-digestif-bg); border-color: var(--spec-digestif-border); color: var(--spec-digestif-text); }
+.chip.modalite-tag.spec-uro { background: var(--spec-uro-bg); border-color: var(--spec-uro-border); color: var(--spec-uro-text); }
+.chip.modalite-tag.spec-gyneco { background: var(--spec-gyneco-bg); border-color: var(--spec-gyneco-border); color: var(--spec-gyneco-text); }
+.chip.modalite-tag.spec-thorax { background: var(--spec-thorax-bg); border-color: var(--spec-thorax-border); color: var(--spec-thorax-text); }
+.chip.modalite-tag.spec-os { background: var(--spec-os-bg); border-color: var(--spec-os-border); color: var(--spec-os-text); }
+
 .chip .remove {
   margin-left: 5px;
   cursor: pointer;

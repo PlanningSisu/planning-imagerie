@@ -1755,7 +1755,7 @@ function renderTable() {
   const modaliteTh = document.createElement("th");
   modaliteTh.className = "modalite-header";
   if (editingVacationSpecs) {
-    modaliteTh.textContent = "Spécialité de la vacation";
+    modaliteTh.textContent = "Trame Vacation";
   } else {
     const toggleBtn = document.createElement("button");
     toggleBtn.type = "button";
@@ -2235,7 +2235,13 @@ function renderPersonnelRows(tbody) {
 // depuis les pastilles "déjà assigné" à l'intérieur d'un popover.
 function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
   const tag = document.createElement("span");
-  tag.className = "chip modalite-tag" + (activity.urgence ? " urgence-tag" : "");
+  // RG-017 (24/07/2026) : teinte l'étiquette selon la spécialité "propriétaire" de la vacation
+  // (Trame Vacation, state.vacationSpecialites) -- même code couleur que la teinte de fond des
+  // cases en vue Modalité (.tint-xxx), pour repérer d'un coup d'œil "cette vacation est la case
+  // Uro" même depuis la vue Personnel. `key` est un cellKey() (avec weekKey) -- on retire ce
+  // préfixe via trameKeyFromCellKey() pour retomber sur le format de vacationSpecKey().
+  const vacSpec = state.vacationSpecialites[trameKeyFromCellKey(key)];
+  tag.className = "chip modalite-tag" + (activity.urgence ? " urgence-tag" : "") + (vacSpec ? ` spec-${vacSpec}` : "");
   tag.textContent = activity.nom;
   if (draggable) {
     tag.draggable = true;
@@ -2947,7 +2953,10 @@ function removeTrameAssignment(key, staffId) {
 // (contrairement à buildModaliteTag(), jamais utilisé dans un contexte non-draggable comme un popover).
 function buildTrameModaliteTag(activity, key, staffId) {
   const tag = document.createElement("span");
-  tag.className = "chip modalite-tag" + (activity.urgence ? " urgence-tag" : "");
+  // RG-017 : même teinte par spécialité que buildModaliteTag() -- `key` est déjà au format
+  // trameKey()/vacationSpecKey() ici (pas de weekKey à retirer), lecture directe.
+  const vacSpec = state.vacationSpecialites[key];
+  tag.className = "chip modalite-tag" + (activity.urgence ? " urgence-tag" : "") + (vacSpec ? ` spec-${vacSpec}` : "");
   tag.textContent = activity.nom;
   tag.draggable = true;
   tag.addEventListener("dragstart", (e) => {
