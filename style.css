@@ -27,22 +27,8 @@
 
 * { box-sizing: border-box; }
 
-html {
-  height: 100%;
-}
-
-/* Corps de page borné à la hauteur du viewport (24/07/2026, "figer le volet des jours") --
-   nécessaire pour que le gel d'en-tête (thead th, voir plus bas) fonctionne réellement : sans
-   hauteur bornée, c'est la PAGE entière qui défile (jamais .table-wrap), et `position: sticky`
-   sur thead th n'a jamais l'occasion de s'activer -- confirmé en testant en vrai le 24/07/2026
-   (le thead sort entièrement de l'écran au scroll, aucun effet de gel). display:flex column ici
-   + flex:1/min-height:0 en cascade jusqu'à .table-wrap/#staffList (voir plus bas) fait que seules
-   ces zones défilent en interne, le reste (topbar, légende, nav) reste toujours visible. */
 body {
   margin: 0;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
   font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   background: var(--bg);
   color: #111827;
@@ -57,7 +43,6 @@ body {
   background: var(--header-bg);
   color: var(--header-text);
   padding: 12px 20px;
-  flex-shrink: 0;
 }
 
 .topbar h1 {
@@ -540,47 +525,29 @@ main {
   display: flex;
   gap: 16px;
   padding: 16px;
-  flex: 1;
-  min-height: 0;
+  align-items: flex-start;
 }
 
 .planning-column {
   flex: 1;
   min-width: 0;
-  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-/* .table-wrap devient la zone défilante en interne (voir commentaire sur `body` plus haut) :
-   flex:1/min-height:0 la fait consommer tout l'espace vertical restant dans sa colonne flex
-   (.planning-column, ou .view-fill pour Congés/Stats/Trame Personnel ci-dessous), et overflow-y:
-   auto lui donne un vrai scrollport interne -- condition nécessaire pour que `position: sticky`
-   (thead th, .activity-cell, .conges-week-label, .corner-cell, déjà posés plus bas) s'active
-   réellement au lieu de rester lettre morte. */
+/* .table-wrap reçoit une max-height calculée en JS (sizeTableWrapMaxHeight(), voir app.js), PAS en
+   CSS/flexbox (24/07/2026, tentative flexbox pleine page abandonnée -- voir piège en section 2 de
+   CLAUDE.md : ça comprimait le tableau même quand il tenait très bien avant, en empêchant la page
+   de simplement défiler comme avant pour les vues courtes). overflow-y:auto ici est nécessaire pour
+   que la max-height calculée produise un vrai scrollport interne quand le contenu dépasse -- sans
+   dépasser, aucun scroll n'apparaît, comportement identique à avant. */
 .table-wrap {
   overflow-x: auto;
   overflow-y: auto;
-  flex: 1;
-  min-height: 0;
   background: white;
   border-radius: 10px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-}
-
-/* Conteneurs des vues Congés/Stats/Trame Personnel (24/07/2026) : chacun injecte son propre
-   .table-wrap (parfois précédé d'une nav, ex. année/trimestre en vue Congés) -- doit donc être
-   lui-même une colonne flex bornée (flex:1/min-height:0) pour que CE .table-wrap interne puisse
-   à son tour occuper l'espace restant et défiler. Classe posée dans index.html, volontairement
-   AVANT .hidden dans ce fichier (même spécificité qu'une classe -- .hidden doit gagner par ordre
-   de déclaration quand la vue est masquée, voir commentaire sur .hidden tout en bas). */
-.view-fill {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  flex: 1;
-  min-height: 0;
 }
 
 /* ---------- Bandeau congés de la semaine (au-dessus du planning, 22/07/2026) ---------- */
@@ -627,17 +594,7 @@ main {
   border-radius: 10px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
   display: flex;
-  overflow-x: hidden; /* pour que les fonds teintés des colonnes respectent le rayon arrondi */
-  /* Bornée (24/07/2026, "figer le volet des jours") : dans une colonne flex bornée à la hauteur du
-     viewport (.planning-column, voir plus haut), un flex-item sans min-height explicite refuse par
-     défaut de rétrécir sous la hauteur de son contenu -- avec beaucoup de RG en écart, ça pouvait
-     écraser .table-wrap (flex:1, min-height:0, donc lui accepte de rétrécir) jusqu'à 0px, masquant
-     tout le tableau. Confirmé en testant en vrai le 24/07/2026. Un plafond + défilement interne
-     dédié règle ça : le tableau garde la priorité sur l'espace vertical, cette zone défile toute
-     seule si elle a besoin de plus de place. */
-  max-height: 240px;
-  overflow-y: auto;
-  flex-shrink: 0;
+  overflow: hidden; /* pour que les fonds teintés des colonnes respectent le rayon arrondi */
 }
 .validation-col {
   flex: 1;
@@ -1093,9 +1050,6 @@ tr.group-end td {
   padding: 14px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
   flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
 }
 #staffPanel h2 {
   font-size: 15px;
@@ -1144,9 +1098,6 @@ tr.group-end td {
   padding: 0;
   margin: 0;
   font-size: 13px;
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
 }
 #staffList li {
   padding: 4px 0;

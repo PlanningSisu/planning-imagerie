@@ -1692,7 +1692,34 @@ function render() {
 
   renderLegend();
   renderStaffList();
+  sizeTableWrapMaxHeight();
 }
+
+// Hauteur max de .table-wrap calculée en JS (24/07/2026, "figer le volet des jours") -- PAS en CSS/
+// flexbox : une tentative flexbox pleine page a été abandonnée le même jour (comprimait le tableau
+// même quand il tenait très bien avant en empêchant la page de simplement défiler comme avant pour
+// les vues courtes -- voir piège en section 2 de CLAUDE.md). Mesure la place réellement disponible
+// jusqu'en bas de la fenêtre à partir de la position réelle de .table-wrap (pas une valeur devinée,
+// même principe que sizeCongesRows() un peu plus bas) : si le contenu tient déjà dans cet espace,
+// cette max-height ne change rien de visible (aucun scroll, comportement identique à avant) ; sinon,
+// .table-wrap (overflow-y:auto, voir style.css) défile en interne avec en-tête/colonne gelés
+// (position: sticky, déjà posé pour la colonne figée, voir §6.18 CLAUDE.md).
+function sizeTableWrapMaxHeight() {
+  const margin = 16; // même marge que le padding de `main`, pour ne pas coller au bord de la fenêtre
+  const minHeight = 160; // plancher pour rester utilisable même sur une petite fenêtre
+  document.querySelectorAll(".table-wrap").forEach((wrap) => {
+    if (wrap.offsetParent === null) return; // masqué (display:none sur wrap lui-même ou un ancêtre .hidden)
+    const top = wrap.getBoundingClientRect().top;
+    const maxH = Math.max(minHeight, Math.floor(window.innerHeight - top - margin));
+    wrap.style.maxHeight = `${maxH}px`;
+  });
+}
+
+let tableWrapResizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(tableWrapResizeTimer);
+  tableWrapResizeTimer = setTimeout(sizeTableWrapMaxHeight, 150);
+});
 
 // Retrace tout ce qui consulte staffFilters (légende, liste de droite, et depuis le 22/07/2026 la
 // vue Congés et la vue Personnel du planning principal) -- factorisé pour rester la même liste
@@ -1709,6 +1736,7 @@ function refreshAfterFilterChange() {
   if (editingStats) renderStatsView();
   if (editingTramePersonnel) renderTramePersonnelView(); // même piège que Stats -- voir commentaire ci-dessus.
   if (!editingConges && !editingVacationSpecs && !editingStats && !editingTramePersonnel && currentView === "personnel") renderTable();
+  sizeTableWrapMaxHeight();
 }
 
 function toggleStaffFilter(category, value) {
