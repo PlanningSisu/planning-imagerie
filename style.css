@@ -890,6 +890,15 @@ tr.group-end td {
 .slot-cell.cell-absence-repos:hover {
   background: #fecaca;
 }
+/* RG-018 ("Jour Off", 24/07/2026) : contrairement à congé/repos ci-dessus, cette case reste
+   interactive (l'étiquette "Off" elle-même se gère normalement, comme n'importe quelle modalité --
+   seul l'AJOUT d'une autre activité par-dessus est refusé, voir handleModaliteDrop()). Teinte
+   sobre et distincte du rouge des absences (pas un blocage total) pour signaler "créneau Off" au
+   coup d'œil sans le confondre avec une vraie absence. */
+.slot-cell.cell-off-marked {
+  background: #fef3c7;
+}
+
 .absence-label {
   position: absolute;
   top: 50%;

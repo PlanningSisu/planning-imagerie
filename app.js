@@ -1403,13 +1403,21 @@ function validateAbsences() {
         if (state.fermetures[key]) return; // RG-010 : case fermée, aucune vérification attendue.
         const assigned = effectiveAssignedIds(key);
         assigned.forEach((staffId) => {
-          if (!isPersonAbsentOnDay(staffId, day)) return;
           const person = staffById(staffId);
           if (!person) return;
-          violations.push({
-            rg: "RG-014",
-            message: `${activity.nom}, ${day} ${creneau.label} : ${person.prenom} ${person.nom} est absent(e) ce jour-là.`,
-          });
+          if (isPersonAbsentOnDay(staffId, day)) {
+            violations.push({
+              rg: "RG-014",
+              message: `${activity.nom}, ${day} ${creneau.label} : ${person.prenom} ${person.nom} est absent(e) ce jour-là.`,
+            });
+          } else if (activity.id !== "off" && isPersonOffOnSlot(staffId, day, creneau.id)) {
+            // RG-018 : filet de sécurité si Off + une autre activité coexistent malgré tout sur ce
+            // créneau (le popover d'ajout n'est volontairement pas filtré, voir renderPersonnelRows()).
+            violations.push({
+              rg: "RG-018",
+              message: `${activity.nom}, ${day} ${creneau.label} : ${person.prenom} ${person.nom} est en Off ce créneau-là.`,
+            });
+          }
         });
       });
     });
@@ -1531,9 +1539,16 @@ function buildAssignedChip(person, key, day) {
   // RG-014 (24/07/2026, retour de Samir) : le contour rouge posé sur toute la case
   // (.cell-absence-violation) ne disait pas QUI, parmi plusieurs personnes assignées, est la
   // personne absente en cause -- entoure désormais aussi la pastille de la personne concernée.
+  // RG-018 (même jour) : même traitement pour un conflit Off (créneau précis, pas jour entier) --
+  // `activityId` (extrait de `key`) évite de flaguer l'activité "off" elle-même contre son propre
+  // statut.
+  const [activityId, , creneauId] = trameKeyFromCellKey(key).split("|");
   if (isPersonAbsentOnDay(person.id, day)) {
     chip.classList.add("chip-absence-violation");
     chip.title = `${person.prenom} ${person.nom} est absent(e) ce jour-là`;
+  } else if (activityId !== "off" && isPersonOffOnSlot(person.id, day, creneauId)) {
+    chip.classList.add("chip-absence-violation");
+    chip.title = `${person.prenom} ${person.nom} est en Off ce créneau-là`;
   }
   chip.textContent = `${person.prenom[0]}. ${person.nom}`;
   chip.draggable = true;
@@ -1577,10 +1592,13 @@ function handleAssignmentDrop(e, targetKey, day) {
   const sourceKey = e.dataTransfer.getData("application/x-source-key");
   if (sourceKey && sourceKey === targetKey) return false;
 
-  // RG-014 : une personne en congé ou en repos de garde ce jour-là ne peut pas être posée --
-  // bloqué ici au niveau du glisser-déposer (le popover d'ajout, lui, n'est pas filtré : si une
-  // absence s'y glisse quand même, elle remonte en violation + contour rouge, voir buildModaliteCell()).
-  if (isPersonAbsentOnDay(staffId, day)) return false;
+  // RG-014/RG-018 : une personne en congé, en repos de garde, ou en Off ce créneau-là ne peut pas
+  // être posée -- bloqué ici au niveau du glisser-déposer (le popover d'ajout, lui, n'est pas
+  // filtré : si un conflit s'y glisse quand même, il remonte en violation + contour rouge, voir
+  // buildModaliteCell()). `targetActivityId`/`targetCreneauId` extraits de targetKey (déjà un
+  // cellKey(), pas besoin de les faire remonter comme paramètres séparés).
+  const [targetActivityId, , targetCreneauId] = trameKeyFromCellKey(targetKey).split("|");
+  if (isAssignmentBlockedByAbsence(staffId, day, targetCreneauId, targetActivityId)) return false;
 
   // RG-017 : matérialise systématiquement (source ET cible) avant de modifier -- une case source
   // encore purement issue de la trame (jamais touchée cette semaine) n'a pas de clé explicite dans
@@ -1852,6 +1870,26 @@ function isPersonAbsentOnDay(staffId, day) {
   return isOnCongeDay(staffId, iso) || isOnReposGardeDay(staffId, iso);
 }
 
+// RG-018 ("Jour Off", 24/07/2026, demande de Samir) : "Off" (nom interne d'activité `off`, voir
+// ACTIVITIES) se déclare comme n'importe quelle modalité -- typiquement dans la Trame Personnel
+// (RG-017), d'où un effet sur la semaine affichée via effectiveAssignedIds() (trame ou affectation
+// réelle de cette semaine précise, peu importe). Contrairement à RG-014 (congé/repos, toute la
+// journée), Off bloque seulement le CRÉNEAU précis où il est posé (demi-journée) -- Off le matin
+// n'empêche pas de poster la même personne l'après-midi du même jour.
+function isPersonOffOnSlot(staffId, day, creneauId) {
+  return effectiveAssignedIds(cellKey("off", day, creneauId)).includes(staffId);
+}
+
+// Point d'entrée unique combinant RG-014 (congé/repos, jour entier) et RG-018 (Off, créneau précis)
+// -- "cette personne peut-elle être postée sur CETTE activité, ce jour, ce créneau ?". `activityId`
+// sert uniquement à ne jamais bloquer l'activité "off" elle-même contre son propre statut (la
+// poser n'est pas un conflit, c'est l'affectation normale de Off).
+function isAssignmentBlockedByAbsence(staffId, day, creneauId, activityId) {
+  if (isPersonAbsentOnDay(staffId, day)) return true;
+  if (activityId !== "off" && isPersonOffOnSlot(staffId, day, creneauId)) return true;
+  return false;
+}
+
 // Bascule le focus jour/demi-journée (voir déclaration de staffFocusFilter) : un clic sur exactement
 // la même cible (même day + même creneauId, `null` compris pour "jour entier") l'annule, un clic sur
 // une cible différente (autre jour, ou même jour mais créneau différent) la remplace.
@@ -1942,11 +1980,12 @@ function buildModaliteCell(activity, day, creneau) {
       addCellGroup(seniors);
       addCellGroup(internes);
 
-      // RG-014 : filet de sécurité si une personne absente s'est malgré tout retrouvée assignée
-      // (ex. congé déclaré après coup, ou ajoutée via le popover -- seul le glisser-déposer est
-      // bloqué en amont, voir plus bas). Contour rouge, en plus de la violation dans la zone du
-      // moteur (validateAbsences()), pour repérer directement la case en cause dans le tableau.
-      if (people.some((p) => isPersonAbsentOnDay(p.id, day))) {
+      // RG-014/RG-018 : filet de sécurité si une personne absente (ou en Off ce créneau, sur une
+      // AUTRE activité que "off") s'est malgré tout retrouvée assignée (ex. congé déclaré après
+      // coup, ou ajoutée via le popover -- seul le glisser-déposer est bloqué en amont, voir plus
+      // bas). Contour rouge, en plus de la violation dans la zone du moteur (validateAbsences()),
+      // pour repérer directement la case en cause dans le tableau.
+      if (people.some((p) => isPersonAbsentOnDay(p.id, day) || (activity.id !== "off" && isPersonOffOnSlot(p.id, day, creneau.id)))) {
         td.classList.add("cell-absence-violation");
       }
     }
@@ -2241,6 +2280,14 @@ function renderPersonnelRows(tbody) {
         }
 
         const activitiesHere = activitiesForPersonSlot(person.id, day, creneau.id);
+        // RG-018 : Off se déclare comme une activité normale (via la Trame Personnel typiquement),
+        // donc son étiquette s'affiche ici comme n'importe quelle autre -- pas de blocage total de
+        // la case façon congé (qui se gère depuis une vue séparée) : on peut toujours cliquer pour
+        // gérer/retirer Off via le popover. Seul l'AJOUT d'une autre activité par-dessus est
+        // bloqué, au niveau du glisser-déposer (handleModaliteDrop()) -- le popover, lui, n'est
+        // volontairement pas filtré (même logique que RG-014, voir buildModaliteCell()) : un ajout
+        // malgré tout remonte en violation + contour rouge sur l'étiquette en cause.
+        const isOff = isPersonOffOnSlot(person.id, day, creneau.id);
 
         if (activitiesHere.length === 0) {
           const hint = document.createElement("span");
@@ -2254,6 +2301,8 @@ function renderPersonnelRows(tbody) {
           });
         }
 
+        if (isOff) td.classList.add("cell-off-marked");
+
         td.addEventListener("click", () => openPersonAssignPopover(person, day, creneau, td));
 
         td.addEventListener("dragover", (e) => {
@@ -2266,7 +2315,10 @@ function renderPersonnelRows(tbody) {
         td.addEventListener("drop", (e) => {
           e.preventDefault();
           td.classList.remove("drag-over");
-          handleModaliteDrop(e, person.id, day, creneau.id);
+          if (!handleModaliteDrop(e, person.id, day, creneau.id)) {
+            td.classList.add("drop-rejected");
+            setTimeout(() => td.classList.remove("drop-rejected"), 400);
+          }
         });
 
         tr.appendChild(td);
@@ -2286,8 +2338,26 @@ function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
   // cases en vue Modalité (.tint-xxx), pour repérer d'un coup d'œil "cette vacation est la case
   // Uro" même depuis la vue Personnel. `key` est un cellKey() (avec weekKey) -- on retire ce
   // préfixe via trameKeyFromCellKey() pour retomber sur le format de vacationSpecKey().
+  const [, tagDay, tagCreneauId] = trameKeyFromCellKey(key).split("|");
   const vacSpec = state.vacationSpecialites[trameKeyFromCellKey(key)];
-  tag.className = "chip modalite-tag" + (activity.urgence ? " urgence-tag" : "") + (vacSpec ? ` spec-${vacSpec}` : "");
+  // RG-014/RG-018 (24/07/2026) : même logique de contour rouge que buildAssignedChip() côté vue
+  // Modalité -- ne peut arriver ici que via le popover (vue Personnel bloque déjà le glisser-déposer
+  // en amont, voir handleModaliteDrop()), filet de sécurité pour rester cohérent visuellement.
+  const isViolation =
+    isPersonAbsentOnDay(staffId, tagDay) ||
+    (activity.id !== "off" && isPersonOffOnSlot(staffId, tagDay, tagCreneauId));
+  tag.className = "chip modalite-tag" +
+    (activity.urgence ? " urgence-tag" : "") +
+    (vacSpec ? ` spec-${vacSpec}` : "") +
+    (isViolation ? " chip-absence-violation" : "");
+  if (isViolation) {
+    const person = staffById(staffId);
+    if (person) {
+      tag.title = isPersonAbsentOnDay(staffId, tagDay)
+        ? `${person.prenom} ${person.nom} est absent(e) ce jour-là`
+        : `${person.prenom} ${person.nom} est en Off ce créneau-là`;
+    }
+  }
   tag.textContent = activity.nom;
   if (draggable) {
     tag.draggable = true;
@@ -2314,12 +2384,17 @@ function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
 // la personne et le créneau viennent de la case cible (ligne/colonne).
 function handleModaliteDrop(e, targetStaffId, targetDay, targetCreneauId) {
   const activityId = e.dataTransfer.getData("application/x-activity-id");
-  if (!activityId) return;
-  if (!isCreneauApplicable(activityId, targetCreneauId)) return; // RG-012 : astreinte réservée à Scan U.
+  if (!activityId) return false;
+  if (!isCreneauApplicable(activityId, targetCreneauId)) return false; // RG-012 : astreinte réservée à Scan U.
   const draggedStaffId = e.dataTransfer.getData("text/plain");
   const sourceKey = e.dataTransfer.getData("application/x-source-key");
   const targetKey = cellKey(activityId, targetDay, targetCreneauId);
-  if (sourceKey === targetKey) return;
+  if (sourceKey === targetKey) return false;
+
+  // RG-014/RG-018 : la case cible n'est plus bloquée en amont pour Off (contrairement à congé/repos,
+  // voir renderPersonnelRows()) -- vérifié ici à la place, pour ne pas permettre d'y glisser une
+  // AUTRE activité par-dessus.
+  if (isAssignmentBlockedByAbsence(targetStaffId, targetDay, targetCreneauId, activityId)) return false;
 
   // RG-017 : voir le commentaire équivalent dans handleAssignmentDrop() -- matérialiser avant de
   // modifier, sinon une case source encore purement issue de la trame ne perdrait jamais son
@@ -2333,6 +2408,7 @@ function handleModaliteDrop(e, targetStaffId, targetDay, targetCreneauId) {
   }
   saveState();
   render();
+  return true;
 }
 
 function renderStaffPerson(ul, person, { divider = false, boxed = false, boxEnd = false } = {}) {
@@ -3217,6 +3293,12 @@ function renderTramePersonnelView() {
             td.appendChild(buildTrameModaliteTag(activity, key, person.id));
           });
         }
+
+        // RG-018 : simple repère visuel ici (pas de blocage -- la trame elle-même n'empêche pas de
+        // cumuler Off et une autre activité sur le même créneau, seule la semaine réelle l'interdit,
+        // voir handleAssignmentDrop()/handleModaliteDrop()). But : voir d'un coup d'œil qu'un
+        // créneau Off existe déjà avant d'y ajouter autre chose par erreur.
+        if (activitiesHere.some((a) => a.id === "off")) td.classList.add("cell-off-marked");
 
         td.addEventListener("click", () => openTramePersonPopover(person, day, creneau, td));
 
