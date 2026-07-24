@@ -108,6 +108,23 @@ body {
 .week-nav button#btnTrame.btn-active { background: #334155; }
 .week-nav button#btnTrame.btn-active:hover { background: #1e293b; }
 
+/* "Retour Planning" (24/07/2026) -- même correctif de taille que .btn-today/#btnTrame ci-dessus,
+   couleur neutre distincte pour ne pas se confondre avec "Trame" (teal) juste à côté. Toujours en
+   premier dans .week-nav (avant les flèches ← →), donc au même endroit quel que soit l'écran --
+   contrairement à Trame/Congés/Stats qui ne redeviennent "← Retour au planning" que depuis LEUR
+   propre bouton, jamais au même endroit selon d'où on revient. */
+.week-nav button.btn-back-planning {
+  width: auto;
+  height: auto;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #475569;
+  color: white;
+  white-space: nowrap;
+}
+.week-nav button.btn-back-planning:hover { background: #334155; }
+
 /* Sous-onglets du mode Trame (24/07/2026) : bascule "Spécialités Vacations" / "Trame Personnel"
    (voir #trameSubNav dans index.html, trameView dans app.js) -- pilule à 2 segments, même teinte
    que le bouton "Trame" pour rester visuellement rattaché à ce mode. */

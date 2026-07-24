@@ -3458,6 +3458,19 @@ document.getElementById("btnCurrentWeek").addEventListener("click", () => {
   render();
 });
 
+// "Retour Planning" (24/07/2026, demande de Samir) : bouton fixe, toujours au même endroit dans la
+// topbar (à gauche de la flèche ← de navigation de semaine), quel que soit l'écran affiché --
+// contrairement aux boutons Trame/Congés/Stats, qui ne redeviennent "← Retour au planning" que
+// lorsque LEUR PROPRE mode est actif (donc jamais au même endroit selon d'où on revient). Un seul
+// clic ici désactive les 3 modes plein-écran d'un coup, peu importe lequel était actif.
+document.getElementById("btnBackToPlanning").addEventListener("click", () => {
+  editingTrame = false;
+  editingConges = false;
+  editingStats = false;
+  resetFullScreenModeButtons(); // aucun exceptId -- remet les 3 boutons à leur libellé/état normal.
+  render();
+});
+
 // ---------- Export / Import / Reset ----------
 
 document.getElementById("btnExport").addEventListener("click", () => {
