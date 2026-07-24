@@ -271,11 +271,22 @@ const staffPanelCollapsed = {
 // (lignes = personnel, on y voit où chacun est posté). Bascule via le bouton d'en-tête.
 let currentView = "modalite";
 
-// Mode indépendant du toggle ci-dessus : édition des spécialités "propriétaires" de chaque
-// vacation (bouton dédié dans la topbar). Prend le pas sur currentView quand actif.
+// Mode "Trame" (24/07/2026, remplace l'ancien bouton "Spécialités Vacations" isolé -- déplacé à
+// côté d'"Aujourd'hui" dans la topbar, voir index.html) : regroupe 2 sous-vues structurelles
+// (indépendantes de la semaine affichée) sous un même mode plein-écran, mutuellement exclusif avec
+// Congés/Stats comme avant -- editingTrame joue exactement le rôle qu'avait editingVacationSpecs
+// seul jusqu'ici. trameView choisit la sous-vue affichée : "specs" = ancienne vue "Spécialités
+// Vacations" (comportement inchangé), "personnel" = nouvelle "Trame Personnel" (RG-017, planning de
+// base récurrent, voir renderTramePersonnelView() plus bas). Non persisté (comme currentView).
+let editingTrame = false;
+let trameView = "specs"; // "specs" | "personnel"
+// Dérivées, recalculées en tête de render() -- gardées comme variables à part (plutôt que
+// remplacées partout par `editingTrame && trameView === "specs"`) pour ne pas devoir toucher tout
+// le reste du code qui consultait déjà editingVacationSpecs avant l'existence du mode Trame.
 let editingVacationSpecs = false;
+let editingTramePersonnel = false;
 
-// Vue congés (bouton dédié dans la topbar, mutuellement exclusive avec editingVacationSpecs --
+// Vue congés (bouton dédié dans la topbar, mutuellement exclusive avec editingTrame --
 // les deux remplacent le contenu principal, voir render()). Trimestre/année affichés, non persistés
 // (comme currentView) : on repart du trimestre courant à chaque rechargement.
 let editingConges = false;
@@ -283,7 +294,7 @@ let congesYear = new Date().getFullYear();
 let congesQuarter = currentQuarter(new Date());
 
 // Vue Stats (24/07/2026, bouton dédié) : 3e mode plein-écran, mutuellement exclusif avec
-// editingVacationSpecs/editingConges (voir render()). Pas d'état de navigation propre -- utilise
+// editingTrame/editingConges (voir render()). Pas d'état de navigation propre -- utilise
 // directement la semaine déjà sélectionnée (state.weekOffset) comme le reste de l'appli.
 let editingStats = false;
 
@@ -401,7 +412,7 @@ const STORAGE_KEY = "planningAppState_v3";
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 1;
+const STATE_SCHEMA_VERSION = 2;
 
 // Clé = version de départ, valeur = fonction qui transforme les données de cette version vers la
 // version suivante (N -> N+1, jamais un saut direct). migrateState() les enchaîne jusqu'à
@@ -411,6 +422,10 @@ const STATE_MIGRATIONS = {
   // 0 -> 1 : introduction du champ schemaVersion lui-même -- aucune autre transformation de
   // structure n'est nécessaire, les champs listés dans PERSISTED_KEYS n'ont pas changé de forme.
   0: (data) => data,
+  // 1 -> 2 : ajout de `trame` (RG-017, Trame Personnel, 24/07/2026) -- un nouveau champ, pas un
+  // changement de forme d'un champ existant, mais on suit quand même la politique de migration
+  // pour qu'un vieux fichier sans `trame` du tout reparte sur un objet vide plutôt que `undefined`.
+  1: (data) => ({ ...data, trame: data.trame || {} }),
 };
 
 function migrateState(rawData) {
@@ -440,7 +455,7 @@ function migrateState(rawData) {
 // pour ne jamais en oublier un dans l'un des trois chemins). Délibérément SANS `activities` (piloté
 // par le code, jamais par des données utilisateur -- voir CLAUDE.md §4) ni `schemaVersion` (ajouté à
 // part par buildPersistedState()).
-const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "fermetures", "conges", "gardes", "weekOffset"];
+const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "fermetures", "conges", "gardes", "trame", "weekOffset"];
 
 function buildPersistedState() {
   const data = { schemaVersion: STATE_SCHEMA_VERSION };
@@ -458,6 +473,7 @@ function applyPersistedState(rawData) {
   state.fermetures = data.fermetures || {};
   state.conges = Array.isArray(data.conges) ? data.conges : [];
   state.gardes = Array.isArray(data.gardes) ? data.gardes : [];
+  state.trame = data.trame || {};
   if (Array.isArray(data.staff) && data.staff.length > 0) {
     state.staff = data.staff;
   }
@@ -481,6 +497,11 @@ let state = {
   // jour (pas de notion de plage) -- pas encore exploitées par le moteur de validation, prévues
   // pour de futures RG (22/07/2026).
   gardes: [], // { id, staffId, date: "YYYY-MM-DD" }
+  // Trame Personnel (RG-017, 24/07/2026) : planning de BASE récurrent d'une personne, structurel
+  // comme vacationSpecialites (clé SANS weekKey, voir trameKey()) -- pas une semaine réelle, un
+  // modèle qui sert de valeur par défaut pour la semaine actuelle et les semaines futures tant
+  // qu'elles n'ont pas été explicitement modifiées cellule par cellule (voir effectiveAssignedIds()).
+  trame: {}, // key: `${activityId}|${day}|${creneauId}` -> [staffId, ...]
   weekOffset: 0,
 };
 
@@ -808,6 +829,53 @@ function cellKey(activityId, day, creneauId) {
 // Pas de weekKey ici : une spécialité de vacation est structurelle, la même toutes les semaines.
 function vacationSpecKey(activityId, day, creneauId) {
   return `${activityId}|${day}|${creneauId}`;
+}
+
+// RG-017 (24/07/2026, voir regles-gestion.md) : clé de state.trame -- même forme que
+// vacationSpecKey() (pas de weekKey, structurel). Pas de fonction dédiée séparée : la trame et la
+// spécialité de vacation partagent exactement la même forme de clé, on réutilise vacationSpecKey()
+// directement pour ne pas dupliquer une fonction identique sous un autre nom.
+const trameKey = vacationSpecKey;
+
+// Une cellKey() est `${weekKey}|${activityId}|${day}|${creneauId}` -- on retire juste le 1er
+// segment (le weekKey, toujours une seule date ISO sans "|") pour retomber sur le format
+// `${activityId}|${day}|${creneauId}` de trameKey()/vacationSpecKey(), sans reconstruire la clé
+// depuis des paramètres séparés que l'appelant n'a pas forcément sous la main.
+function trameKeyFromCellKey(key) {
+  return key.split("|").slice(1).join("|");
+}
+
+// RG-017 : le contenu réellement affiché/utilisé pour une case (activité×jour×créneau) de la
+// semaine ACTUELLEMENT AFFICHÉE (state.weekOffset). Si cette case précise a déjà une affectation
+// explicite pour cette semaine (même un tableau vide -- une case vidée à la main reste "touchée"),
+// elle prime toujours. Sinon, pour la semaine actuelle ou une semaine future (jamais une semaine
+// passée), on retombe sur le planning de base (state.trame) -- une semaine passée jamais remplie
+// reste vide, la trame ne comble que ce qui est à venir. Point d'entrée UNIQUE pour lire une
+// affectation "effective" : ne jamais relire state.assignments[key] directement ailleurs, sous
+// peine de désynchroniser l'affichage (qui montrerait la trame) de la validation/des stats (qui ne
+// la compteraient pas), ou l'inverse.
+function effectiveAssignedIds(key) {
+  if (Object.prototype.hasOwnProperty.call(state.assignments, key)) {
+    return state.assignments[key];
+  }
+  if (state.weekOffset >= 0) {
+    return state.trame[trameKeyFromCellKey(key)] || [];
+  }
+  return [];
+}
+
+// RG-017 : avant toute mutation d'une case pour la semaine affichée (ajout/retrait), on s'assure
+// qu'elle a une entrée EXPLICITE dans state.assignments -- copiée depuis effectiveAssignedIds()
+// (donc depuis la trame si c'est de là que venait le contenu affiché jusque-là) si elle n'en avait
+// pas encore. C'est ce qui "découple" une case précise d'une semaine précise de la trame dès qu'on
+// y touche : les autres semaines/cases continuent de suivre la trame normalement. Renvoie le
+// tableau (la référence dans state.assignments, pas une copie) pour que l'appelant puisse le
+// modifier en place (push/filter puis réassigner).
+function ensureMaterializedAssignments(key) {
+  if (!Object.prototype.hasOwnProperty.call(state.assignments, key)) {
+    state.assignments[key] = effectiveAssignedIds(key).slice();
+  }
+  return state.assignments[key];
 }
 
 // ---------- Congés ----------
@@ -1187,7 +1255,7 @@ function validateScanU() {
       const key = cellKey(activity.id, day, creneau.id);
       if (state.fermetures[key]) return; // RG-010 : vacation fermée cette semaine, aucune composition attendue.
       if (state.vacationSpecialites[vacationSpecKey(activity.id, day, creneau.id)] === "os") return; // RG-011 : vacation Os, jamais staffée.
-      const assigned = (state.assignments[key] || []).map(staffById).filter(Boolean);
+      const assigned = effectiveAssignedIds(key).map(staffById).filter(Boolean);
       const nbSeniors = assigned.filter((p) => p.grade === "senior").length;
       const internes = assigned.filter((p) => p.grade !== "senior");
       const nbInternes = internes.length;
@@ -1258,7 +1326,7 @@ function validateScanA() {
       const key = cellKey(activity.id, day, creneau.id);
       if (state.fermetures[key]) return; // RG-010 : vacation fermée cette semaine, aucune composition attendue.
       if (state.vacationSpecialites[vacationSpecKey(activity.id, day, creneau.id)] === "os") return; // RG-011 : vacation Os, jamais staffée.
-      const assigned = (state.assignments[key] || []).map(staffById).filter(Boolean);
+      const assigned = effectiveAssignedIds(key).map(staffById).filter(Boolean);
       const nbSeniors = assigned.filter((p) => p.grade === "senior").length;
       const nbInternes = assigned.filter((p) => p.grade !== "senior").length;
       const label = `Scan A, ${day} ${creneau.label}`;
@@ -1294,7 +1362,7 @@ function validateAbsences() {
         if (!isCreneauApplicable(activity.id, creneau.id)) return;
         const key = cellKey(activity.id, day, creneau.id);
         if (state.fermetures[key]) return; // RG-010 : case fermée, aucune vérification attendue.
-        const assigned = state.assignments[key] || [];
+        const assigned = effectiveAssignedIds(key);
         assigned.forEach((staffId) => {
           if (!isPersonAbsentOnDay(staffId, day)) return;
           const person = staffById(staffId);
@@ -1468,12 +1536,18 @@ function handleAssignmentDrop(e, targetKey, day) {
   // absence s'y glisse quand même, elle remonte en violation + contour rouge, voir buildModaliteCell()).
   if (isPersonAbsentOnDay(staffId, day)) return false;
 
-  if (sourceKey && state.assignments[sourceKey]) {
-    state.assignments[sourceKey] = state.assignments[sourceKey].filter((id) => id !== staffId);
+  // RG-017 : matérialise systématiquement (source ET cible) avant de modifier -- une case source
+  // encore purement issue de la trame (jamais touchée cette semaine) n'a pas de clé explicite dans
+  // state.assignments ; sans ce passage par effectiveAssignedIds()/ensureMaterializedAssignments(),
+  // la personne semblerait avoir disparu de nulle part (retirée de rien) tout en réapparaissant
+  // dans la cible -- elle serait alors affichée deux fois (l'ancienne case continuant de suivre la
+  // trame, jamais décrochée).
+  if (sourceKey) {
+    state.assignments[sourceKey] = effectiveAssignedIds(sourceKey).filter((id) => id !== staffId);
   }
-  if (!state.assignments[targetKey]) state.assignments[targetKey] = [];
-  if (!state.assignments[targetKey].includes(staffId)) {
-    state.assignments[targetKey].push(staffId);
+  const targetList = ensureMaterializedAssignments(targetKey);
+  if (!targetList.includes(staffId)) {
+    targetList.push(staffId);
   }
   saveState();
   render();
@@ -1483,15 +1557,27 @@ function handleAssignmentDrop(e, targetKey, day) {
 function render() {
   document.getElementById("weekLabel").textContent = currentWeekLabel();
 
-  document.getElementById("weekCongesBar").classList.toggle("hidden", editingConges || editingStats);
-  document.getElementById("tableWrap").classList.toggle("hidden", editingConges || editingStats);
-  document.getElementById("validationZone").classList.toggle("hidden", editingConges || editingStats);
+  // Dérivées du mode Trame (voir déclaration plus haut) -- recalculées en tout premier ici pour que
+  // tout le reste de render() (et tout ce qu'il appelle) les voie déjà à jour.
+  editingVacationSpecs = editingTrame && trameView === "specs";
+  editingTramePersonnel = editingTrame && trameView === "personnel";
+
+  document.getElementById("trameSubNav").classList.toggle("hidden", !editingTrame);
+  document.querySelectorAll(".trame-tab").forEach((btn) => {
+    btn.classList.toggle("active", editingTrame && trameView === btn.dataset.trameView);
+  });
+
+  document.getElementById("weekCongesBar").classList.toggle("hidden", editingConges || editingStats || editingTramePersonnel);
+  document.getElementById("tableWrap").classList.toggle("hidden", editingConges || editingStats || editingTramePersonnel);
+  document.getElementById("validationZone").classList.toggle("hidden", editingConges || editingStats || editingTramePersonnel);
   document.getElementById("congesView").classList.toggle("hidden", !editingConges);
   document.getElementById("statsView").classList.toggle("hidden", !editingStats);
-  // La liste du personnel n'a aucune utilité en vue Congés/Stats et peut être très haute (une ligne
-  // par personne) : la masquer y libère la hauteur d'écran nécessaire (trouvé le 21/07/2026 en
-  // testant en vrai pour la vue Congés -- même raisonnement appliqué à la vue Stats).
-  document.getElementById("staffList").classList.toggle("hidden", editingConges || editingStats);
+  document.getElementById("tramePersonnelView").classList.toggle("hidden", !editingTramePersonnel);
+  // La liste du personnel n'a aucune utilité en vue Congés/Stats/Trame Personnel et peut être très
+  // haute (une ligne par personne) : la masquer y libère la hauteur d'écran nécessaire (trouvé le
+  // 21/07/2026 en testant en vrai pour la vue Congés -- même raisonnement appliqué depuis à Stats
+  // puis à Trame Personnel).
+  document.getElementById("staffList").classList.toggle("hidden", editingConges || editingStats || editingTramePersonnel);
 
   // Panneau de droite entier masqué UNIQUEMENT en vue Personnel du planning principal (22/07/2026) :
   // ses lignes y dupliquent exactement celles du tableau (une par personne), donc plus aucune
@@ -1504,7 +1590,7 @@ function render() {
   // dans les vues où le panneau reste visible, donc elle doit physiquement y rester présente.
   const legend = document.getElementById("legend");
   const staffPanel = document.getElementById("staffPanel");
-  const inPersonnelView = currentView === "personnel" && !editingConges && !editingVacationSpecs && !editingStats;
+  const inPersonnelView = currentView === "personnel" && !editingConges && !editingVacationSpecs && !editingStats && !editingTramePersonnel;
 
   if (inPersonnelView) {
     // Remontée au-dessus du tableau (avant `#weekCongesBar`), pour rester accessible pendant que
@@ -1525,6 +1611,8 @@ function render() {
     renderCongesView();
   } else if (editingStats) {
     renderStatsView();
+  } else if (editingTramePersonnel) {
+    renderTramePersonnelView();
   } else {
     renderTable();
     renderValidationZone();
@@ -1548,7 +1636,8 @@ function refreshAfterFilterChange() {
   // logique de render() (voir le commentaire au-dessus) plutôt que de l'appeler telle quelle --
   // penser à répercuter ici tout nouveau mode plein-écran qui dépend de staffFilters.
   if (editingStats) renderStatsView();
-  if (!editingConges && !editingVacationSpecs && !editingStats && currentView === "personnel") renderTable();
+  if (editingTramePersonnel) renderTramePersonnelView(); // même piège que Stats -- voir commentaire ci-dessus.
+  if (!editingConges && !editingVacationSpecs && !editingStats && !editingTramePersonnel && currentView === "personnel") renderTable();
 }
 
 function toggleStaffFilter(category, value) {
@@ -1728,7 +1817,7 @@ function toggleStaffFocusFilter(day, creneauId) {
 function isPersonPostedInFocus(staffId, day, creneauId) {
   const creneauIds = creneauId ? [creneauId] : CRENEAUX.map((c) => c.id);
   return state.activities.some((activity) =>
-    creneauIds.some((cId) => (state.assignments[cellKey(activity.id, day, cId)] || []).includes(staffId))
+    creneauIds.some((cId) => effectiveAssignedIds(cellKey(activity.id, day, cId)).includes(staffId))
   );
 }
 
@@ -1750,7 +1839,7 @@ function buildModaliteCell(activity, day, creneau) {
   td.className = "slot-cell";
 
   const key = cellKey(activity.id, day, creneau.id);
-  const assigned = state.assignments[key] || [];
+  const assigned = effectiveAssignedIds(key); // RG-017 : peut venir de la trame si jamais touchée cette semaine.
   const closed = !!state.fermetures[key]; // RG-010 : fermeture hebdomadaire, voir regles-gestion.md
 
   const vacSpec = state.vacationSpecialites[vacationSpecKey(activity.id, day, creneau.id)];
@@ -2049,7 +2138,7 @@ function renderVacationSpecPopoverContent(specKey, activity, day, creneau) {
 function activitiesForPersonSlot(personId, day, creneauId) {
   return state.activities.filter((activity) => {
     const key = cellKey(activity.id, day, creneauId);
-    return (state.assignments[key] || []).includes(personId);
+    return effectiveAssignedIds(key).includes(personId);
   });
 }
 
@@ -2173,12 +2262,15 @@ function handleModaliteDrop(e, targetStaffId, targetDay, targetCreneauId) {
   const targetKey = cellKey(activityId, targetDay, targetCreneauId);
   if (sourceKey === targetKey) return;
 
-  if (sourceKey && state.assignments[sourceKey]) {
-    state.assignments[sourceKey] = state.assignments[sourceKey].filter((id) => id !== draggedStaffId);
+  // RG-017 : voir le commentaire équivalent dans handleAssignmentDrop() -- matérialiser avant de
+  // modifier, sinon une case source encore purement issue de la trame ne perdrait jamais son
+  // affectation d'origine (aucune clé explicite à filtrer).
+  if (sourceKey) {
+    state.assignments[sourceKey] = effectiveAssignedIds(sourceKey).filter((id) => id !== draggedStaffId);
   }
-  if (!state.assignments[targetKey]) state.assignments[targetKey] = [];
-  if (!state.assignments[targetKey].includes(targetStaffId)) {
-    state.assignments[targetKey].push(targetStaffId);
+  const targetList = ensureMaterializedAssignments(targetKey);
+  if (!targetList.includes(targetStaffId)) {
+    targetList.push(targetStaffId);
   }
   saveState();
   render();
@@ -2643,7 +2735,7 @@ function computeVacationStatsForWeek(monday) {
         if (!isCreneauApplicable(activity.id, creneau.id)) return;
         const key = cellKey(activity.id, day, creneau.id);
         if (state.fermetures[key]) return;
-        const assigned = (state.assignments[key] || []).filter(Boolean);
+        const assigned = effectiveAssignedIds(key).filter(Boolean);
         if (assigned.length === 0) return;
 
         let groupKey, label, specialite, isUrgence;
@@ -2819,10 +2911,262 @@ function renderStatsView() {
   container.appendChild(wrap);
 }
 
+// ---------- Trame Personnel (RG-017, 24/07/2026) ----------
+// Sous-vue du mode "Trame" (voir trameView) : même mise en page que la vue Personnel du planning
+// principal (lignes = personnel, colonnes Jour x Créneau, case = quelle(s) modalité(s)), mais lit
+// et écrit dans state.trame -- un planning de BASE récurrent, indépendant de toute semaine -- et
+// non dans state.assignments. Différences volontaires avec la vue Personnel réelle : pas de
+// bandeau congés (n'a pas de sens sans date), pas de blocage/étiquette congé dans les cases (idem),
+// pas de zone de validation (les RG de composition portent sur une semaine réelle, pas un modèle).
+// Une fois posée ici, une affectation devient la valeur par défaut de la semaine actuelle et des
+// semaines futures tant qu'elles n'ont pas été explicitement modifiées case par case -- voir
+// effectiveAssignedIds()/ensureMaterializedAssignments() plus haut et RG-017 dans regles-gestion.md.
+
+function trameActivitiesForPersonSlot(personId, day, creneauId) {
+  return state.activities.filter((activity) => {
+    const key = trameKey(activity.id, day, creneauId);
+    return (state.trame[key] || []).includes(personId);
+  });
+}
+
+function removeTrameAssignment(key, staffId) {
+  const list = state.trame[key] || [];
+  state.trame[key] = list.filter((id) => id !== staffId);
+  saveState();
+  render();
+}
+
+// Équivalent de buildModaliteTag() pour la trame -- pas de paramètre `draggable`, toujours vrai ici
+// (contrairement à buildModaliteTag(), jamais utilisé dans un contexte non-draggable comme un popover).
+function buildTrameModaliteTag(activity, key, staffId) {
+  const tag = document.createElement("span");
+  tag.className = "chip modalite-tag" + (activity.urgence ? " urgence-tag" : "");
+  tag.textContent = activity.nom;
+  tag.draggable = true;
+  tag.addEventListener("dragstart", (e) => {
+    e.dataTransfer.setData("text/plain", staffId);
+    e.dataTransfer.setData("application/x-activity-id", activity.id);
+    // Type MIME dédié (pas "application/x-source-key", utilisé par le glisser-déposer de la vraie
+    // semaine) -- les deux tableaux ne sont jamais visibles en même temps (modes plein-écran
+    // mutuellement exclusifs), mais autant garder les deux logiques de glisser-déposer étanches.
+    e.dataTransfer.setData("application/x-trame-source-key", key);
+    e.dataTransfer.effectAllowed = "move";
+  });
+  const remove = document.createElement("span");
+  remove.className = "remove";
+  remove.textContent = "×";
+  remove.title = "Retirer";
+  remove.addEventListener("click", (e) => {
+    e.stopPropagation();
+    removeTrameAssignment(key, staffId);
+  });
+  tag.appendChild(remove);
+  return tag;
+}
+
+// Équivalent de handleModaliteDrop() pour la trame.
+function handleTrameModaliteDrop(e, targetStaffId, targetDay, targetCreneauId) {
+  const activityId = e.dataTransfer.getData("application/x-activity-id");
+  if (!activityId) return;
+  if (!isCreneauApplicable(activityId, targetCreneauId)) return; // RG-012, structurel : s'applique aussi à la trame.
+  const draggedStaffId = e.dataTransfer.getData("text/plain");
+  const sourceKey = e.dataTransfer.getData("application/x-trame-source-key");
+  const targetKey = trameKey(activityId, targetDay, targetCreneauId);
+  if (sourceKey === targetKey) return;
+
+  if (sourceKey) {
+    state.trame[sourceKey] = (state.trame[sourceKey] || []).filter((id) => id !== draggedStaffId);
+  }
+  if (!state.trame[targetKey]) state.trame[targetKey] = [];
+  if (!state.trame[targetKey].includes(targetStaffId)) {
+    state.trame[targetKey].push(targetStaffId);
+  }
+  saveState();
+  render();
+}
+
+function openTramePersonPopover(person, day, creneau, cellEl) {
+  const pop = document.getElementById("assignPopover");
+  renderTramePersonPopoverContent(person, day, creneau);
+
+  const rect = cellEl.getBoundingClientRect();
+  pop.style.top = `${window.scrollY + rect.bottom + 4}px`;
+  pop.style.left = `${window.scrollX + rect.left}px`;
+  pop.classList.remove("hidden");
+}
+
+// Équivalent de renderPersonPopoverContent() pour la trame -- écrit dans state.trame, pas de
+// mention de semaine dans l'en-tête du popover (juste "(trame)").
+function renderTramePersonPopoverContent(person, day, creneau) {
+  const pop = document.getElementById("assignPopover");
+  pop.style.minWidth = "";
+  const assignedActivities = trameActivitiesForPersonSlot(person.id, day, creneau.id);
+  const assignedIds = new Set(assignedActivities.map((a) => a.id));
+  // RG-012 : le créneau "astreinte" ne propose que Scan U (voir isCreneauApplicable()).
+  const available = state.activities.filter((a) => !assignedIds.has(a.id) && isCreneauApplicable(a.id, creneau.id));
+
+  pop.innerHTML = `
+    <span class="close-btn" id="popClose">×</span>
+    <strong>${person.prenom} ${person.nom}</strong><br>
+    <span style="font-size:12px;color:#6b7280;">${day} — ${creneau.label} (trame)</span>
+    <div id="popAssigned" class="popover-assigned"></div>
+    <div class="popover-select" id="popCustomSelect">
+      <button type="button" class="popover-select-trigger" id="popTrigger">-- Ajouter une modalité --</button>
+      <div class="popover-select-list hidden" id="popList"></div>
+    </div>
+  `;
+
+  const assignedContainer = document.getElementById("popAssigned");
+  if (assignedActivities.length === 0) {
+    assignedContainer.innerHTML = '<span class="empty-hint">Aucune modalité assignée pour l\'instant</span>';
+  } else {
+    assignedActivities.forEach((activity) => {
+      const key = trameKey(activity.id, day, creneau.id);
+      const tag = buildTrameModaliteTag(activity, key, person.id);
+      tag.querySelector(".remove").addEventListener("click", () => renderTramePersonPopoverContent(person, day, creneau));
+      assignedContainer.appendChild(tag);
+    });
+  }
+
+  const list = document.getElementById("popList");
+  if (available.length === 0) {
+    list.innerHTML = '<div class="popover-select-empty">Déjà assigné à toutes les modalités.</div>';
+  } else {
+    available.forEach((activity) => {
+      const row = document.createElement("div");
+      row.className = "popover-select-option";
+      row.textContent = activity.nom;
+      if (activity.urgence) row.style.color = "#b91c1c";
+      row.addEventListener("click", () => {
+        const key = trameKey(activity.id, day, creneau.id);
+        if (!state.trame[key]) state.trame[key] = [];
+        if (!state.trame[key].includes(person.id)) {
+          state.trame[key].push(person.id);
+          saveState();
+          render();
+          renderTramePersonPopoverContent(person, day, creneau);
+        }
+      });
+      list.appendChild(row);
+    });
+  }
+
+  document.getElementById("popClose").addEventListener("click", () => pop.classList.add("hidden"));
+  document.getElementById("popTrigger").addEventListener("click", (e) => {
+    e.stopPropagation();
+    list.classList.toggle("hidden");
+  });
+}
+
+function renderTramePersonnelView() {
+  const container = document.getElementById("tramePersonnelView");
+  container.innerHTML = "";
+
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
+  const table = document.createElement("table");
+  table.className = "trame-personnel-table";
+
+  const thead = document.createElement("thead");
+
+  const dayRow = document.createElement("tr");
+  const corner = document.createElement("th");
+  corner.className = "corner-cell";
+  dayRow.appendChild(corner);
+  DAYS.forEach((day) => {
+    const th = document.createElement("th");
+    th.colSpan = CRENEAUX.length;
+    th.className = "day-header";
+    const label = document.createElement("div");
+    label.className = "day-header-label";
+    label.textContent = day;
+    th.appendChild(label);
+    dayRow.appendChild(th);
+  });
+  thead.appendChild(dayRow);
+
+  const creneauRow = document.createElement("tr");
+  const cornerLabel = document.createElement("th");
+  cornerLabel.className = "modalite-header";
+  cornerLabel.textContent = "Personnel";
+  creneauRow.appendChild(cornerLabel);
+  DAYS.forEach(() => {
+    CRENEAUX.forEach((c) => {
+      const th = document.createElement("th");
+      th.textContent = c.label;
+      th.className = "creneau-header";
+      creneauRow.appendChild(th);
+    });
+  });
+  thead.appendChild(creneauRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  const people = state.staff.filter(personMatchesFilters).sort(compareStaffOrder);
+
+  people.forEach((person) => {
+    const tr = document.createElement("tr");
+
+    const nameCell = document.createElement("td");
+    nameCell.textContent = `${person.prenom[0]}. ${person.nom}`;
+    nameCell.title = `${person.prenom} ${person.nom}`;
+    nameCell.className = "activity-cell person-name-cell";
+    nameCell.style.cssText += personCellStyle(person);
+    tr.appendChild(nameCell);
+
+    DAYS.forEach((day) => {
+      CRENEAUX.forEach((creneau) => {
+        const td = document.createElement("td");
+        td.className = "slot-cell";
+
+        const activitiesHere = trameActivitiesForPersonSlot(person.id, day, creneau.id);
+
+        if (activitiesHere.length === 0) {
+          const hint = document.createElement("span");
+          hint.className = "empty-hint";
+          hint.textContent = "+ ajouter";
+          td.appendChild(hint);
+        } else {
+          activitiesHere.forEach((activity) => {
+            const key = trameKey(activity.id, day, creneau.id);
+            td.appendChild(buildTrameModaliteTag(activity, key, person.id));
+          });
+        }
+
+        td.addEventListener("click", () => openTramePersonPopover(person, day, creneau, td));
+
+        td.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          td.classList.add("drag-over");
+        });
+        td.addEventListener("dragleave", () => {
+          td.classList.remove("drag-over");
+        });
+        td.addEventListener("drop", (e) => {
+          e.preventDefault();
+          td.classList.remove("drag-over");
+          handleTrameModaliteDrop(e, person.id, day, creneau.id);
+        });
+
+        tr.appendChild(td);
+      });
+    });
+
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  container.appendChild(wrap);
+}
+
 // ---------- Assignation ----------
 
 function removeAssignment(key, staffId) {
-  const list = state.assignments[key] || [];
+  // RG-017 : part de effectiveAssignedIds() (pas state.assignments[key] || []) pour retirer
+  // correctement une personne venue de la trame -- l'écriture juste après matérialise la case
+  // (tableau explicite, potentiellement plus petit) pour cette semaine précise.
+  const list = effectiveAssignedIds(key);
   state.assignments[key] = list.filter((id) => id !== staffId);
   saveState();
   render();
@@ -2841,7 +3185,7 @@ function openAssignPopover(key, cellEl, activity, day, creneau) {
 function renderPopoverContent(key, activity, day, creneau) {
   const pop = document.getElementById("assignPopover");
   pop.style.minWidth = "";
-  const assigned = state.assignments[key] || [];
+  const assigned = effectiveAssignedIds(key); // RG-017 : peut venir de la trame si jamais touchée cette semaine.
   const available = state.staff.filter((s) => !assigned.includes(s.id)).sort(compareStaffOrder);
 
   pop.innerHTML = `
@@ -2890,8 +3234,8 @@ function renderPopoverContent(key, activity, day, creneau) {
       row.innerHTML = html;
       row.style.cssText += style;
       row.addEventListener("click", () => {
-        if (!state.assignments[key]) state.assignments[key] = [];
-        state.assignments[key].push(person.id);
+        const assignedList = ensureMaterializedAssignments(key); // RG-017 : matérialise (depuis la trame si besoin) avant d'ajouter.
+        if (!assignedList.includes(person.id)) assignedList.push(person.id);
         saveState();
         render();
         renderPopoverContent(key, activity, day, creneau);
@@ -2960,9 +3304,9 @@ function renderPersonPopoverContent(person, day, creneau) {
       if (activity.urgence) row.style.color = "#b91c1c";
       row.addEventListener("click", () => {
         const key = cellKey(activity.id, day, creneau.id);
-        if (!state.assignments[key]) state.assignments[key] = [];
-        if (!state.assignments[key].includes(person.id)) {
-          state.assignments[key].push(person.id);
+        const assignedList = ensureMaterializedAssignments(key); // RG-017 : matérialise (depuis la trame si besoin) avant d'ajouter.
+        if (!assignedList.includes(person.id)) {
+          assignedList.push(person.id);
           saveState();
           render();
           renderPersonPopoverContent(person, day, creneau);
@@ -3517,13 +3861,13 @@ document.getElementById("staffModal").addEventListener("click", (e) => {
   if (e.target.id === "staffModal") closeStaffModal();
 });
 
-// Les trois modes plein-écran (Spécialités Vacations / Congés / Stats) remplacent tous le contenu
-// principal (voir render()) : mutuellement exclusifs, activer l'un désactive les deux autres.
+// Les trois modes plein-écran (Trame / Congés / Stats) remplacent tous le contenu principal (voir
+// render()) : mutuellement exclusifs, activer l'un désactive les deux autres.
 // resetFullScreenModeButtons() factorise la remise à zéro du texte/état des boutons non concernés
 // (ajouté le 24/07/2026 avec Stats -- avant, dupliqué à la main dans chaque handler pour 2 boutons).
 function resetFullScreenModeButtons(exceptId) {
   [
-    { id: "btnVacationSpecs", label: "Spécialités Vacations" },
+    { id: "btnTrame", label: "Trame" },
     { id: "btnConges", label: "Congés" },
     { id: "btnStats", label: "Stats" },
   ].forEach(({ id, label }) => {
@@ -3534,19 +3878,30 @@ function resetFullScreenModeButtons(exceptId) {
   });
 }
 
-document.getElementById("btnVacationSpecs").addEventListener("click", () => {
-  editingVacationSpecs = !editingVacationSpecs;
-  if (editingVacationSpecs) { editingConges = false; editingStats = false; }
-  const btn = document.getElementById("btnVacationSpecs");
-  btn.textContent = editingVacationSpecs ? "← Retour au planning" : "Spécialités Vacations";
-  btn.classList.toggle("btn-active", editingVacationSpecs);
-  resetFullScreenModeButtons("btnVacationSpecs");
+// RG-017 (24/07/2026) : "Trame" remplace l'ancien bouton isolé "Spécialités Vacations", déplacé à
+// côté d'"Aujourd'hui" -- regroupe désormais 2 sous-vues (voir trameView, sous-onglets #trameSubNav
+// dans index.html). Rouvrir le mode reprend la sous-vue déjà active la dernière fois (trameView
+// n'est pas remis à "specs" à la fermeture) -- pas besoin de rechoisir à chaque fois.
+document.getElementById("btnTrame").addEventListener("click", () => {
+  editingTrame = !editingTrame;
+  if (editingTrame) { editingConges = false; editingStats = false; }
+  const btn = document.getElementById("btnTrame");
+  btn.textContent = editingTrame ? "← Retour au planning" : "Trame";
+  btn.classList.toggle("btn-active", editingTrame);
+  resetFullScreenModeButtons("btnTrame");
   render();
+});
+
+document.querySelectorAll(".trame-tab").forEach((tabBtn) => {
+  tabBtn.addEventListener("click", () => {
+    trameView = tabBtn.dataset.trameView;
+    render();
+  });
 });
 
 document.getElementById("btnConges").addEventListener("click", () => {
   editingConges = !editingConges;
-  if (editingConges) { editingVacationSpecs = false; editingStats = false; }
+  if (editingConges) { editingTrame = false; editingStats = false; }
   const btn = document.getElementById("btnConges");
   btn.textContent = editingConges ? "← Retour au planning" : "Congés";
   btn.classList.toggle("btn-active", editingConges);
@@ -3556,7 +3911,7 @@ document.getElementById("btnConges").addEventListener("click", () => {
 
 document.getElementById("btnStats").addEventListener("click", () => {
   editingStats = !editingStats;
-  if (editingStats) { editingVacationSpecs = false; editingConges = false; }
+  if (editingStats) { editingTrame = false; editingConges = false; }
   const btn = document.getElementById("btnStats");
   btn.textContent = editingStats ? "← Retour au planning" : "Stats";
   btn.classList.toggle("btn-active", editingStats);

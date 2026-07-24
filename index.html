@@ -17,10 +17,10 @@
       <span id="weekLabel">Semaine du ...</span>
       <button id="nextWeek" title="Semaine suivante">&rarr;</button>
       <button id="btnCurrentWeek" class="btn-today" title="Revenir à la semaine actuelle">Aujourd'hui</button>
+      <button id="btnTrame" class="btn-accent2" title="Spécialités de vacation et planning de base récurrent">Trame</button>
     </div>
     <div class="actions">
       <button id="btnManageStaff" class="btn-accent">Gestion Personnel</button>
-      <button id="btnVacationSpecs" class="btn-accent2">Spécialités Vacations</button>
       <button id="btnConges" class="btn-accent3">Congés</button>
       <button id="btnStats" class="btn-accent4">Stats</button>
       <div class="more-menu-wrap">
@@ -40,6 +40,11 @@
 
   <main>
     <div class="planning-column">
+      <div id="trameSubNav" class="trame-subnav hidden">
+        <button type="button" class="trame-tab" data-trame-view="specs">Spécialités Vacations</button>
+        <button type="button" class="trame-tab" data-trame-view="personnel">Trame Personnel</button>
+      </div>
+
       <div id="weekCongesBar" class="week-conges-bar hidden"></div>
       <div class="table-wrap" id="tableWrap">
         <table id="planningTable"></table>
@@ -50,6 +55,8 @@
       <div id="congesView" class="hidden"></div>
 
       <div id="statsView" class="hidden"></div>
+
+      <div id="tramePersonnelView" class="hidden"></div>
     </div>
 
     <aside id="staffPanel">
