@@ -3113,12 +3113,23 @@ function computePastAstreinteCounts(monday) {
 // importe si la semaine est complète ou pas. Les 2 anciens blocs (partiel + complet) sont donc
 // fusionnés en un seul bloc 0 ; le tri habituel (compareStaffOrder) s'applique ensuite à l'intérieur
 // de ce bloc comme des 2 autres, exactement comme avant.
+// **Revu une 2e fois le 24/07/2026 (retour de Samir, suite à la séparation des colonnes Bureau/Off,
+// voir 6.16) : "avoir des données" ne se limite plus aux badges Vacations.** Depuis que Bureau/Off
+// sont sortis du calcul de `days`/`total` (leur propre colonne, jamais dans les badges), quelqu'un
+// avec UNIQUEMENT du Bureau ou de l'Off cette semaine (aucun vrai badge Vacations) retombait à tort
+// dans le bloc 1 ("vraiment libre"), mélangé par le tri habituel avec des personnes qui n'ont
+// STRICTEMENT rien -- confirmé sur une vraie capture d'écran (des personnes avec Bureau=1 ou Off=1
+// intercalées parmi des lignes à 0 partout). Fix : le bloc 0 regarde maintenant aussi `entry.bureau`/
+// `entry.off`, pas seulement `entry.days` -- Bureau/Off comptent comme "des données" même s'ils ne
+// produisent pas de badge. **L'astreinte reste volontairement exclue** de ce calcul (voir plus haut,
+// "jamais prise en compte pour des questions d'ordre", demande antérieure de Samir toujours valable)
+// -- c'est un cumul historique, pas un signal de disponibilité de la semaine affichée.
 // `stats` est le résultat de computeVacationStatsForWeek(), déjà calculé une fois par rendu.
 function statsAvailabilityTier(person, stats) {
   if (isFullyOnLeaveThisWeek(person)) return 2;
-  const daysCount = stats.has(person.id) ? stats.get(person.id).days.size : 0;
-  if (daysCount === 0) return 1;
-  return 0;
+  const entry = stats.get(person.id);
+  const hasData = entry && (entry.days.size > 0 || entry.bureau > 0 || entry.off > 0);
+  return hasData ? 0 : 1;
 }
 
 // Ordre des badges d'une personne : le rouge (urgences, sans spécialité) toujours en premier, puis
