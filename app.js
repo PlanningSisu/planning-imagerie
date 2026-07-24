@@ -2676,13 +2676,20 @@ function computeVacationStatsForWeek(monday) {
 
 // Regroupement par disponibilité (24/07/2026, demande de Samir) : au-delà du tri habituel
 // (compareStaffOrder -- grade/spécialité/alphabétique), les lignes de la vue Stats sont d'abord
-// réparties en 3 blocs selon le nombre de jours couverts par au moins une vacation cette semaine :
+// réparties en 4 blocs :
 // 0 (haut) = a des vacations mais pas tous les jours -- probablement encore de la place, à regarder
 //            en priorité pour compléter le planning ;
-// 1 (milieu) = aucune vacation du tout cette semaine ;
-// 2 (bas) = postée tous les jours ouvrés -- plus de marge, pas la peine de la regarder en premier.
+// 1 (milieu) = aucune vacation du tout cette semaine, et PAS en congé -- vraiment libre, à solliciter ;
+// 2 (bas) = postée tous les jours ouvrés -- plus de marge, pas la peine de la regarder en premier ;
+// 3 (tout en bas) = en congé toute la semaine (`isFullyOnLeaveThisWeek()`) -- hors-jeu cette semaine,
+//     un total à 0 ici ne veut pas dire "libre" comme pour le bloc 1, ne pas les mélanger (retour de
+//     Samir le 24/07/2026 : Lucidarme, en congé toute la semaine, se retrouvait à tort au milieu avec
+//     les vraies personnes disponibles). Vérifié EN PREMIER, avant le nombre de jours couverts : un
+//     congé toute la semaine prime sur n'importe quel décompte de vacations (en pratique déjà 0, RG-014
+//     empêchant l'assignation via la vue Personnel, mais le popover d'ajout reste une porte de sortie).
 // `stats` est le résultat de computeVacationStatsForWeek(), déjà calculé une fois par rendu.
 function statsAvailabilityTier(person, stats) {
+  if (isFullyOnLeaveThisWeek(person)) return 3;
   const daysCount = stats.has(person.id) ? stats.get(person.id).days.size : 0;
   if (daysCount === 0) return 1;
   if (daysCount === DAYS.length) return 2;
