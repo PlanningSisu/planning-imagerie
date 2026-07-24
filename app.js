@@ -2921,8 +2921,8 @@ function renderCongePopoverContent(person, monday) {
 // mais les colonnes Jour x Créneau sont remplacées par un total + des badges par "famille" de
 // modalité, regroupés par COULEUR de spécialité (demande explicite de Samir) plutôt que par type.
 
-const STATS_FAMILY_LABELS = { scan: "Scan", irm: "IRM", ecn: "ECN", mammo: "Mammo", bureau: "Bureau" };
-const STATS_TYPE_ORDER = ["Scan", "IRM", "ECN", "Mammo", "Bureau"];
+const STATS_FAMILY_LABELS = { scan: "Scan", irm: "IRM", ecn: "ECN", mammo: "Mammo" };
+const STATS_TYPE_ORDER = ["Scan", "IRM", "ECN", "Mammo"];
 
 // Scan A/B, IRM 1.5T/3T et ECN 1/2 doivent être fusionnés ("on s'en fiche de savoir si c'est A ou
 // B") -- réutilise le champ `group` déjà existant sur ACTIVITIES (ex. "scan-start"/"scan-end") en
@@ -2940,8 +2940,20 @@ function activityStatsFamily(activity) {
 // confondus) alimente le regroupement par disponibilité de renderStatsView() (24/07/2026, voir
 // statsAvailabilityTier()) -- pas juste `total`, qui ne dit rien de la répartition dans la semaine
 // (5 vacations le même jour vs 1 par jour ont le même total mais pas la même disponibilité).
+//
+// Bureau/Off (24/07/2026, demande de Samir) : colonnes dédiées dans la vue Stats, comme l'astreinte
+// -- ne comptent JAMAIS dans `total` ni dans `badges`/`days`, et ne fusionnent plus entre elles en un
+// seul badge "Bureau" (comportement d'avant ce changement). `bureau` compte un point par créneau
+// (matin/après-midi) posté sur la modalité Bureau cette semaine ; `off` de même pour Off -- Off n'a
+// jamais de créneau astreinte (RG-012/isCreneauApplicable), donc ce compte est déjà "à la demi-
+// journée près" par construction (1 point = 1 créneau = une demi-journée), sans calcul supplémentaire.
 function computeVacationStatsForWeek(monday) {
-  const stats = new Map(); // staffId -> { total, badges: Map(groupKey -> {count, label, specialite, isUrgence, activityId}), days: Set }
+  const stats = new Map(); // staffId -> { total, badges: Map(groupKey -> {count, label, specialite, isUrgence, activityId}), days: Set, bureau, off }
+
+  const ensureEntry = (staffId) => {
+    if (!stats.has(staffId)) stats.set(staffId, { total: 0, badges: new Map(), days: new Set(), bureau: 0, off: 0 });
+    return stats.get(staffId);
+  };
 
   state.activities.forEach((activity) => {
     DAYS.forEach((day) => {
@@ -2961,6 +2973,21 @@ function computeVacationStatsForWeek(monday) {
         const assigned = effectiveAssignedIds(key).filter(Boolean);
         if (assigned.length === 0) return;
 
+        if (activity.id === "bureau") {
+          assigned.forEach((staffId) => {
+            if (!staffById(staffId)) return;
+            ensureEntry(staffId).bureau++;
+          });
+          return;
+        }
+        if (activity.id === "off") {
+          assigned.forEach((staffId) => {
+            if (!staffById(staffId)) return;
+            ensureEntry(staffId).off++;
+          });
+          return;
+        }
+
         let groupKey, label, specialite, isUrgence;
         if (activity.urgence) {
           groupKey = `urgence:${activity.id}`;
@@ -2977,8 +3004,7 @@ function computeVacationStatsForWeek(monday) {
 
         assigned.forEach((staffId) => {
           if (!staffById(staffId)) return; // id orphelin (personne supprimée depuis) -- ignoré comme partout ailleurs.
-          if (!stats.has(staffId)) stats.set(staffId, { total: 0, badges: new Map(), days: new Set() });
-          const entry = stats.get(staffId);
+          const entry = ensureEntry(staffId);
           entry.total++;
           entry.days.add(day);
           if (!entry.badges.has(groupKey)) {
@@ -3153,13 +3179,17 @@ function renderStatsView() {
   wrap.className = "table-wrap";
   const table = document.createElement("table");
   table.className = "stats-table";
+  // Ordre des colonnes revu le 24/07/2026 (demande de Samir) : Personnel, Vacations (badges), Total,
+  // Astreinte, Bureau, Off -- les badges passent juste après le nom, avant les compteurs numériques.
   table.innerHTML = `
     <thead>
       <tr>
         <th class="activity-cell person-name-cell">Personnel</th>
+        <th>Vacations (${currentWeekLabel()})</th>
         <th class="stats-total-header">Total</th>
         <th class="stats-total-header" title="Cumul des astreintes jusqu'à la semaine suivante incluse (semaines d'avant + semaine affichée + semaine suivante)">Astreinte</th>
-        <th>Vacations (${currentWeekLabel()})</th>
+        <th class="stats-total-header">Bureau</th>
+        <th class="stats-total-header" title="Nombre de demi-journées (créneaux matin/après-midi)">Off</th>
       </tr>
     </thead>
   `;
@@ -3177,24 +3207,6 @@ function renderStatsView() {
     tr.appendChild(nameCell);
 
     const entry = stats.get(person.id);
-
-    const totalCell = document.createElement("td");
-    totalCell.className = "stats-total-cell";
-    const totalBadge = document.createElement("span");
-    totalBadge.className = "stats-total-badge";
-    totalBadge.textContent = entry ? entry.total : 0;
-    totalCell.appendChild(totalBadge);
-    tr.appendChild(totalCell);
-
-    // Colonne "Astreinte" (même skin que Total, demande explicite de Samir) : cumul jusqu'à la
-    // semaine suivante incluse, voir computePastAstreinteCounts().
-    const astreinteCell = document.createElement("td");
-    astreinteCell.className = "stats-total-cell";
-    const astreinteBadge = document.createElement("span");
-    astreinteBadge.className = "stats-total-badge";
-    astreinteBadge.textContent = pastAstreintes.get(person.id) || 0;
-    astreinteCell.appendChild(astreinteBadge);
-    tr.appendChild(astreinteCell);
 
     const badgesCell = document.createElement("td");
     badgesCell.className = "stats-badges-cell";
@@ -3222,6 +3234,44 @@ function renderStatsView() {
     }
 
     tr.appendChild(badgesCell);
+
+    const totalCell = document.createElement("td");
+    totalCell.className = "stats-total-cell";
+    const totalBadge = document.createElement("span");
+    totalBadge.className = "stats-total-badge";
+    totalBadge.textContent = entry ? entry.total : 0;
+    totalCell.appendChild(totalBadge);
+    tr.appendChild(totalCell);
+
+    // Colonne "Astreinte" (même skin que Total, demande explicite de Samir) : cumul jusqu'à la
+    // semaine suivante incluse, voir computePastAstreinteCounts().
+    const astreinteCell = document.createElement("td");
+    astreinteCell.className = "stats-total-cell";
+    const astreinteBadge = document.createElement("span");
+    astreinteBadge.className = "stats-total-badge";
+    astreinteBadge.textContent = pastAstreintes.get(person.id) || 0;
+    astreinteCell.appendChild(astreinteBadge);
+    tr.appendChild(astreinteCell);
+
+    // Colonnes "Bureau"/"Off" (24/07/2026, demande de Samir) : mêmes skin que Total/Astreinte,
+    // décomptes dédiés de la semaine affichée (voir computeVacationStatsForWeek()) -- jamais mélangés
+    // aux badges Vacations, jamais comptés dans Total.
+    const bureauCell = document.createElement("td");
+    bureauCell.className = "stats-total-cell";
+    const bureauBadge = document.createElement("span");
+    bureauBadge.className = "stats-total-badge";
+    bureauBadge.textContent = entry ? entry.bureau : 0;
+    bureauCell.appendChild(bureauBadge);
+    tr.appendChild(bureauCell);
+
+    const offCell = document.createElement("td");
+    offCell.className = "stats-total-cell";
+    const offBadge = document.createElement("span");
+    offBadge.className = "stats-total-badge";
+    offBadge.textContent = entry ? entry.off : 0;
+    offCell.appendChild(offBadge);
+    tr.appendChild(offCell);
+
     tbody.appendChild(tr);
   });
 
