@@ -383,7 +383,8 @@ const ACTIVITIES = [
   { id: "ecn-1", nom: "ECN 1", group: "ecn-start" },
   { id: "ecn-2", nom: "ECN 2", group: "ecn-end" },
   { id: "mammo", nom: "Mammo" },
-  { id: "bureau", nom: "Bureau" },
+  { id: "bureau", nom: "Bureau", group: "bureau-start" },
+  { id: "off", nom: "Off", group: "bureau-end" },
 ];
 
 const DAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"];
