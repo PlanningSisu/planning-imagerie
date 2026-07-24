@@ -1693,6 +1693,7 @@ function render() {
   renderLegend();
   renderStaffList();
   sizeTableWrapMaxHeight();
+  stackStickyHeaderRows();
 }
 
 // Hauteur max de .table-wrap calculée en JS (24/07/2026, "figer le volet des jours") -- PAS en CSS/
@@ -1715,10 +1716,36 @@ function sizeTableWrapMaxHeight() {
   });
 }
 
+// Empile les 2 lignes d'en-tête (jours, puis matin/astreinte/après-midi) au lieu de les superposer
+// (24/07/2026, corrige un 2e passage sur "figer le volet des jours") -- `thead th { position:
+// sticky; top: 0 }` (style.css) donne le MÊME top:0 aux deux lignes de <thead> (vue Modalité/
+// Personnel/Trame Vacation et Trame Personnel ont chacune 2 lignes : `.day-header` puis
+// `.creneau-header`, voir renderTable()/renderTramePersonnelView()). Au scroll, les deux lignes se
+// collaient donc au même endroit et la 2e (créneaux, plus loin dans le DOM) recouvrait la 1re
+// (jours) -- symptôme remonté par Samir : "matin/astreinte/après-midi" semblait figé, "les jours"
+// non (en réalité toujours là, juste caché dessous). Fix : mesurer la hauteur réelle de la 1re ligne
+// et décaler la 2e d'autant via un `top` inline -- pas une valeur CSS fixe, la 1re ligne peut
+// grandir (chips de garde RG-015 dans l'en-tête de jour, voir §6.1) donc la hauteur n'est pas
+// constante d'une semaine à l'autre. Congés/Stats n'ont qu'une seule ligne d'en-tête : `rows.length
+// < 2` les laisse intactes (déjà correctement gelées par la seule règle CSS top:0).
+function stackStickyHeaderRows() {
+  document.querySelectorAll(".table-wrap table thead").forEach((thead) => {
+    const rows = thead.querySelectorAll("tr");
+    if (rows.length < 2) return;
+    const firstRowHeight = rows[0].getBoundingClientRect().height;
+    rows[1].querySelectorAll("th").forEach((th) => {
+      th.style.top = `${firstRowHeight}px`;
+    });
+  });
+}
+
 let tableWrapResizeTimer = null;
 window.addEventListener("resize", () => {
   clearTimeout(tableWrapResizeTimer);
-  tableWrapResizeTimer = setTimeout(sizeTableWrapMaxHeight, 150);
+  tableWrapResizeTimer = setTimeout(() => {
+    sizeTableWrapMaxHeight();
+    stackStickyHeaderRows();
+  }, 150);
 });
 
 // Retrace tout ce qui consulte staffFilters (légende, liste de droite, et depuis le 22/07/2026 la
@@ -1737,6 +1764,7 @@ function refreshAfterFilterChange() {
   if (editingTramePersonnel) renderTramePersonnelView(); // même piège que Stats -- voir commentaire ci-dessus.
   if (!editingConges && !editingVacationSpecs && !editingStats && !editingTramePersonnel && currentView === "personnel") renderTable();
   sizeTableWrapMaxHeight();
+  stackStickyHeaderRows();
 }
 
 function toggleStaffFilter(category, value) {
