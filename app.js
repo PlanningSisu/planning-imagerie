@@ -1523,9 +1523,16 @@ function applyChipVisual(el, person) {
 
 // Pastille assignée dans une case du planning (vue Modalité), avec bouton de retrait et
 // glisser-déposer vers une autre case pour déplacer la personne (voir handleAssignmentDrop()).
-function buildAssignedChip(person, key) {
+function buildAssignedChip(person, key, day) {
   const chip = document.createElement("span");
   applyChipVisual(chip, person);
+  // RG-014 (24/07/2026, retour de Samir) : le contour rouge posé sur toute la case
+  // (.cell-absence-violation) ne disait pas QUI, parmi plusieurs personnes assignées, est la
+  // personne absente en cause -- entoure désormais aussi la pastille de la personne concernée.
+  if (isPersonAbsentOnDay(person.id, day)) {
+    chip.classList.add("chip-absence-violation");
+    chip.title = `${person.prenom} ${person.nom} est absent(e) ce jour-là`;
+  }
   chip.textContent = `${person.prenom[0]}. ${person.nom}`;
   chip.draggable = true;
   chip.addEventListener("dragstart", (e) => {
@@ -1927,7 +1934,7 @@ function buildModaliteCell(activity, day, creneau) {
         if (group.length === 0) return;
         const row = document.createElement("div");
         row.className = "cell-group";
-        group.forEach((person) => row.appendChild(buildAssignedChip(person, key)));
+        group.forEach((person) => row.appendChild(buildAssignedChip(person, key, day)));
         td.appendChild(row);
       };
       addCellGroup(seniors);

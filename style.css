@@ -892,6 +892,13 @@ tr.group-end td {
   outline: 3px solid #dc2626;
   outline-offset: -3px;
 }
+/* RG-014 (24/07/2026) : en plus du contour sur toute la case ci-dessus, entoure spécifiquement la
+   pastille de la personne réellement absente -- utile dès que la case a plusieurs personnes
+   assignées (ex. 2 internes), pour ne pas avoir à deviner laquelle pose problème. */
+.chip.chip-absence-violation {
+  outline: 2px solid #dc2626;
+  outline-offset: 1px;
+}
 /* Flash bref sur un glisser-déposer refusé (RG-014) -- signale que rien ne s'est passé plutôt
    qu'un échec silencieux qui pourrait passer pour un bug. Retiré après 400ms en JS. */
 .slot-cell.drop-rejected {
