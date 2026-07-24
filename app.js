@@ -2891,6 +2891,14 @@ function computeVacationStatsForWeek(monday) {
     DAYS.forEach((day) => {
       CRENEAUX.forEach((creneau) => {
         if (!isCreneauApplicable(activity.id, creneau.id)) return;
+        // 24/07/2026 (demande de Samir) : l'astreinte est traitée à part dans cette vue -- elle a
+        // sa propre colonne dédiée (voir computePastAstreinteCounts()/renderStatsView()), un total
+        // CUMULÉ des semaines passées, pas la semaine affichée. Elle ne doit donc jamais compter
+        // comme "1 Scan U" dans le total/les badges de cette fonction, aussi contre-intuitif que ça
+        // paraisse (Samir l'a dit lui-même) -- sinon elle serait comptée deux fois (ici ET dans sa
+        // colonne dédiée), et fausserait aussi statsAvailabilityTier() (qui ne doit jamais tenir
+        // compte de l'astreinte, voir sa déclaration).
+        if (creneau.id === "astreinte") return;
         const key = cellKey(activity.id, day, creneau.id);
         if (state.fermetures[key]) return;
         const assigned = effectiveAssignedIds(key).filter(Boolean);
@@ -2926,6 +2934,36 @@ function computeVacationStatsForWeek(monday) {
   });
 
   return stats;
+}
+
+// Colonne "Astreinte" dédiée de la vue Stats (24/07/2026, demande de Samir) : contrairement à
+// toutes les autres colonnes de cette vue, ce n'est PAS un décompte de la semaine affichée -- c'est
+// le CUMUL de toutes les astreintes des semaines STRICTEMENT PASSÉES (jamais la semaine affichée
+// elle-même). Exemple donné par Samir : en semaine 5, la colonne montre le total des semaines
+// 4-3-2-1, jamais la semaine 5 en cours.
+//
+// Parcourt directement les clés de state.assignments (pas effectiveAssignedIds()/la trame : RG-017
+// exclut déjà explicitement les semaines passées de tout mécanisme de repli -- une semaine passée
+// jamais remplie doit rester comptée pour 0, pas se faire deviner depuis la trame). Astreinte n'est
+// possible que sur Scan U (RG-012), donc seules les clés "<semaine>|scan-u|<jour>|astreinte" sont
+// concernées ; comparaison de `weekKeyPart` en chaîne ISO (comme partout ailleurs dans l'appli,
+// l'ordre lexicographique suffit pour des dates "YYYY-MM-DD").
+function computePastAstreinteCounts(monday) {
+  const counts = new Map(); // staffId -> nombre d'astreintes sur des semaines strictement avant `monday`.
+  const currentWeekKey = weekKey(monday);
+
+  Object.keys(state.assignments).forEach((key) => {
+    const [weekKeyPart, activityId, , creneauId] = key.split("|");
+    if (activityId !== "scan-u" || creneauId !== "astreinte") return;
+    if (weekKeyPart >= currentWeekKey) return; // semaine affichée ou future -- jamais comptée ici.
+    if (state.fermetures[key]) return; // RG-010 : case fermée cette semaine-là, rien de réel dessus.
+    (state.assignments[key] || []).forEach((staffId) => {
+      if (!staffById(staffId)) return;
+      counts.set(staffId, (counts.get(staffId) || 0) + 1);
+    });
+  });
+
+  return counts;
 }
 
 // Regroupement par disponibilité (24/07/2026, demande de Samir) : au-delà du tri habituel
@@ -2986,8 +3024,13 @@ function renderStatsView() {
 
   const monday = getMonday(state.weekOffset);
   const stats = computeVacationStatsForWeek(monday);
+  const pastAstreintes = computePastAstreinteCounts(monday);
   // Tri à deux niveaux : d'abord le bloc de disponibilité (statsAvailabilityTier(), voir plus haut),
   // puis à l'intérieur d'un bloc le tri habituel (grade/spécialité/alphabétique, comme partout ailleurs).
+  // La colonne Astreinte (pastAstreintes) n'entre JAMAIS dans ce tri -- demandé explicitement par
+  // Samir ("jamais prise en compte pour des questions d'ordre") : c'est un historique cumulé, pas
+  // un signal de disponibilité de la semaine affichée, statsAvailabilityTier() ne la consulte donc
+  // pas du tout (elle ne lit que `stats`, jamais `pastAstreintes`).
   const people = state.staff.filter(personMatchesFilters).sort((a, b) => {
     const tierDiff = statsAvailabilityTier(a, stats) - statsAvailabilityTier(b, stats);
     if (tierDiff !== 0) return tierDiff;
@@ -3008,6 +3051,7 @@ function renderStatsView() {
       <tr>
         <th class="activity-cell person-name-cell">Personnel</th>
         <th class="stats-total-header">Total</th>
+        <th class="stats-total-header" title="Cumul des astreintes des semaines précédentes (jamais la semaine affichée)">Astreinte</th>
         <th>Vacations (${currentWeekLabel()})</th>
       </tr>
     </thead>
@@ -3034,6 +3078,16 @@ function renderStatsView() {
     totalBadge.textContent = entry ? entry.total : 0;
     totalCell.appendChild(totalBadge);
     tr.appendChild(totalCell);
+
+    // Colonne "Astreinte" (même skin que Total, demande explicite de Samir) : cumul des semaines
+    // passées uniquement, voir computePastAstreinteCounts() -- jamais la semaine affichée.
+    const astreinteCell = document.createElement("td");
+    astreinteCell.className = "stats-total-cell";
+    const astreinteBadge = document.createElement("span");
+    astreinteBadge.className = "stats-total-badge";
+    astreinteBadge.textContent = pastAstreintes.get(person.id) || 0;
+    astreinteCell.appendChild(astreinteBadge);
+    tr.appendChild(astreinteCell);
 
     const badgesCell = document.createElement("td");
     badgesCell.className = "stats-badges-cell";
