@@ -225,12 +225,20 @@ body {
    permanence dans la topbar, à côté du bouton "Synchro GitHub", pour repérer d'un coup d'œil si la
    dernière modif a bien été écrite sur GitHub avant de fermer l'onglet. */
 .file-sync-status {
+  display: inline-block;
   font-size: 12px;
   font-weight: 600;
   padding: 4px 9px;
   border-radius: 6px;
   margin-left: 4px;
   white-space: nowrap;
+  /* Largeur fixe (24/07/2026) : le texte varie beaucoup selon le statut ("à jour" ~102px vs
+     "erreur d'enregistrement" ~201px, mesuré en vrai) -- sans min-width, chaque changement de
+     statut redimensionnait cette pastille et décalait tout ce qui suit dans la topbar (flèches de
+     semaine, boutons). 205px couvre le texte le plus long avec une petite marge ; centré pour ne
+     pas laisser un texte court collé à gauche dans une pastille plus large que nécessaire. */
+  min-width: 205px;
+  text-align: center;
 }
 .file-sync-status.file-sync-disconnected { background: #374151; color: #d1d5db; }
 .file-sync-status.file-sync-ok { background: #065f46; color: #d1fae5; }
