@@ -279,7 +279,7 @@ let currentView = "modalite";
 // Vacations" (comportement inchangé), "personnel" = nouvelle "Trame Personnel" (RG-017, planning de
 // base récurrent, voir renderTramePersonnelView() plus bas). Non persisté (comme currentView).
 let editingTrame = false;
-let trameView = "specs"; // "specs" | "personnel"
+let trameView = "personnel"; // "specs" | "personnel" -- "personnel" par défaut à l'ouverture (demande de Samir le 24/07/2026)
 // Dérivées, recalculées en tête de render() -- gardées comme variables à part (plutôt que
 // remplacées partout par `editingTrame && trameView === "specs"`) pour ne pas devoir toucher tout
 // le reste du code qui consultait déjà editingVacationSpecs avant l'existence du mode Trame.
@@ -3896,11 +3896,11 @@ function resetFullScreenModeButtons(exceptId) {
 
 // RG-017 (24/07/2026) : "Trame" remplace l'ancien bouton isolé "Spécialités Vacations", déplacé à
 // côté d'"Aujourd'hui" -- regroupe désormais 2 sous-vues (voir trameView, sous-onglets #trameSubNav
-// dans index.html). Rouvrir le mode reprend la sous-vue déjà active la dernière fois (trameView
-// n'est pas remis à "specs" à la fermeture) -- pas besoin de rechoisir à chaque fois.
+// dans index.html). Chaque OUVERTURE du mode retombe sur "Trame Personnel" par défaut (demande de
+// Samir le 24/07/2026) -- pas de mémorisation du dernier onglet utilisé, contrairement au 1er jet.
 document.getElementById("btnTrame").addEventListener("click", () => {
   editingTrame = !editingTrame;
-  if (editingTrame) { editingConges = false; editingStats = false; }
+  if (editingTrame) { editingConges = false; editingStats = false; trameView = "personnel"; }
   const btn = document.getElementById("btnTrame");
   btn.textContent = editingTrame ? "← Retour au planning" : "Trame";
   btn.classList.toggle("btn-active", editingTrame);
