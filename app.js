@@ -383,6 +383,7 @@ const ACTIVITIES = [
   { id: "ecn-1", nom: "ECN 1", group: "ecn-start" },
   { id: "ecn-2", nom: "ECN 2", group: "ecn-end" },
   { id: "mammo", nom: "Mammo" },
+  { id: "bureau", nom: "Bureau" },
 ];
 
 const DAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"];
@@ -2764,8 +2765,8 @@ function renderCongePopoverContent(person, monday) {
 // mais les colonnes Jour x Créneau sont remplacées par un total + des badges par "famille" de
 // modalité, regroupés par COULEUR de spécialité (demande explicite de Samir) plutôt que par type.
 
-const STATS_FAMILY_LABELS = { scan: "Scan", irm: "IRM", ecn: "ECN", mammo: "Mammo" };
-const STATS_TYPE_ORDER = ["Scan", "IRM", "ECN", "Mammo"];
+const STATS_FAMILY_LABELS = { scan: "Scan", irm: "IRM", ecn: "ECN", mammo: "Mammo", bureau: "Bureau" };
+const STATS_TYPE_ORDER = ["Scan", "IRM", "ECN", "Mammo", "Bureau"];
 
 // Scan A/B, IRM 1.5T/3T et ECN 1/2 doivent être fusionnés ("on s'en fiche de savoir si c'est A ou
 // B") -- réutilise le champ `group` déjà existant sur ACTIVITIES (ex. "scan-start"/"scan-end") en
