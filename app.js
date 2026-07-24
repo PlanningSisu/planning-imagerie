@@ -2710,6 +2710,29 @@ function renderCongePopoverContent(person, monday) {
   const congeRow = document.getElementById("congePillRow");
   const gardeRow = document.getElementById("gardePillRow");
 
+  // RG-013 (24/07/2026, retour de Samir) : une garde le dimanche génère un repos de garde le lundi
+  // (jour calendaire suivant), mais DAYS s'arrête au lundi -- sans cette pilule, aucun moyen de
+  // déclarer cette garde-là, donc le repos du lundi ne pouvait jamais être affiché. Garde
+  // UNIQUEMENT (pas de pilule Congé équivalente : un congé isolé le dimanche ne serait affiché
+  // nulle part, aucune colonne ne le montrerait, contrairement à la garde qui a un effet visible
+  // via le repos du lendemain). Placée avant "Lun" dans la rangée Garde, chronologiquement en tête.
+  const sundayDate = new Date(monday);
+  sundayDate.setDate(monday.getDate() - 1);
+  const sundayIso = toISODateLocal(sundayDate);
+  const sundayGardeBtn = document.createElement("button");
+  sundayGardeBtn.type = "button";
+  sundayGardeBtn.className = "conge-pill conge-pill-garde" + (isOnGardeDay(person.id, sundayIso) ? " active" : "");
+  sundayGardeBtn.textContent = `Dim ${sundayDate.getDate()}`;
+  sundayGardeBtn.title = "Garde du dimanche -- génère le repos de garde du lundi";
+  sundayGardeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleGardeDay(person.id, sundayIso);
+    saveState();
+    render();
+    renderCongePopoverContent(person, monday);
+  });
+  gardeRow.appendChild(sundayGardeBtn);
+
   weekDays.forEach(({ iso, label }) => {
     const congeBtn = document.createElement("button");
     congeBtn.type = "button";
