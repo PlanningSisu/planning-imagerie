@@ -1488,6 +1488,22 @@ tr.group-end td {
   font-size: 13px;
   color: #475569;
 }
+/* Colonnes réordonnables par glisser-déposer (24/07/2026, demande de Samir) -- "Personnel" (1re
+   colonne, .person-name-cell) n'est jamais draggable, n'a donc pas ce curseur. `.drag-over` reprend
+   le même traitement visuel que `.slot-cell.drag-over` (voir plus haut) pour rester cohérent avec le
+   reste de l'appli ; spécificité (2 classes + 2 types) largement suffisante pour gagner sur
+   `thead th { background }`. */
+.stats-table thead th[draggable="true"] {
+  cursor: grab;
+}
+.stats-table thead th.dragging {
+  opacity: 0.4;
+}
+.stats-table thead th.drag-over {
+  background: #dbeafe;
+  outline: 2px dashed #3b82f6;
+  outline-offset: -2px;
+}
 .stats-total-header {
   text-align: center;
   width: 60px;

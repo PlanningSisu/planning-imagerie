@@ -424,7 +424,7 @@ const STORAGE_KEY = "planningAppState_v3";
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 2;
+const STATE_SCHEMA_VERSION = 3;
 
 // Clé = version de départ, valeur = fonction qui transforme les données de cette version vers la
 // version suivante (N -> N+1, jamais un saut direct). migrateState() les enchaîne jusqu'à
@@ -438,6 +438,11 @@ const STATE_MIGRATIONS = {
   // changement de forme d'un champ existant, mais on suit quand même la politique de migration
   // pour qu'un vieux fichier sans `trame` du tout reparte sur un objet vide plutôt que `undefined`.
   1: (data) => ({ ...data, trame: data.trame || {} }),
+  // 2 -> 3 : ajout de `statsColumnOrder` (colonnes de la vue Stats réordonnables à la main,
+  // 24/07/2026) -- un fichier plus ancien n'a jamais eu ce champ, `normalizeStatsColumnOrder()`
+  // (appelée aussi bien ici qu'à chaque rendu, voir renderStatsView()) retombe sur l'ordre par
+  // défaut le cas échéant, donc une simple valeur vide suffit ici, la normalisation fait le reste.
+  2: (data) => ({ ...data, statsColumnOrder: Array.isArray(data.statsColumnOrder) ? data.statsColumnOrder : [] }),
 };
 
 function migrateState(rawData) {
@@ -467,7 +472,7 @@ function migrateState(rawData) {
 // pour ne jamais en oublier un dans l'un des trois chemins). Délibérément SANS `activities` (piloté
 // par le code, jamais par des données utilisateur -- voir CLAUDE.md §4) ni `schemaVersion` (ajouté à
 // part par buildPersistedState()).
-const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "fermetures", "conges", "gardes", "trame", "weekOffset"];
+const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "fermetures", "conges", "gardes", "trame", "weekOffset", "statsColumnOrder"];
 
 function buildPersistedState() {
   const data = { schemaVersion: STATE_SCHEMA_VERSION };
@@ -477,6 +482,23 @@ function buildPersistedState() {
 
 // Applique un objet de données (fichier partagé, localStorage, ou import JSON manuel) au state en
 // mémoire, après migration. Ne touche jamais state.activities, quoi que contienne rawData.
+// Ordre par défaut des colonnes de la vue Stats (24/07/2026, colonnes réordonnables à la main) --
+// "Personnel" n'en fait pas partie, elle reste toujours fixe en 1re position (colonne figée).
+const DEFAULT_STATS_COLUMN_ORDER = ["total", "vacations", "astreinte", "bureau", "off"];
+
+// Valide/complète un ordre de colonnes Stats persisté -- un fichier plus ancien (sans ce champ du
+// tout), corrompu, ou une future colonne ajoutée par le code mais absente d'un vieil export ne doit
+// JAMAIS faire planter le rendu ni faire disparaître une colonne : on filtre les identifiants
+// inconnus (ex. une colonne retirée depuis), puis on complète avec les colonnes par défaut
+// manquantes (à la fin, dans leur ordre canonique) -- jamais de colonne perdue silencieusement.
+function normalizeStatsColumnOrder(order) {
+  const valid = Array.isArray(order) ? order.filter((id) => DEFAULT_STATS_COLUMN_ORDER.includes(id)) : [];
+  DEFAULT_STATS_COLUMN_ORDER.forEach((id) => {
+    if (!valid.includes(id)) valid.push(id);
+  });
+  return valid;
+}
+
 function applyPersistedState(rawData) {
   const data = migrateState(rawData);
   state.assignments = data.assignments || {};
@@ -486,6 +508,7 @@ function applyPersistedState(rawData) {
   state.conges = Array.isArray(data.conges) ? data.conges : [];
   state.gardes = Array.isArray(data.gardes) ? data.gardes : [];
   state.trame = data.trame || {};
+  state.statsColumnOrder = normalizeStatsColumnOrder(data.statsColumnOrder);
   if (Array.isArray(data.staff) && data.staff.length > 0) {
     state.staff = data.staff;
   }
@@ -515,6 +538,9 @@ let state = {
   // qu'elles n'ont pas été explicitement modifiées cellule par cellule (voir effectiveAssignedIds()).
   trame: {}, // key: `${activityId}|${day}|${creneauId}` -> [staffId, ...]
   weekOffset: 0,
+  // Ordre des colonnes de la vue Stats (24/07/2026, réordonnables par glisser-déposer des en-têtes,
+  // voir renderStatsView()) -- "Personnel" n'en fait pas partie, toujours fixe en 1re position.
+  statsColumnOrder: DEFAULT_STATS_COLUMN_ORDER.slice(),
 };
 
 function loadState() {
@@ -3473,25 +3499,160 @@ function renderStatsView() {
   const astreinteTitle = statsMode === "period"
     ? "Cumul des astreintes sur la période choisie"
     : "Cumul des astreintes jusqu'à la semaine affichée incluse (semaines d'avant + semaine affichée)";
-  // Colonne "Total" revenue en 1re position à côté de "Personnel" (24/07/2026, retour de Samir --
-  // "on revient en arrière") : les badges Vacations passaient juste après le nom depuis le 24/07/2026
-  // (même jour), Samir a demandé de remettre Total devant. Ordre actuel : Personnel, Total, Vacations
-  // (badges), Astreinte, Bureau, Off.
-  table.innerHTML = `
-    <thead>
-      <tr>
-        <th class="activity-cell person-name-cell">Personnel</th>
-        <th class="stats-total-header">Total</th>
-        <th>Vacations (${periodLabel})</th>
-        <th class="stats-total-header" title="${astreinteTitle}">Astreinte</th>
-        <th class="stats-total-header">Bureau</th>
-        <th class="stats-total-header" title="Nombre de demi-journées (créneaux matin/après-midi)">Off</th>
-      </tr>
-    </thead>
-  `;
+  const noDataText = statsMode === "period" ? "Aucune vacation sur cette période." : "Aucune vacation cette semaine.";
+
+  // Colonnes réordonnables à la main par glisser-déposer des en-têtes (24/07/2026, demande de Samir)
+  // -- "Personnel" reste TOUJOURS fixe en 1re position (colonne figée), les 5 autres suivent l'ordre
+  // choisi par Samir (state.statsColumnOrder, persisté). Chaque colonne = un descripteur d'en-tête
+  // (libellé/classe/title) + une fonction qui construit sa cellule pour une ligne donnée -- un seul
+  // endroit à modifier pour ajouter/changer une colonne, en-tête et corps du tableau restent
+  // forcément synchronisés (jamais 2 listes à maintenir en parallèle).
+  const columnDefs = {
+    total: {
+      label: "Total",
+      headerClass: "stats-total-header",
+      buildCell(person, entry) {
+        const td = document.createElement("td");
+        td.className = "stats-total-cell";
+        const badge = document.createElement("span");
+        badge.className = "stats-total-badge";
+        badge.textContent = entry ? entry.total : 0;
+        td.appendChild(badge);
+        return td;
+      },
+    },
+    vacations: {
+      label: `Vacations (${periodLabel})`,
+      buildCell(person, entry) {
+        const td = document.createElement("td");
+        td.className = "stats-badges-cell";
+        if (statsMode === "week" && isFullyOnLeaveThisWeek(person)) {
+          // Ligne gardée visible plutôt que masquée (contrairement au panneau Personnel, voir
+          // isFullyOnLeaveThisWeek()) : un total à 0 sans explication laisserait croire à un oubli
+          // plutôt qu'à une absence -- voir aussi buildAbsenceBar() pour la même logique ailleurs.
+          // Spécifique au mode Semaine -- voir statsPeriodTier()/le mode Période pour la raison.
+          const absence = document.createElement("span");
+          absence.className = "stats-absence-label";
+          absence.textContent = "Congés toute la semaine";
+          td.appendChild(absence);
+        } else if (!entry) {
+          const empty = document.createElement("span");
+          empty.className = "empty-hint";
+          empty.textContent = noDataText;
+          td.appendChild(empty);
+        } else {
+          sortedStatsBadges(entry).forEach((badge) => {
+            const span = document.createElement("span");
+            span.className = statBadgeClass(badge) + " stats-badge";
+            span.textContent = `${badge.count} ${badge.label}`;
+            td.appendChild(span);
+          });
+        }
+        return td;
+      },
+    },
+    astreinte: {
+      label: "Astreinte",
+      headerClass: "stats-total-header",
+      headerTitle: astreinteTitle,
+      // Cumul multi-semaines en mode Semaine (computePastAstreinteCounts()), décompte direct de la
+      // période choisie en mode Période (entry.astreinte, voir computeVacationStatsForPeriod()).
+      buildCell(person, entry) {
+        const td = document.createElement("td");
+        td.className = "stats-total-cell";
+        const badge = document.createElement("span");
+        badge.className = "stats-total-badge";
+        badge.textContent = statsMode === "period" ? (entry ? entry.astreinte : 0) : (pastAstreintes.get(person.id) || 0);
+        td.appendChild(badge);
+        return td;
+      },
+    },
+    bureau: {
+      label: "Bureau",
+      headerClass: "stats-total-header",
+      buildCell(person, entry) {
+        const td = document.createElement("td");
+        td.className = "stats-total-cell";
+        const badge = document.createElement("span");
+        badge.className = "stats-total-badge";
+        badge.textContent = entry ? entry.bureau : 0;
+        td.appendChild(badge);
+        return td;
+      },
+    },
+    off: {
+      label: "Off",
+      headerClass: "stats-total-header",
+      headerTitle: "Nombre de demi-journées (créneaux matin/après-midi)",
+      buildCell(person, entry) {
+        const td = document.createElement("td");
+        td.className = "stats-total-cell";
+        const badge = document.createElement("span");
+        badge.className = "stats-total-badge";
+        badge.textContent = entry ? entry.off : 0;
+        td.appendChild(badge);
+        return td;
+      },
+    },
+  };
+
+  const columnOrder = normalizeStatsColumnOrder(state.statsColumnOrder);
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  const personnelTh = document.createElement("th");
+  personnelTh.className = "activity-cell person-name-cell";
+  personnelTh.textContent = "Personnel";
+  headRow.appendChild(personnelTh);
+
+  columnOrder.forEach((colId) => {
+    const def = columnDefs[colId];
+    const th = document.createElement("th");
+    if (def.headerClass) th.className = def.headerClass;
+    th.textContent = def.label;
+    if (def.headerTitle) th.title = def.headerTitle;
+    // Glisser-déposer d'en-tête pour réordonner (24/07/2026) : `dataset.columnId` identifie la
+    // colonne, le drop recalcule l'ordre complet et le persiste (saveState()) -- même patron visuel
+    // (.dragging/.drag-over) que le reste des glisser-déposer de l'appli.
+    th.draggable = true;
+    th.dataset.columnId = colId;
+    th.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/plain", colId);
+      e.dataTransfer.effectAllowed = "move";
+      th.classList.add("dragging");
+    });
+    th.addEventListener("dragend", () => th.classList.remove("dragging"));
+    th.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      th.classList.add("drag-over");
+    });
+    th.addEventListener("dragleave", () => th.classList.remove("drag-over"));
+    th.addEventListener("drop", (e) => {
+      e.preventDefault();
+      th.classList.remove("drag-over");
+      const draggedId = e.dataTransfer.getData("text/plain");
+      if (!draggedId || draggedId === colId || !columnDefs[draggedId]) return;
+      const order = normalizeStatsColumnOrder(state.statsColumnOrder);
+      const fromIdx = order.indexOf(draggedId);
+      const targetIdxBefore = order.indexOf(colId); // AVANT le retrait, pour savoir le sens du glissé.
+      if (fromIdx === -1 || targetIdxBefore === -1) return;
+      order.splice(fromIdx, 1);
+      let insertAt = order.indexOf(colId); // position de la cible APRÈS le retrait (a pu décaler de 1).
+      // Glissé vers l'avant (la cible était après la colonne déplacée) -> insertion APRÈS la cible,
+      // pas avant -- sinon glisser une colonne sur sa voisine immédiate suivante ne bougeait rien
+      // (le retrait + une insertion "avant" la remettait exactement à sa place d'origine).
+      if (fromIdx < targetIdxBefore) insertAt += 1;
+      order.splice(insertAt, 0, draggedId);
+      state.statsColumnOrder = order;
+      saveState();
+      render();
+    });
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
-  const noDataText = statsMode === "period" ? "Aucune vacation sur cette période." : "Aucune vacation cette semaine.";
 
   people.forEach((person) => {
     const tr = document.createElement("tr");
@@ -3505,71 +3666,9 @@ function renderStatsView() {
 
     const entry = stats.get(person.id);
 
-    const totalCell = document.createElement("td");
-    totalCell.className = "stats-total-cell";
-    const totalBadge = document.createElement("span");
-    totalBadge.className = "stats-total-badge";
-    totalBadge.textContent = entry ? entry.total : 0;
-    totalCell.appendChild(totalBadge);
-    tr.appendChild(totalCell);
-
-    const badgesCell = document.createElement("td");
-    badgesCell.className = "stats-badges-cell";
-
-    if (statsMode === "week" && isFullyOnLeaveThisWeek(person)) {
-      // Ligne gardée visible plutôt que masquée (contrairement au panneau Personnel, voir
-      // isFullyOnLeaveThisWeek()) : un total à 0 sans explication laisserait croire à un oubli
-      // plutôt qu'à une absence -- voir aussi buildAbsenceBar() pour la même logique ailleurs.
-      // Spécifique au mode Semaine -- voir statsPeriodTier()/le mode Période pour la raison.
-      const absence = document.createElement("span");
-      absence.className = "stats-absence-label";
-      absence.textContent = "Congés toute la semaine";
-      badgesCell.appendChild(absence);
-    } else if (!entry) {
-      const empty = document.createElement("span");
-      empty.className = "empty-hint";
-      empty.textContent = noDataText;
-      badgesCell.appendChild(empty);
-    } else {
-      sortedStatsBadges(entry).forEach((badge) => {
-        const span = document.createElement("span");
-        span.className = statBadgeClass(badge) + " stats-badge";
-        span.textContent = `${badge.count} ${badge.label}`;
-        badgesCell.appendChild(span);
-      });
-    }
-
-    tr.appendChild(badgesCell);
-
-    // Colonne "Astreinte" (même skin que Total) : cumul multi-semaines en mode Semaine
-    // (computePastAstreinteCounts()), décompte direct de la période choisie en mode Période
-    // (entry.astreinte, voir computeVacationStatsForPeriod()).
-    const astreinteCell = document.createElement("td");
-    astreinteCell.className = "stats-total-cell";
-    const astreinteBadge = document.createElement("span");
-    astreinteBadge.className = "stats-total-badge";
-    astreinteBadge.textContent = statsMode === "period" ? (entry ? entry.astreinte : 0) : (pastAstreintes.get(person.id) || 0);
-    astreinteCell.appendChild(astreinteBadge);
-    tr.appendChild(astreinteCell);
-
-    // Colonnes "Bureau"/"Off" (24/07/2026, demande de Samir) : mêmes skin que Total/Astreinte,
-    // décomptes dédiés (semaine affichée ou période choisie) -- jamais mélangés aux badges Vacations,
-    // jamais comptés dans Total.
-    const bureauCell = document.createElement("td");
-    bureauCell.className = "stats-total-cell";
-    const bureauBadge = document.createElement("span");
-    bureauBadge.className = "stats-total-badge";
-    bureauBadge.textContent = entry ? entry.bureau : 0;
-    bureauCell.appendChild(bureauBadge);
-    tr.appendChild(bureauCell);
-
-    const offCell = document.createElement("td");
-    offCell.className = "stats-total-cell";
-    const offBadge = document.createElement("span");
-    offBadge.className = "stats-total-badge";
-    offBadge.textContent = entry ? entry.off : 0;
-    offCell.appendChild(offBadge);
-    tr.appendChild(offCell);
+    columnOrder.forEach((colId) => {
+      tr.appendChild(columnDefs[colId].buildCell(person, entry));
+    });
 
     tbody.appendChild(tr);
   });
