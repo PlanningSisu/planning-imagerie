@@ -1449,6 +1449,45 @@ tr.group-end td {
 .stats-table {
   min-width: auto;
 }
+/* Bascule Semaine/Période (24/07/2026, demande de Samir) -- même patron visuel que .trame-subnav/
+   .trame-tab, couleur active alignée sur le violet de "Stats" (.btn-accent4) pour rester cohérent
+   avec le reste de la vue plutôt que de réutiliser le teal de Trame. */
+.stats-mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.stats-mode-tabs {
+  display: flex;
+  gap: 4px;
+  background: #e2e8f0;
+  border-radius: 999px;
+  padding: 4px;
+  width: fit-content;
+}
+.stats-mode-tab {
+  border: none;
+  background: transparent;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.stats-mode-tab:hover { background: rgba(15, 23, 42, 0.08); }
+.stats-mode-tab.active {
+  background: #4338ca;
+  color: white;
+}
+.stats-period-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #475569;
+}
 .stats-total-header {
   text-align: center;
   width: 60px;

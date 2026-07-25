@@ -298,6 +298,16 @@ let congesQuarter = currentQuarter(new Date());
 // directement la semaine déjà sélectionnée (state.weekOffset) comme le reste de l'appli.
 let editingStats = false;
 
+// Bascule Semaine/Période de la vue Stats (24/07/2026, demande de Samir) : "week" utilise la semaine
+// affichée (state.weekOffset, comportement d'origine) ; "period" calcule sur une plage de dates
+// choisie via 2 <input type="date"> ("un mois par exemple", mais une plage arbitraire). Transitoire,
+// non persisté (comme editingStats/congesYear) -- repart en mode "Semaine" à chaque rechargement.
+// `statsRangeStart`/`statsRangeEnd` ("YYYY-MM-DD") ne sont initialisées qu'à la première bascule en
+// mode "Période" (voir defaultStatsPeriod() dans renderStatsView()), pas ici.
+let statsMode = "week";
+let statsRangeStart = null;
+let statsRangeEnd = null;
+
 // Focus jour / demi-journée (24/07/2026) : cliquer sur l'en-tête d'un jour (ou d'un créneau précis
 // sous ce jour) dans le tableau principal filtre le panneau Personnel (#staffList) pour ne montrer
 // que les personnes PRÉSENTES ce jour-là (RG-014 : ni congé ni repos de garde) ET PAS DÉJÀ POSTÉES
@@ -3095,12 +3105,10 @@ function computeVacationStatsForWeek(monday) {
 
 // Colonne "Astreinte" dédiée de la vue Stats (24/07/2026, demande de Samir) : contrairement à
 // toutes les autres colonnes de cette vue, ce n'est PAS un décompte de la seule semaine affichée --
-// c'est un CUMUL. **Borne revue le 24/07/2026 (léger changement de RG, même jour que la fonctionnalité
-// initiale)** : compte désormais toutes les astreintes jusqu'à la semaine N+1 INCLUSE (N = semaine
-// affichée) -- pas seulement les semaines strictement passées comme au tout premier jet. Exemple
-// donné par Samir le 24/07/2026 : en semaine affichée 20/07-24/07 (N), la colonne doit aussi compter
-// la semaine du 27 au 31 (N+1), en plus de N elle-même et de toutes les semaines avant N. Seule une
-// semaine strictement APRÈS N+1 (N+2 et au-delà) reste exclue.
+// c'est un CUMUL. **Borne revue une 2e fois le 24/07/2026 (retour de Samir, "revenir en arrière") :
+// ne compte plus la semaine SUIVANTE (N+1)** -- le comptage jusqu'à N+1 inclus (tenté le même jour)
+// est retiré ; compte désormais les semaines jusqu'à N (semaine affichée) incluse, N+1 et au-delà
+// exclues.
 //
 // Repli sur la trame ajouté le 24/07/2026 (bug remonté par Samir : "je ne vois pas le compteur
 // s'incrémenter") -- une astreinte posée uniquement via la Trame Personnel (RG-017) n'est JAMAIS
@@ -3109,19 +3117,16 @@ function computeVacationStatsForWeek(monday) {
 // - **Semaines strictement avant N** (`trackedWeeks`) : repli trame borné aux semaines ayant une
 //   AUTRE preuve d'usage réel (au moins une affectation posée, n'importe quelle activité) -- pour ne
 //   jamais inventer une astreinte sur une semaine d'avant que l'outil ne soit réellement utilisé.
-// - **N et N+1** : repli trame SANS cette condition -- une semaine courante/future suit toujours la
-//   trame par défaut (RG-017, `effectiveAssignedIds()`), pas besoin d'une preuve d'usage supplémentaire.
+// - **N** : repli trame SANS cette condition -- une semaine courante suit toujours la trame par
+//   défaut (RG-017, `effectiveAssignedIds()`), pas besoin d'une preuve d'usage supplémentaire.
 // Une vraie entrée dans state.assignments (même un tableau vide, ex. astreinte explicitement retirée)
 // reste toujours prioritaire sur le repli trame, quelle que soit la semaine. Astreinte n'est possible
 // que sur Scan U (RG-012), donc seules les clés "<semaine>|scan-u|<jour>|astreinte" sont concernées ;
 // comparaison de `weekKeyPart` en chaîne ISO (comme partout ailleurs, l'ordre lexicographique suffit
 // pour des dates "YYYY-MM-DD").
 function computePastAstreinteCounts(monday) {
-  const counts = new Map(); // staffId -> nombre d'astreintes sur des semaines jusqu'à N+1 incluse.
+  const counts = new Map(); // staffId -> nombre d'astreintes sur des semaines jusqu'à N incluse.
   const currentWeekKey = weekKey(monday);
-  const nextMonday = new Date(monday);
-  nextMonday.setDate(monday.getDate() + 7);
-  const nextWeekKey = weekKey(nextMonday); // N+1, désormais incluse dans le cumul.
 
   const addCount = (staffId) => {
     if (!staffById(staffId)) return;
@@ -3135,7 +3140,7 @@ function computePastAstreinteCounts(monday) {
   Object.keys(state.assignments).forEach((key) => trackedWeeks.add(key.split("|")[0]));
 
   trackedWeeks.forEach((wk) => {
-    if (wk >= currentWeekKey) return; // N et N+1 traités séparément juste en dessous.
+    if (wk >= currentWeekKey) return; // N traitée séparément juste en dessous.
     DAYS.forEach((day) => {
       const key = `${wk}|scan-u|${day}|astreinte`;
       if (Object.prototype.hasOwnProperty.call(state.assignments, key)) return; // vraie valeur déjà là, traitée juste en dessous, prioritaire sur la trame.
@@ -3144,17 +3149,15 @@ function computePastAstreinteCounts(monday) {
     });
   });
 
-  // N et N+1 : repli trame inconditionnel (comme effectiveAssignedIds() pour une semaine courante/
-  // future), aucune condition de semaine "suivie" nécessaire.
-  [currentWeekKey, nextWeekKey].forEach((wk) => {
-    DAYS.forEach((day) => {
-      const key = `${wk}|scan-u|${day}|astreinte`;
-      if (state.fermetures[key]) return; // RG-010 : case fermée cette semaine-là, rien de réel dessus.
-      const assigned = Object.prototype.hasOwnProperty.call(state.assignments, key)
-        ? state.assignments[key]
-        : state.trame[`scan-u|${day}|astreinte`] || [];
-      assigned.forEach(addCount);
-    });
+  // N : repli trame inconditionnel (comme effectiveAssignedIds() pour une semaine courante), aucune
+  // condition de semaine "suivie" nécessaire.
+  DAYS.forEach((day) => {
+    const key = `${currentWeekKey}|scan-u|${day}|astreinte`;
+    if (state.fermetures[key]) return; // RG-010 : case fermée cette semaine-là, rien de réel dessus.
+    const assigned = Object.prototype.hasOwnProperty.call(state.assignments, key)
+      ? state.assignments[key]
+      : state.trame[`scan-u|${day}|astreinte`] || [];
+    assigned.forEach(addCount);
   });
 
   // Semaines strictement avant N, matérialisées directement dans state.assignments (prioritaire sur
@@ -3162,7 +3165,7 @@ function computePastAstreinteCounts(monday) {
   Object.keys(state.assignments).forEach((key) => {
     const [weekKeyPart, activityId, , creneauId] = key.split("|");
     if (activityId !== "scan-u" || creneauId !== "astreinte") return;
-    if (weekKeyPart >= currentWeekKey) return; // N et N+1 déjà traitées juste au-dessus.
+    if (weekKeyPart >= currentWeekKey) return; // N déjà traitée juste au-dessus.
     if (state.fermetures[key]) return; // RG-010 : case fermée cette semaine-là, rien de réel dessus.
     (state.assignments[key] || []).forEach(addCount);
   });
@@ -3236,27 +3239,227 @@ function statBadgeClass(badge) {
   return `chip spec-${badge.specialite}`;
 }
 
+// Lundi de la semaine contenant `d` (24/07/2026, mode "Période") -- même logique que getMonday(),
+// mais pour une date arbitraire au lieu de "aujourd'hui + un décalage de semaines". Nécessaire pour
+// convertir une date quelconque d'une période choisie vers la même weekKey que celle utilisée par
+// cellKey()/le reste de l'appli (state.assignments est toujours keyé par semaine, jamais par date).
+function mondayOfDate(d) {
+  const day = d.getDay();
+  const diffToMonday = (day === 0 ? -6 : 1) - day;
+  const monday = new Date(d);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(d.getDate() + diffToMonday);
+  return monday;
+}
+
+// Jours ouvrés (Lundi-Vendredi) entre deux dates ISO incluses (mode "Période", 24/07/2026), avec le
+// nom de jour et la weekKey correspondante déjà calculés -- pour construire directement les mêmes
+// clés que cellKey() sans repasser par state.weekOffset (sans objet ici, une période peut mélanger
+// semaines passées et futures).
+function isoWeekdaysInRange(startIso, endIso) {
+  const result = [];
+  const cursor = new Date(`${startIso}T00:00:00`);
+  const end = new Date(`${endIso}T00:00:00`);
+  while (cursor <= end) {
+    const dow = cursor.getDay(); // 0 = dimanche ... 6 = samedi
+    if (dow >= 1 && dow <= 5) {
+      result.push({
+        iso: toISODateLocal(cursor),
+        dayName: DAYS[dow - 1],
+        weekKeyPart: weekKey(mondayOfDate(cursor)),
+      });
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return result;
+}
+
+// Période par défaut à la première bascule en mode "Période" (24/07/2026) : le mois en cours
+// ("un mois par exemple", demande de Samir) -- dernier jour du mois via le "jour 0" du mois suivant,
+// un idiome standard pour ne pas recalculer le nombre de jours du mois à la main.
+function defaultStatsPeriod() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  return { start: toISODateLocal(start), end: toISODateLocal(end) };
+}
+
+// Équivalent de computeVacationStatsForWeek() pour le mode "Période" (24/07/2026) -- même forme de
+// résultat (avec `astreinte` en plus directement dans l'entrée, voir plus bas), mais lit UNIQUEMENT
+// state.assignments directement, jamais effectiveAssignedIds()/la trame : le repli trame se base sur
+// state.weekOffset (la semaine affichée dans le PLANNING PRINCIPAL), une notion sans rapport avec une
+// période arbitraire choisie ici (qui peut mélanger semaines passées ET futures dans la même plage) --
+// y appliquer le repli trame serait incorrect ou incohérent selon les cas. Choix assumé : plus simple
+// et prévisible ("ce qui est écrit compte, un point c'est tout"), quitte à ne pas deviner une case
+// jamais matérialisée pour une semaine de la période.
+function computeVacationStatsForPeriod(startIso, endIso) {
+  const stats = new Map(); // staffId -> { total, badges, days: Set(iso), bureau, off, astreinte }
+
+  const ensureEntry = (staffId) => {
+    if (!stats.has(staffId)) stats.set(staffId, { total: 0, badges: new Map(), days: new Set(), bureau: 0, off: 0, astreinte: 0 });
+    return stats.get(staffId);
+  };
+
+  isoWeekdaysInRange(startIso, endIso).forEach(({ iso, dayName, weekKeyPart }) => {
+    state.activities.forEach((activity) => {
+      CRENEAUX.forEach((creneau) => {
+        if (!isCreneauApplicable(activity.id, creneau.id)) return;
+        const key = `${weekKeyPart}|${activity.id}|${dayName}|${creneau.id}`;
+        if (state.fermetures[key]) return;
+        const assigned = state.assignments[key] || [];
+        if (assigned.length === 0) return;
+
+        if (creneau.id === "astreinte") {
+          assigned.forEach((staffId) => {
+            if (!staffById(staffId)) return;
+            ensureEntry(staffId).astreinte++;
+          });
+          return;
+        }
+        if (activity.id === "bureau") {
+          assigned.forEach((staffId) => {
+            if (!staffById(staffId)) return;
+            ensureEntry(staffId).bureau++;
+          });
+          return;
+        }
+        if (activity.id === "off") {
+          assigned.forEach((staffId) => {
+            if (!staffById(staffId)) return;
+            ensureEntry(staffId).off++;
+          });
+          return;
+        }
+
+        let groupKey, label, specialite, isUrgence;
+        if (activity.urgence) {
+          groupKey = `urgence:${activity.id}`;
+          label = activity.nom;
+          specialite = null;
+          isUrgence = true;
+        } else {
+          const family = activityStatsFamily(activity);
+          specialite = state.vacationSpecialites[vacationSpecKey(activity.id, dayName, creneau.id)] || null;
+          groupKey = `${family}:${specialite || "none"}`;
+          label = STATS_FAMILY_LABELS[family] || activity.nom;
+          isUrgence = false;
+        }
+
+        assigned.forEach((staffId) => {
+          if (!staffById(staffId)) return;
+          const entry = ensureEntry(staffId);
+          entry.total++;
+          entry.days.add(iso);
+          if (!entry.badges.has(groupKey)) {
+            entry.badges.set(groupKey, { count: 0, label, specialite, isUrgence, activityId: activity.id });
+          }
+          entry.badges.get(groupKey).count++;
+        });
+      });
+    });
+  });
+
+  return stats;
+}
+
+// Regroupement par disponibilité en mode "Période" (24/07/2026) -- volontairement plus simple que
+// statsAvailabilityTier() (mode Semaine) : pas de bloc "congé toute la période" (isFullyOnLeaveThisWeek
+// est spécifique à une semaine de 5 jours, ne se généralise pas proprement à une plage arbitraire sans
+// plus de précisions de Samir) -- seulement "a des données" (badges, Bureau ou Off) vs "rien du tout".
+function statsPeriodTier(person, stats) {
+  const entry = stats.get(person.id);
+  const hasData = entry && (entry.days.size > 0 || entry.bureau > 0 || entry.off > 0);
+  return hasData ? 0 : 1;
+}
+
 function renderStatsView() {
   const container = document.getElementById("statsView");
   container.innerHTML = "";
 
+  // Mode "Période" (24/07/2026) : initialise la plage par défaut (mois en cours) à la toute première
+  // bascule, puis corrige silencieusement une plage inversée (fin choisie avant le début) plutôt que
+  // d'afficher une période vide déroutante.
+  if (statsMode === "period") {
+    if (!statsRangeStart || !statsRangeEnd) {
+      const def = defaultStatsPeriod();
+      statsRangeStart = def.start;
+      statsRangeEnd = def.end;
+    }
+    if (statsRangeStart > statsRangeEnd) {
+      [statsRangeStart, statsRangeEnd] = [statsRangeEnd, statsRangeStart];
+    }
+  }
+
   const monday = getMonday(state.weekOffset);
-  const stats = computeVacationStatsForWeek(monday);
-  const pastAstreintes = computePastAstreinteCounts(monday);
-  // Tri à deux niveaux : d'abord le bloc de disponibilité (statsAvailabilityTier(), voir plus haut),
-  // puis à l'intérieur d'un bloc le tri habituel (grade/spécialité/alphabétique, comme partout ailleurs).
-  // La colonne Astreinte (pastAstreintes) n'entre JAMAIS dans ce tri -- demandé explicitement par
-  // Samir ("jamais prise en compte pour des questions d'ordre") : c'est un historique cumulé, pas
-  // un signal de disponibilité de la semaine affichée, statsAvailabilityTier() ne la consulte donc
-  // pas du tout (elle ne lit que `stats`, jamais `pastAstreintes`).
+  const stats = statsMode === "period"
+    ? computeVacationStatsForPeriod(statsRangeStart, statsRangeEnd)
+    : computeVacationStatsForWeek(monday);
+  // En mode Semaine uniquement -- voir computePastAstreinteCounts() (cumul sur plusieurs semaines).
+  // En mode Période, l'astreinte est directement dans `stats` (entry.astreinte), voir
+  // computeVacationStatsForPeriod().
+  const pastAstreintes = statsMode === "week" ? computePastAstreinteCounts(monday) : null;
+
+  // Tri à deux niveaux : d'abord le bloc de disponibilité (statsAvailabilityTier() en mode Semaine,
+  // statsPeriodTier() en mode Période, plus simple -- voir sa déclaration), puis le tri habituel
+  // (grade/spécialité/alphabétique) à l'intérieur d'un bloc. L'astreinte n'entre JAMAIS dans ce tri.
   const people = state.staff.filter(personMatchesFilters).sort((a, b) => {
-    const tierDiff = statsAvailabilityTier(a, stats) - statsAvailabilityTier(b, stats);
+    const tierDiff = statsMode === "period"
+      ? statsPeriodTier(a, stats) - statsPeriodTier(b, stats)
+      : statsAvailabilityTier(a, stats) - statsAvailabilityTier(b, stats);
     if (tierDiff !== 0) return tierDiff;
     return compareStaffOrder(a, b);
   });
 
+  // Bascule Semaine/Période (24/07/2026, demande de Samir) -- affichée avant tout le reste, y compris
+  // si le filtre en cours ne matche personne, pour toujours pouvoir changer de mode/de plage.
+  const modeBar = document.createElement("div");
+  modeBar.className = "stats-mode-bar";
+  const tabs = document.createElement("div");
+  tabs.className = "stats-mode-tabs";
+  [["week", "Semaine"], ["period", "Période"]].forEach(([mode, label]) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "stats-mode-tab" + (statsMode === mode ? " active" : "");
+    btn.textContent = label;
+    btn.addEventListener("click", () => {
+      if (statsMode === mode) return;
+      statsMode = mode;
+      render();
+    });
+    tabs.appendChild(btn);
+  });
+  modeBar.appendChild(tabs);
+  if (statsMode === "period") {
+    const picker = document.createElement("div");
+    picker.className = "stats-period-picker";
+    const startInput = document.createElement("input");
+    startInput.type = "date";
+    startInput.value = statsRangeStart;
+    startInput.addEventListener("change", () => {
+      if (!startInput.value) return;
+      statsRangeStart = startInput.value;
+      render();
+    });
+    const sep = document.createElement("span");
+    sep.textContent = "au";
+    const endInput = document.createElement("input");
+    endInput.type = "date";
+    endInput.value = statsRangeEnd;
+    endInput.addEventListener("change", () => {
+      if (!endInput.value) return;
+      statsRangeEnd = endInput.value;
+      render();
+    });
+    picker.append(startInput, sep, endInput);
+    modeBar.appendChild(picker);
+  }
+  container.appendChild(modeBar);
+
   if (people.length === 0) {
-    container.innerHTML = '<p class="empty-hint">Aucune personne ne correspond aux filtres sélectionnés.</p>';
+    const hint = document.createElement("p");
+    hint.className = "empty-hint";
+    hint.textContent = "Aucune personne ne correspond aux filtres sélectionnés.";
+    container.appendChild(hint);
     return;
   }
 
@@ -3264,15 +3467,23 @@ function renderStatsView() {
   wrap.className = "table-wrap";
   const table = document.createElement("table");
   table.className = "stats-table";
-  // Ordre des colonnes revu le 24/07/2026 (demande de Samir) : Personnel, Vacations (badges), Total,
-  // Astreinte, Bureau, Off -- les badges passent juste après le nom, avant les compteurs numériques.
+  const periodLabel = statsMode === "period"
+    ? `du ${formatShort(new Date(`${statsRangeStart}T00:00:00`))} au ${formatShort(new Date(`${statsRangeEnd}T00:00:00`))}`
+    : currentWeekLabel();
+  const astreinteTitle = statsMode === "period"
+    ? "Cumul des astreintes sur la période choisie"
+    : "Cumul des astreintes jusqu'à la semaine affichée incluse (semaines d'avant + semaine affichée)";
+  // Colonne "Total" revenue en 1re position à côté de "Personnel" (24/07/2026, retour de Samir --
+  // "on revient en arrière") : les badges Vacations passaient juste après le nom depuis le 24/07/2026
+  // (même jour), Samir a demandé de remettre Total devant. Ordre actuel : Personnel, Total, Vacations
+  // (badges), Astreinte, Bureau, Off.
   table.innerHTML = `
     <thead>
       <tr>
         <th class="activity-cell person-name-cell">Personnel</th>
-        <th>Vacations (${currentWeekLabel()})</th>
         <th class="stats-total-header">Total</th>
-        <th class="stats-total-header" title="Cumul des astreintes jusqu'à la semaine suivante incluse (semaines d'avant + semaine affichée + semaine suivante)">Astreinte</th>
+        <th>Vacations (${periodLabel})</th>
+        <th class="stats-total-header" title="${astreinteTitle}">Astreinte</th>
         <th class="stats-total-header">Bureau</th>
         <th class="stats-total-header" title="Nombre de demi-journées (créneaux matin/après-midi)">Off</th>
       </tr>
@@ -3280,6 +3491,7 @@ function renderStatsView() {
   `;
 
   const tbody = document.createElement("tbody");
+  const noDataText = statsMode === "period" ? "Aucune vacation sur cette période." : "Aucune vacation cette semaine.";
 
   people.forEach((person) => {
     const tr = document.createElement("tr");
@@ -3293,13 +3505,22 @@ function renderStatsView() {
 
     const entry = stats.get(person.id);
 
+    const totalCell = document.createElement("td");
+    totalCell.className = "stats-total-cell";
+    const totalBadge = document.createElement("span");
+    totalBadge.className = "stats-total-badge";
+    totalBadge.textContent = entry ? entry.total : 0;
+    totalCell.appendChild(totalBadge);
+    tr.appendChild(totalCell);
+
     const badgesCell = document.createElement("td");
     badgesCell.className = "stats-badges-cell";
 
-    if (isFullyOnLeaveThisWeek(person)) {
+    if (statsMode === "week" && isFullyOnLeaveThisWeek(person)) {
       // Ligne gardée visible plutôt que masquée (contrairement au panneau Personnel, voir
       // isFullyOnLeaveThisWeek()) : un total à 0 sans explication laisserait croire à un oubli
       // plutôt qu'à une absence -- voir aussi buildAbsenceBar() pour la même logique ailleurs.
+      // Spécifique au mode Semaine -- voir statsPeriodTier()/le mode Période pour la raison.
       const absence = document.createElement("span");
       absence.className = "stats-absence-label";
       absence.textContent = "Congés toute la semaine";
@@ -3307,7 +3528,7 @@ function renderStatsView() {
     } else if (!entry) {
       const empty = document.createElement("span");
       empty.className = "empty-hint";
-      empty.textContent = "Aucune vacation cette semaine.";
+      empty.textContent = noDataText;
       badgesCell.appendChild(empty);
     } else {
       sortedStatsBadges(entry).forEach((badge) => {
@@ -3320,27 +3541,20 @@ function renderStatsView() {
 
     tr.appendChild(badgesCell);
 
-    const totalCell = document.createElement("td");
-    totalCell.className = "stats-total-cell";
-    const totalBadge = document.createElement("span");
-    totalBadge.className = "stats-total-badge";
-    totalBadge.textContent = entry ? entry.total : 0;
-    totalCell.appendChild(totalBadge);
-    tr.appendChild(totalCell);
-
-    // Colonne "Astreinte" (même skin que Total, demande explicite de Samir) : cumul jusqu'à la
-    // semaine suivante incluse, voir computePastAstreinteCounts().
+    // Colonne "Astreinte" (même skin que Total) : cumul multi-semaines en mode Semaine
+    // (computePastAstreinteCounts()), décompte direct de la période choisie en mode Période
+    // (entry.astreinte, voir computeVacationStatsForPeriod()).
     const astreinteCell = document.createElement("td");
     astreinteCell.className = "stats-total-cell";
     const astreinteBadge = document.createElement("span");
     astreinteBadge.className = "stats-total-badge";
-    astreinteBadge.textContent = pastAstreintes.get(person.id) || 0;
+    astreinteBadge.textContent = statsMode === "period" ? (entry ? entry.astreinte : 0) : (pastAstreintes.get(person.id) || 0);
     astreinteCell.appendChild(astreinteBadge);
     tr.appendChild(astreinteCell);
 
     // Colonnes "Bureau"/"Off" (24/07/2026, demande de Samir) : mêmes skin que Total/Astreinte,
-    // décomptes dédiés de la semaine affichée (voir computeVacationStatsForWeek()) -- jamais mélangés
-    // aux badges Vacations, jamais comptés dans Total.
+    // décomptes dédiés (semaine affichée ou période choisie) -- jamais mélangés aux badges Vacations,
+    // jamais comptés dans Total.
     const bureauCell = document.createElement("td");
     bureauCell.className = "stats-total-cell";
     const bureauBadge = document.createElement("span");
