@@ -2385,6 +2385,12 @@ function renderVacationSpecPopoverContent(specKey, activity, day, creneau) {
     closeRow.textContent = "Fermé";
     closeRow.addEventListener("click", () => {
       state.fermetures[closureKey] = true;
+      // Bug remonté par Samir le 24/07/2026 : fermer une case ne dépostait personne -- la personne
+      // restait dans state.assignments (juste masquée visuellement), donc encore comptée "postée"
+      // partout où l'app lit effectiveAssignedIds() directement sans vérifier state.fermetures (ex.
+      // le filtre "Focus jour/créneau", §6.17). Fix : fermer = matérialiser la case à vide, EXACTEMENT
+      // comme si on avait retiré chaque personne à la main (×) -- ne touche jamais state.trame.
+      state.assignments[closureKey] = [];
       saveState();
       render();
       renderVacationSpecPopoverContent(specKey, activity, day, creneau);
@@ -2440,19 +2446,32 @@ function isWeekFullyClosedForActivity(activity) {
   return cells.length > 0 && cells.every(({ day, creneau }) => state.fermetures[cellKey(activity.id, day, creneau.id)]);
 }
 
+// Ferme et, dans le même geste, DÉPOSTE tout le monde de la case (24/07/2026, bug remonté par
+// Samir -- voir le commentaire équivalent sur l'option "Fermé" du popover case par case) :
+// `state.assignments[key] = []` matérialise la case à vide, exactement comme un retrait manuel (×),
+// pour que la personne redevienne "disponible" partout où l'app lit effectiveAssignedIds() sans
+// vérifier state.fermetures (ex. le filtre Focus jour/créneau). Ne touche jamais state.trame.
 function setDayClosedForActivity(activity, day, closed) {
   fermableCellsForDay(activity, day).forEach(({ creneau }) => {
     const key = cellKey(activity.id, day, creneau.id);
-    if (closed) state.fermetures[key] = true;
-    else delete state.fermetures[key];
+    if (closed) {
+      state.fermetures[key] = true;
+      state.assignments[key] = [];
+    } else {
+      delete state.fermetures[key];
+    }
   });
 }
 
 function setWeekClosedForActivity(activity, closed) {
   fermableCellsForWeek(activity).forEach(({ day, creneau }) => {
     const key = cellKey(activity.id, day, creneau.id);
-    if (closed) state.fermetures[key] = true;
-    else delete state.fermetures[key];
+    if (closed) {
+      state.fermetures[key] = true;
+      state.assignments[key] = [];
+    } else {
+      delete state.fermetures[key];
+    }
   });
 }
 
