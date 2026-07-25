@@ -2223,7 +2223,16 @@ function renderVacationSpecRows(tbody) {
 
     const nameCell = document.createElement("td");
     nameCell.textContent = activity.nom;
-    nameCell.className = "activity-cell" + (activity.urgence ? " urgence" : "");
+    // "popover-anchor" (24/07/2026, fermeture en masse) : PAS ".slot-cell" -- cette classe porte
+    // beaucoup de styles visuels (hover, teintes, curseur bloqué...) qui n'ont rien à faire sur le
+    // nom de l'activité. Marqueur purement fonctionnel, exempté du même titre que ".slot-cell" par
+    // le gestionnaire de clic global (voir plus bas) pour que le popover qu'il ouvre ne se referme
+    // pas tout seul aussitôt ouvert (même piège déjà rencontré avec le bandeau congés, voir 6.11
+    // CLAUDE.md : sans cette exemption, le clic qui ouvre le popover remonte ensuite jusqu'au
+    // gestionnaire document et le referme dans la foulée).
+    nameCell.className = "activity-cell popover-anchor" + (activity.urgence ? " urgence" : "");
+    nameCell.title = "Cliquer pour fermer cette vacation sur toute la semaine ou certains jours";
+    nameCell.addEventListener("click", () => openBulkFermeturePopover(activity, nameCell));
     tr.appendChild(nameCell);
 
     DAYS.forEach((day) => {
@@ -2382,6 +2391,136 @@ function renderVacationSpecPopoverContent(specKey, activity, day, creneau) {
     });
     optionsList.appendChild(closeRow);
   }
+
+  document.getElementById("popClose").addEventListener("click", () => pop.classList.add("hidden"));
+}
+
+// ---------- Fermeture en masse depuis Trame Vacation (24/07/2026, demande de Samir) ----------
+// Cliquer le NOM d'une activité (pas une case précise) en Trame Vacation propose de la fermer sur
+// toute la semaine affichée ou sur des jours précis, en un seul geste, plutôt que de rouvrir le
+// popover case par case pour chaque jour/créneau. RG-010 (fermeture, hebdomadaire) reste la même
+// donnée sous-jacente (`state.fermetures`) -- ceci n'est qu'un raccourci de saisie en masse.
+//
+// RG-011 (vacation "Os" jamais staffée) prime toujours : ces fonctions ne touchent JAMAIS une case
+// dont la spécialité propriétaire est "os" (voir isVacationCellOs()) -- la seule façon de fermer une
+// case Os reste de retirer d'abord la mention Os dessus (mode Trame Vacation, case par case), puis
+// de la fermer à la main. Un jour/toute la semaine entièrement Os n'a donc simplement RIEN à fermer
+// ici (voir le garde-fou `.length > 0` dans les deux fonctions "FullyClosed" ci-dessous : sans lui,
+// un jour 100% Os serait considéré comme "jamais entièrement fermé", ce qui est correct, mais un
+// jour sans AUCUNE case Os serait à tort traité pareil si on ne testait pas explicitement ce cas).
+
+// Créneaux applicables à cette activité, tous jours confondus (RG-012 : astreinte réservée à Scan U).
+function activityApplicableCreneaux(activity) {
+  return CRENEAUX.filter((c) => isCreneauApplicable(activity.id, c.id));
+}
+
+function isVacationCellOs(activity, day, creneau) {
+  return state.vacationSpecialites[vacationSpecKey(activity.id, day, creneau.id)] === "os";
+}
+
+// Cases (jour+créneau) de CE jour réellement fermables pour cette activité -- Os toujours exclue.
+function fermableCellsForDay(activity, day) {
+  return activityApplicableCreneaux(activity)
+    .filter((creneau) => !isVacationCellOs(activity, day, creneau))
+    .map((creneau) => ({ day, creneau }));
+}
+
+// Toutes les cases fermables de la semaine affichée pour cette activité (tous jours confondus).
+function fermableCellsForWeek(activity) {
+  return DAYS.flatMap((day) => fermableCellsForDay(activity, day));
+}
+
+function isDayFullyClosedForActivity(activity, day) {
+  const cells = fermableCellsForDay(activity, day);
+  return cells.length > 0 && cells.every(({ creneau }) => state.fermetures[cellKey(activity.id, day, creneau.id)]);
+}
+
+function isWeekFullyClosedForActivity(activity) {
+  const cells = fermableCellsForWeek(activity);
+  return cells.length > 0 && cells.every(({ day, creneau }) => state.fermetures[cellKey(activity.id, day, creneau.id)]);
+}
+
+function setDayClosedForActivity(activity, day, closed) {
+  fermableCellsForDay(activity, day).forEach(({ creneau }) => {
+    const key = cellKey(activity.id, day, creneau.id);
+    if (closed) state.fermetures[key] = true;
+    else delete state.fermetures[key];
+  });
+}
+
+function setWeekClosedForActivity(activity, closed) {
+  fermableCellsForWeek(activity).forEach(({ day, creneau }) => {
+    const key = cellKey(activity.id, day, creneau.id);
+    if (closed) state.fermetures[key] = true;
+    else delete state.fermetures[key];
+  });
+}
+
+function openBulkFermeturePopover(activity, cellEl) {
+  const pop = document.getElementById("assignPopover");
+  renderBulkFermeturePopoverContent(activity);
+
+  const rect = cellEl.getBoundingClientRect();
+  pop.style.top = `${window.scrollY + rect.bottom + 4}px`;
+  pop.style.left = `${window.scrollX + rect.left}px`;
+  pop.classList.remove("hidden");
+}
+
+// Même patron visuel que renderCongePopoverContent() (bouton "toute la semaine" en toggle + une
+// rangée de pilules jour par jour) -- demande explicite de Samir ("une pop propre un peu comme
+// celle des gardes et des congés"). Couleur sombre/neutre (.ferm-*) plutôt que le vert/indigo des
+// pilules congé/garde, pour rester cohérent avec le noir déjà utilisé partout ailleurs pour
+// "fermé" (.fermeture-tag, .closed-mark) -- jamais la même couleur qu'une action différente.
+function renderBulkFermeturePopoverContent(activity) {
+  const pop = document.getElementById("assignPopover");
+  pop.style.minWidth = "300px";
+  const monday = getMonday(state.weekOffset);
+  const friday = new Date(monday);
+  friday.setDate(monday.getDate() + 4);
+
+  const weekFullyClosed = isWeekFullyClosedForActivity(activity);
+
+  pop.innerHTML = `
+    <span class="close-btn" id="popClose">×</span>
+    <strong>${activity.nom}</strong><br>
+    <span style="font-size:12px;color:#6b7280;">${formatShort(monday)} → ${formatShort(friday)}</span>
+    <button type="button" id="fermWeekBtn" class="ferm-week-btn${weekFullyClosed ? " active" : ""}">${weekFullyClosed ? "Rouvrir toute la semaine" : "Fermer toute la semaine"}</button>
+    <div class="ferm-pill-row" id="fermPillRow"></div>
+    <div class="empty-hint" style="margin-top:8px;">Les cases en spécialité Os ne sont jamais fermées ici.</div>
+  `;
+
+  const pillRow = document.getElementById("fermPillRow");
+  DAYS.forEach((day, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    const dayFullyClosed = isDayFullyClosedForActivity(activity, day);
+    const hasFermableCells = fermableCellsForDay(activity, day).length > 0;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ferm-pill" + (dayFullyClosed ? " active" : "");
+    btn.textContent = `${day.slice(0, 3)} ${d.getDate()}`;
+    if (!hasFermableCells) {
+      btn.disabled = true;
+      btn.title = "Toutes les cases de ce jour sont en spécialité Os -- rien à fermer ici";
+    }
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setDayClosedForActivity(activity, day, !dayFullyClosed);
+      saveState();
+      render();
+      renderBulkFermeturePopoverContent(activity);
+    });
+    pillRow.appendChild(btn);
+  });
+
+  document.getElementById("fermWeekBtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    setWeekClosedForActivity(activity, !weekFullyClosed);
+    saveState();
+    render();
+    renderBulkFermeturePopoverContent(activity);
+  });
 
   document.getElementById("popClose").addEventListener("click", () => pop.classList.add("hidden"));
 }
@@ -4101,7 +4240,7 @@ function renderPersonPopoverContent(person, day, creneau) {
 
 document.addEventListener("click", (e) => {
   const pop = document.getElementById("assignPopover");
-  if (!pop.contains(e.target) && !e.target.closest(".slot-cell")) {
+  if (!pop.contains(e.target) && !e.target.closest(".slot-cell") && !e.target.closest(".popover-anchor")) {
     pop.classList.add("hidden");
   }
   const list = document.getElementById("popList");
@@ -4150,12 +4289,13 @@ document.getElementById("btnCurrentWeek").addEventListener("click", () => {
   render();
 });
 
-// "Retour Planning" (24/07/2026, demande de Samir) : bouton fixe, toujours au même endroit dans la
-// topbar (à gauche de la flèche ← de navigation de semaine), quel que soit l'écran affiché --
+// Titre "Planning Imagerie" devenu bouton (24/07/2026, demande de Samir, remplace l'ancien bouton
+// "Retour Planning" séparé -- même comportement, juste porté par le titre) : toujours au même
+// endroit dans la topbar (à gauche, avant le statut de synchro), quel que soit l'écran affiché --
 // contrairement aux boutons Trame/Congés/Stats, qui ne redeviennent "← Retour au planning" que
 // lorsque LEUR PROPRE mode est actif (donc jamais au même endroit selon d'où on revient). Un seul
 // clic ici désactive les 3 modes plein-écran d'un coup, peu importe lequel était actif.
-document.getElementById("btnBackToPlanning").addEventListener("click", () => {
+document.getElementById("btnPlanningHome").addEventListener("click", () => {
   editingTrame = false;
   editingConges = false;
   editingStats = false;
