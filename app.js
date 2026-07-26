@@ -2634,34 +2634,13 @@ function renderPersonnelRows(tbody) {
       const onConge = isOnCongeDay(person.id, iso);
       const onRepos = !onConge && isOnReposGardeDay(person.id, iso);
       const absenceLabel = onConge ? "Congés" : onRepos ? "Repos de garde" : null;
+      const absenceClass = onConge ? "cell-absence-conge" : onRepos ? "cell-absence-repos" : null;
 
-      CRENEAUX.forEach((creneau) => {
+      // Case "postable" normale pour UN créneau précis -- factorisée pour être appelée aussi bien
+      // pour une case isolée que pour matin/astreinte quand l'après-midi seul est fusionné plus bas.
+      const buildNormalCell = (creneau) => {
         const td = document.createElement("td");
         td.className = "slot-cell";
-
-        if (absenceLabel) {
-          td.classList.add("cell-absence-blocked", onConge ? "cell-absence-conge" : "cell-absence-repos");
-          const badge = document.createElement("span");
-          badge.className = "absence-label";
-          badge.textContent = absenceLabel;
-          td.appendChild(badge);
-          tr.appendChild(td);
-          return;
-        }
-
-        // RG-020 (Temps Partiel, 25/07/2026) : bloque la case ENTIÈREMENT (ni clic ni glisser-déposé,
-        // comme RG-014), mais à la granularité du CRÉNEAU précis (pas la journée entière) -- une
-        // personne à temps partiel peut être présente le matin et absente l'après-midi du même jour.
-        if (isPersonTPOnSlot(person.id, day, creneau.id)) {
-          td.classList.add("cell-absence-blocked", "cell-absence-tp");
-          const badge = document.createElement("span");
-          badge.className = "absence-label";
-          badge.textContent = "Temps Partiel";
-          td.appendChild(badge);
-          tr.appendChild(td);
-          return;
-        }
-
         const activitiesHere = activitiesForPersonSlot(person.id, day, creneau.id);
         // RG-018 : Off se déclare comme une activité normale (via la Trame Personnel typiquement),
         // donc son étiquette s'affiche ici comme n'importe quelle autre -- pas de blocage total de
@@ -2704,8 +2683,45 @@ function renderPersonnelRows(tbody) {
           }
         });
 
-        tr.appendChild(td);
-      });
+        return td;
+      };
+
+      // Case bloquée (congé/repos/Temps Partiel), fusionnée sur `colSpan` colonnes -- pas
+      // d'écouteurs, comme avant (case non interactive).
+      const buildBlockedCell = (label, extraClass, colSpan) => {
+        const td = document.createElement("td");
+        td.className = `slot-cell cell-absence-blocked ${extraClass}`;
+        td.colSpan = colSpan;
+        const badge = document.createElement("span");
+        badge.className = "absence-label";
+        badge.textContent = label;
+        td.appendChild(badge);
+        return td;
+      };
+
+      // RG-014/018/020 (25/07/2026, demande de Samir) : fusionner matin/astreinte/après-midi en une
+      // seule case (au lieu de 3 identiques) si la personne est indisponible TOUTE LA JOURNÉE
+      // (congé/repos -- toujours journée entière -- ou Temps Partiel matin ET après-midi à la fois) ;
+      // fusionner seulement astreinte+après-midi si l'indisponibilité (Temps Partiel) ne couvre que
+      // l'après-midi. Congé/repos étant toujours journée entière, seul Temps Partiel peut produire
+      // le cas "après-midi seul" ou "matin seul" (ce dernier, non prévu par la règle, ne fusionne
+      // rien : la case matin affiche juste son étiquette, astreinte/après-midi restent normales).
+      const morningUnavailable = !!absenceLabel || isPersonTPOnSlot(person.id, day, "matin");
+      const afternoonUnavailable = !!absenceLabel || isPersonTPOnSlot(person.id, day, "apres-midi");
+      const label = absenceLabel || "Temps Partiel";
+      const extraClass = absenceClass || "cell-absence-tp";
+
+      if (morningUnavailable && afternoonUnavailable) {
+        tr.appendChild(buildBlockedCell(label, extraClass, 3));
+      } else {
+        tr.appendChild(morningUnavailable ? buildBlockedCell(label, extraClass, 1) : buildNormalCell(CRENEAUX[0]));
+        if (afternoonUnavailable) {
+          tr.appendChild(buildBlockedCell(label, extraClass, 2));
+        } else {
+          tr.appendChild(buildNormalCell(CRENEAUX[1]));
+          tr.appendChild(buildNormalCell(CRENEAUX[2]));
+        }
+      }
     });
 
     tbody.appendChild(tr);
@@ -4176,7 +4192,12 @@ function renderTramePersonnelView() {
     tr.appendChild(nameCell);
 
     DAYS.forEach((day) => {
-      CRENEAUX.forEach((creneau) => {
+      const morningTP = isPersonTPOnSlot(person.id, day, "matin");
+      const afternoonTP = isPersonTPOnSlot(person.id, day, "apres-midi");
+
+      // Case normale (postable) pour UN créneau précis -- couvre aussi le Temps Partiel isolé
+      // (matin seul, non fusionné -- voir la règle de fusion juste en dessous).
+      const buildCell = (creneau) => {
         const td = document.createElement("td");
         td.className = "slot-cell";
 
@@ -4227,8 +4248,53 @@ function renderTramePersonnelView() {
           handleTrameModaliteDrop(e, person.id, day, creneau.id);
         });
 
-        tr.appendChild(td);
-      });
+        return td;
+      };
+
+      // RG-020 (25/07/2026, demande de Samir) : fusionne matin+astreinte+après-midi (colSpan=3) si
+      // Temps Partiel matin ET après-midi à la fois, ou seulement astreinte+après-midi (colSpan=2)
+      // si Temps Partiel après-midi seul -- même règle que la vue Personnel réelle
+      // (renderPersonnelRows()/isPersonUnavailableAllDay(), pas de congé possible ici). Ancre le
+      // clic/glisser-déposé sur "après-midi" (toujours Temps Partiel dans les deux cas fusionnés) --
+      // retirer Temps Partiel depuis une case fusionnée ne clarifie donc que la moitié après-midi ;
+      // si les deux moitiés étaient fusionnées, un second clic sur la case matin (redevenue
+      // distincte au rendu suivant) reste nécessaire pour tout effacer -- limite acceptée pour ne
+      // pas complexifier le popover (voir regles-gestion.md RG-020).
+      const buildMergedTPCell = (colSpan) => {
+        const td = document.createElement("td");
+        td.className = "slot-cell cell-tp-marked";
+        td.colSpan = colSpan;
+        const badge = document.createElement("span");
+        badge.className = "absence-label";
+        badge.textContent = "Temps Partiel";
+        td.appendChild(badge);
+        td.addEventListener("click", () => openTramePersonPopover(person, day, CRENEAUX[2], td));
+        td.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          td.classList.add("drag-over");
+        });
+        td.addEventListener("dragleave", () => {
+          td.classList.remove("drag-over");
+        });
+        td.addEventListener("drop", (e) => {
+          e.preventDefault();
+          td.classList.remove("drag-over");
+          handleTrameModaliteDrop(e, person.id, day, "apres-midi");
+        });
+        return td;
+      };
+
+      if (morningTP && afternoonTP) {
+        tr.appendChild(buildMergedTPCell(3));
+      } else {
+        tr.appendChild(buildCell(CRENEAUX[0]));
+        if (afternoonTP) {
+          tr.appendChild(buildMergedTPCell(2));
+        } else {
+          tr.appendChild(buildCell(CRENEAUX[1]));
+          tr.appendChild(buildCell(CRENEAUX[2]));
+        }
+      }
     });
 
     tbody.appendChild(tr);
