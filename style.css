@@ -894,6 +894,17 @@ tr.group-end td {
 .slot-cell.cell-absence-repos:hover {
   background: #fecaca;
 }
+/* RG-020 (Temps Partiel, 25/07/2026) : bloqué comme un congé/repos ci-dessus (même
+   .cell-absence-blocked, cursor not-allowed), mais à la granularité du CRÉNEAU (pas du jour
+   entier). Teinte distincte (gris ardoise) pour ne pas la confondre avec une vraie absence
+   (rouge) ni avec Off (ambre, voir .cell-off-marked plus bas). */
+.slot-cell.cell-absence-tp {
+  background: #cbd5e1;
+}
+.slot-cell.cell-absence-tp:hover {
+  background: #cbd5e1;
+}
+
 /* RG-018 ("Jour Off", 24/07/2026) : contrairement à congé/repos ci-dessus, cette case reste
    interactive (l'étiquette "Off" elle-même se gère normalement, comme n'importe quelle modalité --
    seul l'AJOUT d'une autre activité par-dessus est refusé, voir handleModaliteDrop()). Teinte
@@ -901,6 +912,14 @@ tr.group-end td {
    coup d'œil sans le confondre avec une vraie absence. */
 .slot-cell.cell-off-marked {
   background: #fef3c7;
+}
+
+/* Trame Personnel (RG-020, 25/07/2026) : même teinte que .cell-absence-tp (vue Personnel réelle)
+   pour la cohérence visuelle -- mais ici la case est bloquée même DANS la trame elle-même
+   (contrairement à Off/RG-018 ci-dessus, décision explicite de Samir), pas seulement sur une
+   semaine réelle. */
+.slot-cell.cell-tp-marked {
+  background: #cbd5e1;
 }
 
 .absence-label {
@@ -951,6 +970,24 @@ tr.group-end td {
 }
 .popover-select-option.fermeture-option:hover {
   background: #1f2937;
+}
+
+/* RG-020 (Temps Partiel, 25/07/2026) : même patron que .fermeture-tag/.fermeture-option ci-dessus
+   (étiquette pleine + option distincte dans le popover Trame Personnel), teinte gris ardoise pour
+   ne jamais se confondre avec "Fermé" (noir, RG-010, une action bien différente). */
+.chip.vacation-spec-tag.tp-tag {
+  background: #475569;
+  border-color: #475569;
+  color: #ffffff;
+}
+
+.popover-select-option.tp-option {
+  background: #475569;
+  color: #ffffff;
+  font-weight: 600;
+}
+.popover-select-option.tp-option:hover {
+  background: #334155;
 }
 
 /* Réutilise le style de liste du popover-select, mais affichée en flux normal (pas de dropdown

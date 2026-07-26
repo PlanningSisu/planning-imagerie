@@ -424,7 +424,7 @@ const STORAGE_KEY = "planningAppState_v3";
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 3;
+const STATE_SCHEMA_VERSION = 4;
 
 // Clé = version de départ, valeur = fonction qui transforme les données de cette version vers la
 // version suivante (N -> N+1, jamais un saut direct). migrateState() les enchaîne jusqu'à
@@ -443,6 +443,9 @@ const STATE_MIGRATIONS = {
   // (appelée aussi bien ici qu'à chaque rendu, voir renderStatsView()) retombe sur l'ordre par
   // défaut le cas échéant, donc une simple valeur vide suffit ici, la normalisation fait le reste.
   2: (data) => ({ ...data, statsColumnOrder: Array.isArray(data.statsColumnOrder) ? data.statsColumnOrder : [] }),
+  // 3 -> 4 : ajout de `tempsPartiel` (RG-020, Temps Partiel, 25/07/2026) -- un fichier plus ancien
+  // n'a jamais eu ce champ, un objet vide suffit (personne n'est en Temps Partiel par défaut).
+  3: (data) => ({ ...data, tempsPartiel: data.tempsPartiel || {} }),
 };
 
 function migrateState(rawData) {
@@ -472,7 +475,7 @@ function migrateState(rawData) {
 // pour ne jamais en oublier un dans l'un des trois chemins). Délibérément SANS `activities` (piloté
 // par le code, jamais par des données utilisateur -- voir CLAUDE.md §4) ni `schemaVersion` (ajouté à
 // part par buildPersistedState()).
-const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "fermetures", "conges", "gardes", "trame", "weekOffset", "statsColumnOrder"];
+const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder"];
 
 function buildPersistedState() {
   const data = { schemaVersion: STATE_SCHEMA_VERSION };
@@ -508,6 +511,7 @@ function applyPersistedState(rawData) {
   state.conges = Array.isArray(data.conges) ? data.conges : [];
   state.gardes = Array.isArray(data.gardes) ? data.gardes : [];
   state.trame = data.trame || {};
+  state.tempsPartiel = data.tempsPartiel || {};
   state.statsColumnOrder = normalizeStatsColumnOrder(data.statsColumnOrder);
   if (Array.isArray(data.staff) && data.staff.length > 0) {
     state.staff = data.staff;
@@ -537,6 +541,11 @@ let state = {
   // modèle qui sert de valeur par défaut pour la semaine actuelle et les semaines futures tant
   // qu'elles n'ont pas été explicitement modifiées cellule par cellule (voir effectiveAssignedIds()).
   trame: {}, // key: `${activityId}|${day}|${creneauId}` -> [staffId, ...]
+  // Temps Partiel (RG-020, 25/07/2026) : créneaux structurellement NON travaillés d'une personne à
+  // temps partiel -- clé PAR PERSONNE (pas d'activité concernée, voir tpKey()), structurel comme la
+  // trame. Bloque toute affectation sur ce créneau (partout, y compris dans la Trame Personnel
+  // elle-même) et est totalement exclu des Stats -- voir isPersonTPOnSlot()/isAssignmentBlocked().
+  tempsPartiel: {}, // key: `${staffId}|${day}|${creneauId}` -> true
   weekOffset: 0,
   // Ordre des colonnes de la vue Stats (24/07/2026, réordonnables par glisser-déposer des en-têtes,
   // voir renderStatsView()) -- "Personnel" n'en fait pas partie, toujours fixe en 1re position.
@@ -1446,6 +1455,13 @@ function validateAbsences() {
               rg: "RG-014",
               message: `${activity.nom}, ${day} ${creneau.label} : ${person.prenom} ${person.nom} est absent(e) ce jour-là.`,
             });
+          } else if (isPersonTPOnSlot(staffId, day, creneau.id)) {
+            // RG-020 : filet de sécurité si un ajout malgré tout passe par le popover (même logique
+            // que RG-018 -- "non postable" bloque le glisser-déposer, pas le popover d'ajout manuel).
+            violations.push({
+              rg: "RG-020",
+              message: `${activity.nom}, ${day} ${creneau.label} : ${person.prenom} ${person.nom} est à Temps Partiel ce créneau-là.`,
+            });
           } else if (activity.id !== "off" && isPersonOffOnSlot(staffId, day, creneau.id)) {
             // RG-018 : filet de sécurité si Off + une autre activité coexistent malgré tout sur ce
             // créneau (le popover d'ajout n'est volontairement pas filtré, voir renderPersonnelRows()).
@@ -1614,11 +1630,15 @@ function buildAssignedChip(person, key, day) {
   // personne absente en cause -- entoure désormais aussi la pastille de la personne concernée.
   // RG-018 (même jour) : même traitement pour un conflit Off (créneau précis, pas jour entier) --
   // `activityId` (extrait de `key`) évite de flaguer l'activité "off" elle-même contre son propre
-  // statut. RG-019 (même jour) : idem pour un conflit d'exclusivité Scan U/Echo U.
+  // statut. RG-019 (même jour) : idem pour un conflit d'exclusivité Scan U/Echo U. RG-020 (25/07/2026) :
+  // idem pour un conflit Temps Partiel.
   const [activityId, , creneauId] = trameKeyFromCellKey(key).split("|");
   if (isPersonAbsentOnDay(person.id, day)) {
     chip.classList.add("chip-absence-violation");
     chip.title = `${person.prenom} ${person.nom} est absent(e) ce jour-là`;
+  } else if (isPersonTPOnSlot(person.id, day, creneauId)) {
+    chip.classList.add("chip-absence-violation");
+    chip.title = `${person.prenom} ${person.nom} est à Temps Partiel ce créneau-là`;
   } else if (activityId !== "off" && isPersonOffOnSlot(person.id, day, creneauId)) {
     chip.classList.add("chip-absence-violation");
     chip.title = `${person.prenom} ${person.nom} est en Off ce créneau-là`;
@@ -2013,6 +2033,19 @@ function isPersonOffOnSlot(staffId, day, creneauId) {
   return effectiveAssignedIds(cellKey("off", day, creneauId)).includes(staffId);
 }
 
+// RG-020 (Temps Partiel, 25/07/2026, demande de Samir) : une personne à temps partiel n'est pas
+// disponible sur les créneaux hors de son contrat -- donnée STRUCTURELLE (comme la trame), jamais
+// liée à une semaine précise (pas de notion d'"override" ponctuel comme assignments/trame). Bloque
+// "partout" comme un congé (RG-014) -- y compris dans la Trame Personnel elle-même, contrairement à
+// Off (RG-018) qui ne bloque que sur une semaine réelle -- décision explicite de Samir le 25/07/2026.
+function tpKey(staffId, day, creneauId) {
+  return `${staffId}|${day}|${creneauId}`;
+}
+
+function isPersonTPOnSlot(staffId, day, creneauId) {
+  return !!state.tempsPartiel[tpKey(staffId, day, creneauId)];
+}
+
 function isUrgenceActivity(activityId) {
   return activityId === "scan-u" || activityId === "echo-u";
 }
@@ -2039,13 +2072,15 @@ function hasUrgenceConflict(staffId, day, creneauId, activityId) {
   });
 }
 
-// Point d'entrée unique combinant RG-014 (congé/repos, jour entier), RG-018 (Off, créneau précis) et
-// RG-019 (exclusivité Scan U/Echo U, créneau précis) -- "cette personne peut-elle être postée sur
-// CETTE activité, ce jour, ce créneau ?". `activityId` sert à ne jamais bloquer une activité contre
-// son propre statut (poser "off" n'est pas un conflit avec Off lui-même ; `hasUrgenceConflict()`
-// exclut déjà `activityId` de sa propre comparaison, pas besoin de le refaire ici).
+// Point d'entrée unique combinant RG-014 (congé/repos, jour entier), RG-018 (Off, créneau précis),
+// RG-019 (exclusivité Scan U/Echo U, créneau précis) et RG-020 (Temps Partiel, créneau précis) --
+// "cette personne peut-elle être postée sur CETTE activité, ce jour, ce créneau ?". `activityId`
+// sert à ne jamais bloquer une activité contre son propre statut (poser "off" n'est pas un conflit
+// avec Off lui-même ; `hasUrgenceConflict()` exclut déjà `activityId` de sa propre comparaison, pas
+// besoin de le refaire ici).
 function isAssignmentBlocked(staffId, day, creneauId, activityId) {
   if (isPersonAbsentOnDay(staffId, day)) return true;
+  if (isPersonTPOnSlot(staffId, day, creneauId)) return true;
   if (activityId !== "off" && isPersonOffOnSlot(staffId, day, creneauId)) return true;
   if (hasUrgenceConflict(staffId, day, creneauId, activityId)) return true;
   return false;
@@ -2073,13 +2108,23 @@ function isPersonPostedInFocus(staffId, day, creneauId) {
   );
 }
 
+// `staffId` est-elle en Temps Partiel (RG-020) sur le jour/créneau du focus actif ? Même expansion
+// que isPersonPostedInFocus() : creneauId `null` (jour entier) regarde matin ET après-midi (jamais
+// l'astreinte, RG-020 ne la concerne pas -- voir isPersonTPOnSlot()).
+function isPersonTPInFocus(staffId, day, creneauId) {
+  const creneauIds = creneauId ? [creneauId] : ["matin", "apres-midi"];
+  return creneauIds.some((cId) => isPersonTPOnSlot(staffId, day, cId));
+}
+
 // Filtre du panneau Personnel dérivé du focus actif (voir staffFocusFilter) : présente ce jour-là
-// (RG-014, ni congé ni repos de garde) ET pas déjà postée sur le jour/créneau ciblé. Renvoie true
-// (rien à filtrer) si aucun focus n'est actif.
+// (RG-014, ni congé ni repos de garde), pas à Temps Partiel ce jour/créneau (RG-020, "non postable
+// -- pas afficher comme éligible", demandé explicitement par Samir) ET pas déjà postée sur le
+// jour/créneau ciblé. Renvoie true (rien à filtrer) si aucun focus n'est actif.
 function personMatchesFocusFilter(person) {
   if (!staffFocusFilter) return true;
   const { day, creneauId } = staffFocusFilter;
   if (isPersonAbsentOnDay(person.id, day)) return false;
+  if (isPersonTPInFocus(person.id, day, creneauId)) return false;
   return !isPersonPostedInFocus(person.id, day, creneauId);
 }
 
@@ -2598,6 +2643,19 @@ function renderPersonnelRows(tbody) {
           return;
         }
 
+        // RG-020 (Temps Partiel, 25/07/2026) : bloque la case ENTIÈREMENT (ni clic ni glisser-déposé,
+        // comme RG-014), mais à la granularité du CRÉNEAU précis (pas la journée entière) -- une
+        // personne à temps partiel peut être présente le matin et absente l'après-midi du même jour.
+        if (isPersonTPOnSlot(person.id, day, creneau.id)) {
+          td.classList.add("cell-absence-blocked", "cell-absence-tp");
+          const badge = document.createElement("span");
+          badge.className = "absence-label";
+          badge.textContent = "Temps Partiel";
+          td.appendChild(badge);
+          tr.appendChild(td);
+          return;
+        }
+
         const activitiesHere = activitiesForPersonSlot(person.id, day, creneau.id);
         // RG-018 : Off se déclare comme une activité normale (via la Trame Personnel typiquement),
         // donc son étiquette s'affiche ici comme n'importe quelle autre -- pas de blocage total de
@@ -2664,9 +2722,10 @@ function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
   // glisser-déposer en amont, voir handleModaliteDrop()), filet de sécurité pour rester cohérent
   // visuellement.
   const isAbsenceViolation = isPersonAbsentOnDay(staffId, tagDay);
-  const isOffViolation = !isAbsenceViolation && activity.id !== "off" && isPersonOffOnSlot(staffId, tagDay, tagCreneauId);
-  const isUrgenceViolation = !isAbsenceViolation && !isOffViolation && hasUrgenceConflict(staffId, tagDay, tagCreneauId, activity.id);
-  const isViolation = isAbsenceViolation || isOffViolation || isUrgenceViolation;
+  const isTPViolation = !isAbsenceViolation && isPersonTPOnSlot(staffId, tagDay, tagCreneauId);
+  const isOffViolation = !isAbsenceViolation && !isTPViolation && activity.id !== "off" && isPersonOffOnSlot(staffId, tagDay, tagCreneauId);
+  const isUrgenceViolation = !isAbsenceViolation && !isTPViolation && !isOffViolation && hasUrgenceConflict(staffId, tagDay, tagCreneauId, activity.id);
+  const isViolation = isAbsenceViolation || isTPViolation || isOffViolation || isUrgenceViolation;
   tag.className = "chip modalite-tag" +
     (activity.urgence ? " urgence-tag" : "") +
     (vacSpec ? ` spec-${vacSpec}` : "") +
@@ -2676,9 +2735,11 @@ function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
     if (person) {
       tag.title = isAbsenceViolation
         ? `${person.prenom} ${person.nom} est absent(e) ce jour-là`
-        : isOffViolation
-          ? `${person.prenom} ${person.nom} est en Off ce créneau-là`
-          : `${person.prenom} ${person.nom} est déjà posté(e) ailleurs ce créneau-là (Scan U/Echo U exclusif)`;
+        : isTPViolation
+          ? `${person.prenom} ${person.nom} est à Temps Partiel ce créneau-là`
+          : isOffViolation
+            ? `${person.prenom} ${person.nom} est en Off ce créneau-là`
+            : `${person.prenom} ${person.nom} est déjà posté(e) ailleurs ce créneau-là (Scan U/Echo U exclusif)`;
     }
   }
   tag.textContent = activity.nom;
@@ -3861,6 +3922,45 @@ function removeTrameAssignment(key, staffId) {
   render();
 }
 
+// RG-020 (Temps Partiel, 25/07/2026) : (dé)marque un créneau de la trame comme Temps Partiel pour
+// une personne. Bloqué partout, y compris dans la Trame Personnel elle-même (contrairement à Off/
+// RG-018) -- marquer Temps Partiel vide donc d'abord ce créneau de toute modalité déjà posée dans la
+// trame, pour ne jamais laisser coexister les deux.
+function setPersonTPForSlot(staffId, day, creneauId, value) {
+  const flagKey = tpKey(staffId, day, creneauId);
+  if (value) {
+    state.activities.forEach((activity) => {
+      const key = trameKey(activity.id, day, creneauId);
+      if (state.trame[key]) state.trame[key] = state.trame[key].filter((id) => id !== staffId);
+    });
+    state.tempsPartiel[flagKey] = true;
+  } else {
+    delete state.tempsPartiel[flagKey];
+  }
+  saveState();
+  render();
+}
+
+// Étiquette "Temps Partiel" affichée dans le popover Trame Personnel (RG-020) -- même patron que
+// buildFermetureTag() (Trame Vacation) : un `×` retire le marquage, la case redevient "+ ajouter".
+function buildTPTag(flagKey) {
+  const tag = document.createElement("span");
+  tag.className = "chip vacation-spec-tag tp-tag";
+  tag.textContent = "Temps Partiel";
+  const remove = document.createElement("span");
+  remove.className = "remove";
+  remove.textContent = "×";
+  remove.title = "Retirer";
+  remove.addEventListener("click", (e) => {
+    e.stopPropagation();
+    delete state.tempsPartiel[flagKey];
+    saveState();
+    render();
+  });
+  tag.appendChild(remove);
+  return tag;
+}
+
 // Équivalent de buildModaliteTag() pour la trame -- pas de paramètre `draggable`, toujours vrai ici
 // (contrairement à buildModaliteTag(), jamais utilisé dans un contexte non-draggable comme un popover).
 function buildTrameModaliteTag(activity, key, staffId) {
@@ -3897,6 +3997,8 @@ function handleTrameModaliteDrop(e, targetStaffId, targetDay, targetCreneauId) {
   const activityId = e.dataTransfer.getData("application/x-activity-id");
   if (!activityId) return;
   if (!isCreneauApplicable(activityId, targetCreneauId)) return; // RG-012, structurel : s'applique aussi à la trame.
+  // RG-020 : Temps Partiel bloque même dans la Trame Personnel elle-même (contrairement à Off).
+  if (isPersonTPOnSlot(targetStaffId, targetDay, targetCreneauId)) return;
   const draggedStaffId = e.dataTransfer.getData("text/plain");
   const sourceKey = e.dataTransfer.getData("application/x-trame-source-key");
   const targetKey = trameKey(activityId, targetDay, targetCreneauId);
@@ -3924,28 +4026,39 @@ function openTramePersonPopover(person, day, creneau, cellEl) {
 }
 
 // Équivalent de renderPersonPopoverContent() pour la trame -- écrit dans state.trame, pas de
-// mention de semaine dans l'en-tête du popover (juste "(trame)").
+// mention de semaine dans l'en-tête du popover (juste "(trame)"). RG-020 (25/07/2026) : Temps
+// Partiel se gère depuis ce même popover (décision explicite de Samir, "éditable comme Off/Bureau")
+// -- une case marquée Temps Partiel n'offre plus d'ajouter de modalité (bloqué même dans la trame
+// elle-même), seulement de retirer le marquage ; une case normale gagne une option "Marquer Temps
+// Partiel" en plus des modalités, même patron que l'option "Fermé" de la Trame Vacation.
 function renderTramePersonPopoverContent(person, day, creneau) {
   const pop = document.getElementById("assignPopover");
   pop.style.minWidth = "";
-  const assignedActivities = trameActivitiesForPersonSlot(person.id, day, creneau.id);
+  const flagKey = tpKey(person.id, day, creneau.id);
+  const isTP = !!state.tempsPartiel[flagKey];
+  const assignedActivities = isTP ? [] : trameActivitiesForPersonSlot(person.id, day, creneau.id);
   const assignedIds = new Set(assignedActivities.map((a) => a.id));
   // RG-012 : le créneau "astreinte" ne propose que Scan U (voir isCreneauApplicable()).
-  const available = state.activities.filter((a) => !assignedIds.has(a.id) && isCreneauApplicable(a.id, creneau.id));
+  const available = isTP ? [] : state.activities.filter((a) => !assignedIds.has(a.id) && isCreneauApplicable(a.id, creneau.id));
 
   pop.innerHTML = `
     <span class="close-btn" id="popClose">×</span>
     <strong>${person.prenom} ${person.nom}</strong><br>
     <span style="font-size:12px;color:#6b7280;">${day} — ${creneau.label} (trame)</span>
     <div id="popAssigned" class="popover-assigned"></div>
-    <div class="popover-select" id="popCustomSelect">
+    ${isTP ? "" : `<div class="popover-select" id="popCustomSelect">
       <button type="button" class="popover-select-trigger" id="popTrigger">-- Ajouter une modalité --</button>
       <div class="popover-select-list hidden" id="popList"></div>
-    </div>
+    </div>`}
   `;
 
   const assignedContainer = document.getElementById("popAssigned");
-  if (assignedActivities.length === 0) {
+  if (isTP) {
+    assignedContainer.appendChild(buildTPTag(flagKey));
+    assignedContainer.querySelector(".tp-tag .remove").addEventListener("click", () =>
+      renderTramePersonPopoverContent(person, day, creneau)
+    );
+  } else if (assignedActivities.length === 0) {
     assignedContainer.innerHTML = '<span class="empty-hint">Aucune modalité assignée pour l\'instant</span>';
   } else {
     assignedActivities.forEach((activity) => {
@@ -3956,34 +4069,48 @@ function renderTramePersonPopoverContent(person, day, creneau) {
     });
   }
 
-  const list = document.getElementById("popList");
-  if (available.length === 0) {
-    list.innerHTML = '<div class="popover-select-empty">Déjà assigné à toutes les modalités.</div>';
-  } else {
-    available.forEach((activity) => {
-      const row = document.createElement("div");
-      row.className = "popover-select-option";
-      row.textContent = activity.nom;
-      if (activity.urgence) row.style.color = "#b91c1c";
-      row.addEventListener("click", () => {
-        const key = trameKey(activity.id, day, creneau.id);
-        if (!state.trame[key]) state.trame[key] = [];
-        if (!state.trame[key].includes(person.id)) {
-          state.trame[key].push(person.id);
-          saveState();
-          render();
-          renderTramePersonPopoverContent(person, day, creneau);
-        }
+  if (!isTP) {
+    const list = document.getElementById("popList");
+    if (available.length === 0) {
+      list.innerHTML = '<div class="popover-select-empty">Déjà assigné à toutes les modalités.</div>';
+    } else {
+      available.forEach((activity) => {
+        const row = document.createElement("div");
+        row.className = "popover-select-option";
+        row.textContent = activity.nom;
+        if (activity.urgence) row.style.color = "#b91c1c";
+        row.addEventListener("click", () => {
+          const key = trameKey(activity.id, day, creneau.id);
+          if (!state.trame[key]) state.trame[key] = [];
+          if (!state.trame[key].includes(person.id)) {
+            state.trame[key].push(person.id);
+            saveState();
+            render();
+            renderTramePersonPopoverContent(person, day, creneau);
+          }
+        });
+        list.appendChild(row);
       });
-      list.appendChild(row);
+    }
+
+    // RG-020 : option distincte de la liste des modalités (même patron que l'option "Fermé" de la
+    // Trame Vacation) -- vide d'abord ce créneau de toute modalité déjà posée (setPersonTPForSlot()).
+    const tpRow = document.createElement("div");
+    tpRow.className = "popover-select-option tp-option";
+    tpRow.textContent = "Marquer Temps Partiel";
+    tpRow.addEventListener("click", () => {
+      setPersonTPForSlot(person.id, day, creneau.id, true);
+      renderTramePersonPopoverContent(person, day, creneau);
+    });
+    list.appendChild(tpRow);
+
+    document.getElementById("popTrigger").addEventListener("click", (e) => {
+      e.stopPropagation();
+      list.classList.toggle("hidden");
     });
   }
 
   document.getElementById("popClose").addEventListener("click", () => pop.classList.add("hidden"));
-  document.getElementById("popTrigger").addEventListener("click", (e) => {
-    e.stopPropagation();
-    list.classList.toggle("hidden");
-  });
 }
 
 function renderTramePersonnelView() {
@@ -4047,9 +4174,19 @@ function renderTramePersonnelView() {
         const td = document.createElement("td");
         td.className = "slot-cell";
 
-        const activitiesHere = trameActivitiesForPersonSlot(person.id, day, creneau.id);
+        // RG-020 (Temps Partiel, 25/07/2026) : bloqué même dans la Trame Personnel elle-même
+        // (décision explicite de Samir) -- une case marquée affiche juste "Temps Partiel", aucune
+        // modalité ne peut être posée dessus (voir handleTrameModaliteDrop()/renderTramePersonPopoverContent()).
+        const isTP = isPersonTPOnSlot(person.id, day, creneau.id);
+        const activitiesHere = isTP ? [] : trameActivitiesForPersonSlot(person.id, day, creneau.id);
 
-        if (activitiesHere.length === 0) {
+        if (isTP) {
+          td.classList.add("cell-tp-marked");
+          const badge = document.createElement("span");
+          badge.className = "absence-label";
+          badge.textContent = "Temps Partiel";
+          td.appendChild(badge);
+        } else if (activitiesHere.length === 0) {
           const hint = document.createElement("span");
           hint.className = "empty-hint";
           hint.textContent = "+ ajouter";
@@ -4067,6 +4204,8 @@ function renderTramePersonnelView() {
         // créneau Off existe déjà avant d'y ajouter autre chose par erreur.
         if (activitiesHere.some((a) => a.id === "off")) td.classList.add("cell-off-marked");
 
+        // Toujours cliquable, même en Temps Partiel (RG-020, "éditable comme Off/Bureau") -- le
+        // popover propose alors uniquement de retirer le marquage (voir renderTramePersonPopoverContent()).
         td.addEventListener("click", () => openTramePersonPopover(person, day, creneau, td));
 
         td.addEventListener("dragover", (e) => {
@@ -5221,6 +5360,299 @@ document.getElementById("ariFileInput").addEventListener("change", (e) => {
     }
   };
   reader.readAsArrayBuffer(file);
+});
+
+// ---------- Import trame personnel (Off / Bureau / Temps Partiel), 25/07/2026 ----------
+// Texte libre collé par Samir (liste RH type "Off le mercredi" / "Bureau le mardi après-midi" /
+// "Présent(e) le lundi matin"), à ne pas confondre avec l'extract ARI ci-dessus (fichier .xlsx,
+// congés/gardes). Écrit dans state.trame (Off/Bureau, RG-017) et state.tempsPartiel (RG-020).
+
+const DAY_NAME_RE = /(lundi|mardi|mercredi|jeudi|vendredi)/i;
+
+// Isole le nom de jour (n'importe où dans le fragment -- inutile de retirer "le"/"la"/"les" avant,
+// la regex le trouve directement) et ce qui suit ("après-midi", "toute la journée"...).
+function describeDayFragment(fragment) {
+  const m = DAY_NAME_RE.exec(fragment);
+  if (!m) return null;
+  const day = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+  const rest = fragment.slice(m.index + m[0].length).trim();
+  return { day, slotText: rest, hasExplicitSlot: rest.length > 0 };
+}
+
+// "" ou "toute la journée" -> jour entier ; "après-midi"/"après midi"/"apres-midi" (tolérant à
+// l'absence de tiret, rencontrée dans le texte réel) -> après-midi seul ; "matin" -> matin seul.
+function slotTextToCreneaux(slotText) {
+  const norm = normalizeToken(slotText || "").replace(/-/g, " ").replace(/\s+/g, " ").trim();
+  if (!norm || norm.includes("toute")) return ["matin", "apres-midi"];
+  if (norm.includes("apres") && norm.includes("midi")) return ["apres-midi"];
+  if (norm.includes("matin")) return ["matin"];
+  return ["matin", "apres-midi"]; // texte non reconnu -- jour entier par défaut plutôt que rien.
+}
+
+// Analyse un texte de jours/créneaux ("le mardi après-midi et vendredi matin", "mardi toute la
+// journée", "lundi et mardi toute la journée"...) en une liste de {day, creneauId}. Cas particulier :
+// "jourA et jourB <suffixe>" où seul jourB porte un suffixe explicite (matin/après-midi/toute la
+// journée) -- ce suffixe s'applique alors AUSSI à jourA (ex. "lundi et mardi toute la journée" = les
+// deux jours entiers), distinct du cas où les deux jours ont chacun leur propre suffixe (ex. "jeudi
+// matin et vendredi toute la journée", traités indépendamment).
+function parseDaySlotsText(text) {
+  const result = [];
+  const addFragment = (desc) => {
+    if (!desc) return;
+    slotTextToCreneaux(desc.slotText).forEach((creneauId) => result.push({ day: desc.day, creneauId }));
+  };
+
+  String(text || "").split(/\s*,\s*/).forEach((commaPart) => {
+    const etParts = commaPart.split(/\s+et\s+/i);
+    if (etParts.length === 2) {
+      const a = describeDayFragment(etParts[0]);
+      const b = describeDayFragment(etParts[1]);
+      if (a && b && !a.hasExplicitSlot) {
+        addFragment({ day: a.day, slotText: b.slotText });
+        addFragment(b);
+      } else {
+        addFragment(a);
+        addFragment(b);
+      }
+    } else {
+      addFragment(describeDayFragment(commaPart));
+    }
+  });
+  return result;
+}
+
+// En-têtes de section reconnus dans le texte collé -- tout ce qui précède le premier en-tête
+// reconnu est ignoré (pas de section active). "Temps pleins"/"CCA" partagent le même format
+// (Off + Bureau, multi-lignes par personne) ; "Temps partiel" a son propre format (1 ligne par
+// personne, "Prénom Nom Présent(e) ...").
+const TRAME_IMPORT_SECTION_RE = /^(temps\s*plein|cca|temps\s*partiel)s?$/i;
+
+function parseTrameImportText(text) {
+  const lines = String(text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const fullEntries = []; // { rawName, offSlots: [...], bureauSlots: [...] }
+  const tpEntries = []; // { rawName, presentSlots: [...] }
+
+  let section = null; // "full" | "tp"
+  let current = null; // entrée "full" en cours (rattache les lignes "Off"/"Bureau" suivantes)
+
+  lines.forEach((line) => {
+    if (TRAME_IMPORT_SECTION_RE.test(line)) {
+      section = /partiel/i.test(line) ? "tp" : "full";
+      current = null;
+      return;
+    }
+    if (!section) return;
+
+    if (section === "tp") {
+      const m = /^(.+?)\s+Pr[ée]sente?\s+(.+)$/i.exec(line);
+      if (m) tpEntries.push({ rawName: m[1].trim(), presentSlots: parseDaySlotsText(m[2].trim()) });
+      return;
+    }
+
+    const offMatch = /^Off\s+(.+)$/i.exec(line);
+    const bureauMatch = /^Bureau\s+(.+)$/i.exec(line);
+    if (offMatch && current) {
+      current.offSlots = parseDaySlotsText(offMatch[1].trim());
+    } else if (bureauMatch && current) {
+      current.bureauSlots = parseDaySlotsText(bureauMatch[1].trim());
+    } else {
+      current = { rawName: line, offSlots: [], bureauSlots: [] };
+      fullEntries.push(current);
+    }
+  });
+
+  return { fullEntries, tpEntries };
+}
+
+// Rapprochement tolérant aux fautes -- réutilise matchAriNameToStaff() (générique malgré son nom,
+// compare simplement un nom brut à state.staff par ensemble de mots normalisés), même pattern
+// exact/fuzzy/non-reconnu que l'import ARI.
+function buildTrameImportPreview(parsed) {
+  const exact = [];
+  const fuzzy = [];
+  const unrecognized = [];
+
+  parsed.fullEntries.forEach((entry) => {
+    const match = matchAriNameToStaff(entry.rawName);
+    if (match.status === "none") { unrecognized.push({ rawName: entry.rawName }); return; }
+    const item = { kind: "full", rawName: entry.rawName, person: match.person, offSlots: entry.offSlots, bureauSlots: entry.bureauSlots };
+    (match.status === "exact" ? exact : fuzzy).push(item);
+  });
+
+  parsed.tpEntries.forEach((entry) => {
+    const match = matchAriNameToStaff(entry.rawName);
+    if (match.status === "none") { unrecognized.push({ rawName: entry.rawName }); return; }
+    const item = { kind: "tp", rawName: entry.rawName, person: match.person, presentSlots: entry.presentSlots };
+    (match.status === "exact" ? exact : fuzzy).push(item);
+  });
+
+  return { exact, fuzzy, unrecognized };
+}
+
+function clearTrameActivitiesForSlot(staffId, day, creneauId) {
+  state.activities.forEach((activity) => {
+    const key = trameKey(activity.id, day, creneauId);
+    if (state.trame[key]) state.trame[key] = state.trame[key].filter((id) => id !== staffId);
+  });
+}
+
+// Idempotent, comme l'import ARI : ré-appliquer le même texte (ou un texte mis à jour) ne laisse
+// jamais de trace de l'ancien horaire -- pour "full", ajoute simplement (sans dupliquer) ; pour
+// "tp", recalcule les 10 créneaux (5 jours x matin/après-midi) en entier à chaque fois (les
+// créneaux "présents" redeviennent normaux, les autres repassent/restent Temps Partiel).
+function applyTrameImportItems(items) {
+  items.forEach((item) => {
+    if (item.kind === "full") {
+      item.offSlots.forEach(({ day, creneauId }) => {
+        const key = trameKey("off", day, creneauId);
+        if (!state.trame[key]) state.trame[key] = [];
+        if (!state.trame[key].includes(item.person.id)) state.trame[key].push(item.person.id);
+      });
+      item.bureauSlots.forEach(({ day, creneauId }) => {
+        const key = trameKey("bureau", day, creneauId);
+        if (!state.trame[key]) state.trame[key] = [];
+        if (!state.trame[key].includes(item.person.id)) state.trame[key].push(item.person.id);
+      });
+    } else {
+      const presentSet = new Set(item.presentSlots.map(({ day, creneauId }) => `${day}|${creneauId}`));
+      DAYS.forEach((day) => {
+        ["matin", "apres-midi"].forEach((creneauId) => {
+          const flagKey = tpKey(item.person.id, day, creneauId);
+          if (presentSet.has(`${day}|${creneauId}`)) {
+            delete state.tempsPartiel[flagKey];
+          } else {
+            clearTrameActivitiesForSlot(item.person.id, day, creneauId);
+            state.tempsPartiel[flagKey] = true;
+          }
+        });
+      });
+    }
+  });
+  saveState();
+  render();
+}
+
+function trameImportSlotsLabel(slots) {
+  return slots.map((s) => `${s.day} ${s.creneauId === "matin" ? "matin" : "après-midi"}`).join(", ");
+}
+
+function trameImportItemLabel(item) {
+  const who = `${item.person.prenom} ${item.person.nom}`;
+  if (item.kind === "full") {
+    const parts = [];
+    if (item.offSlots.length) parts.push(`Off : ${trameImportSlotsLabel(item.offSlots)}`);
+    if (item.bureauSlots.length) parts.push(`Bureau : ${trameImportSlotsLabel(item.bureauSlots)}`);
+    return `${who} — ${parts.join(" · ") || "rien à appliquer"}`;
+  }
+  return `${who} — Temps Partiel (présent : ${trameImportSlotsLabel(item.presentSlots) || "aucun créneau"})`;
+}
+
+function openTrameImportModal() {
+  document.getElementById("trameImportModal").classList.remove("hidden");
+  document.getElementById("trameImportModalBody").innerHTML = `
+    <p class="bulk-hint">Colle le texte listant Off / Bureau (Temps pleins, CCA) et Temps partiel, puis clique sur Analyser.</p>
+    <textarea id="trameImportTextarea" rows="14" style="width:100%;box-sizing:border-box;"></textarea>
+    <button type="button" id="btnTrameImportParse" class="btn-primary" style="margin-top:8px;">Analyser</button>
+  `;
+  document.getElementById("btnTrameImportParse").addEventListener("click", () => {
+    const text = document.getElementById("trameImportTextarea").value;
+    const preview = buildTrameImportPreview(parseTrameImportText(text));
+    renderTrameImportPreview(preview);
+  });
+}
+
+function closeTrameImportModal() {
+  document.getElementById("trameImportModal").classList.add("hidden");
+}
+
+function renderTrameImportPreview(preview) {
+  const body = document.getElementById("trameImportModalBody");
+  body.innerHTML = "";
+
+  if (preview.exact.length === 0 && preview.fuzzy.length === 0) {
+    body.innerHTML = '<p class="bulk-hint">Rien de reconnu dans ce texte (vérifie le format, ou tout le monde est déjà à jour).</p>';
+    return;
+  }
+
+  const summary = document.createElement("p");
+  summary.className = "bulk-hint";
+  summary.textContent = `${plural(preview.exact.length, "personne")} reconnue${preview.exact.length > 1 ? "s" : ""} automatiquement.`;
+  body.appendChild(summary);
+
+  if (preview.fuzzy.length > 0) {
+    const fuzzyTitle = document.createElement("p");
+    fuzzyTitle.className = "bulk-hint";
+    fuzzyTitle.textContent = "Noms proches mais pas identiques -- à vérifier avant import (décoche si erroné) :";
+    body.appendChild(fuzzyTitle);
+  }
+
+  const list = document.createElement("div");
+  list.className = "bulk-preview-list";
+
+  const confirmBtn = document.createElement("button");
+  confirmBtn.type = "button";
+  confirmBtn.className = "btn-primary";
+
+  const allItems = [...preview.exact, ...preview.fuzzy];
+  allItems.forEach((item) => { item.include = true; });
+
+  const updateConfirmLabel = () => {
+    const n = allItems.filter((it) => it.include).length;
+    confirmBtn.textContent = `Confirmer l'import (${n})`;
+    confirmBtn.disabled = n === 0;
+  };
+
+  preview.fuzzy.forEach((item) => {
+    const row = document.createElement("label");
+    row.className = "bulk-preview-row";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = true;
+    cb.addEventListener("change", () => { item.include = cb.checked; updateConfirmLabel(); });
+    row.appendChild(cb);
+    const info = document.createElement("span");
+    info.className = "bulk-preview-info";
+    info.textContent = `"${item.rawName}" → ${trameImportItemLabel(item)}`;
+    row.appendChild(info);
+    list.appendChild(row);
+  });
+
+  preview.exact.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "bulk-preview-row bulk-preview-duplicate";
+    const info = document.createElement("span");
+    info.className = "bulk-preview-info";
+    info.textContent = trameImportItemLabel(item);
+    row.appendChild(info);
+    list.appendChild(row);
+  });
+
+  body.appendChild(list);
+
+  if (preview.unrecognized.length > 0) {
+    const details = document.createElement("details");
+    details.className = "bulk-ignored";
+    const summaryEl = document.createElement("summary");
+    summaryEl.textContent = `${plural(preview.unrecognized.length, "nom")} non reconnu${preview.unrecognized.length > 1 ? "s" : ""}, ignoré${preview.unrecognized.length > 1 ? "s" : ""}`;
+    details.appendChild(summaryEl);
+    const pre = document.createElement("pre");
+    pre.textContent = preview.unrecognized.map((it) => it.rawName).join("\n");
+    details.appendChild(pre);
+    body.appendChild(details);
+  }
+
+  updateConfirmLabel();
+  confirmBtn.addEventListener("click", () => {
+    applyTrameImportItems(allItems.filter((it) => it.include));
+    closeTrameImportModal();
+  });
+  body.appendChild(confirmBtn);
+}
+
+document.getElementById("btnImportTrame").addEventListener("click", openTrameImportModal);
+document.getElementById("trameImportModalClose").addEventListener("click", closeTrameImportModal);
+document.getElementById("trameImportModal").addEventListener("click", (e) => {
+  if (e.target.id === "trameImportModal") closeTrameImportModal();
 });
 
 // ---------- Démarrage ----------
