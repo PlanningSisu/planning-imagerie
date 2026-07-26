@@ -424,7 +424,7 @@ const STORAGE_KEY = "planningAppState_v3";
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 4;
+const STATE_SCHEMA_VERSION = 5;
 
 // Clé = version de départ, valeur = fonction qui transforme les données de cette version vers la
 // version suivante (N -> N+1, jamais un saut direct). migrateState() les enchaîne jusqu'à
@@ -446,6 +446,9 @@ const STATE_MIGRATIONS = {
   // 3 -> 4 : ajout de `tempsPartiel` (RG-020, Temps Partiel, 25/07/2026) -- un fichier plus ancien
   // n'a jamais eu ce champ, un objet vide suffit (personne n'est en Temps Partiel par défaut).
   3: (data) => ({ ...data, tempsPartiel: data.tempsPartiel || {} }),
+  // 4 -> 5 : ajout de `customColors` (personnalisation de quelques couleurs sans coder, 25/07/2026)
+  // -- un objet vide suffit (aucune couleur personnalisée = valeurs par défaut du CSS).
+  4: (data) => ({ ...data, customColors: data.customColors || {} }),
 };
 
 function migrateState(rawData) {
@@ -475,7 +478,32 @@ function migrateState(rawData) {
 // pour ne jamais en oublier un dans l'un des trois chemins). Délibérément SANS `activities` (piloté
 // par le code, jamais par des données utilisateur -- voir CLAUDE.md §4) ni `schemaVersion` (ajouté à
 // part par buildPersistedState()).
-const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder"];
+const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "customColors"];
+
+// Personnalisation (25/07/2026, ⚙ → "Personnalisation") : quelques couleurs éditables depuis
+// l'appli sans toucher au code -- une entrée par variable CSS `--custom-xxx` (voir :root dans
+// style.css pour les valeurs par défaut). `state.customColors[key]` absent/vide = valeur par défaut
+// du CSS (ne rien poser en style inline pour cette variable-là).
+const CUSTOM_COLOR_FIELDS = [
+  { key: "daySeparator", cssVar: "--custom-day-start", label: "Séparateur de jour" },
+  { key: "absence", cssVar: "--custom-absence", label: "Congé / repos de garde" },
+  { key: "tempsPartiel", cssVar: "--custom-tp", label: "Temps Partiel" },
+  { key: "off", cssVar: "--custom-off", label: "Off" },
+];
+
+// Applique state.customColors sur les variables CSS du document -- appelée au chargement et à
+// chaque modification depuis le panneau de personnalisation. Une clé absente/vide retire la
+// variable en style inline (retombe sur la valeur par défaut de :root dans style.css).
+function applyCustomColors() {
+  CUSTOM_COLOR_FIELDS.forEach(({ key, cssVar }) => {
+    const value = state.customColors[key];
+    if (value) {
+      document.documentElement.style.setProperty(cssVar, value);
+    } else {
+      document.documentElement.style.removeProperty(cssVar);
+    }
+  });
+}
 
 function buildPersistedState() {
   const data = { schemaVersion: STATE_SCHEMA_VERSION };
@@ -513,9 +541,11 @@ function applyPersistedState(rawData) {
   state.trame = data.trame || {};
   state.tempsPartiel = data.tempsPartiel || {};
   state.statsColumnOrder = normalizeStatsColumnOrder(data.statsColumnOrder);
+  state.customColors = data.customColors || {};
   if (Array.isArray(data.staff) && data.staff.length > 0) {
     state.staff = data.staff;
   }
+  applyCustomColors();
 }
 
 let state = {
@@ -550,6 +580,9 @@ let state = {
   // Ordre des colonnes de la vue Stats (24/07/2026, réordonnables par glisser-déposer des en-têtes,
   // voir renderStatsView()) -- "Personnel" n'en fait pas partie, toujours fixe en 1re position.
   statsColumnOrder: DEFAULT_STATS_COLUMN_ORDER.slice(),
+  // Personnalisation (25/07/2026, ⚙ → "Personnalisation") : quelques couleurs éditables sans coder
+  // -- voir CUSTOM_COLOR_FIELDS/applyCustomColors(). Clé absente = valeur par défaut du CSS.
+  customColors: {}, // key: voir CUSTOM_COLOR_FIELDS -> "#rrggbb"
 };
 
 function loadState() {
@@ -5750,6 +5783,66 @@ document.getElementById("btnImportTrame").addEventListener("click", openTrameImp
 document.getElementById("trameImportModalClose").addEventListener("click", closeTrameImportModal);
 document.getElementById("trameImportModal").addEventListener("click", (e) => {
   if (e.target.id === "trameImportModal") closeTrameImportModal();
+});
+
+// ---------- Personnalisation (25/07/2026) ----------
+// Quelques couleurs éditables depuis l'appli sans passer par un changement de code (demande de
+// Samir, suite aux allers-retours sur la couleur du séparateur de jour, §6.28) -- voir
+// CUSTOM_COLOR_FIELDS/applyCustomColors() plus haut (state.customColors, persistée comme le reste).
+
+function openCustomizeModal() {
+  document.getElementById("customizeModal").classList.remove("hidden");
+  renderCustomizeModalBody();
+}
+
+function closeCustomizeModal() {
+  document.getElementById("customizeModal").classList.add("hidden");
+}
+
+function renderCustomizeModalBody() {
+  const body = document.getElementById("customizeModalBody");
+  body.innerHTML = '<p class="bulk-hint">Ajuste quelques couleurs de l\'appli -- appliqué immédiatement, sans recharger.</p>';
+
+  CUSTOM_COLOR_FIELDS.forEach(({ key, cssVar, label }) => {
+    const row = document.createElement("div");
+    row.className = "customize-row";
+
+    const labelEl = document.createElement("label");
+    labelEl.textContent = label;
+    row.appendChild(labelEl);
+
+    const input = document.createElement("input");
+    input.type = "color";
+    // Valeur actuelle = state.customColors[key] si personnalisée, sinon la valeur par défaut
+    // définie dans :root (style.css) -- un <input type="color"> exige toujours une vraie valeur.
+    input.value = state.customColors[key] || getComputedStyle(document.documentElement).getPropertyValue(cssVar).trim();
+    input.addEventListener("input", () => {
+      state.customColors[key] = input.value;
+      applyCustomColors();
+      saveState();
+    });
+    row.appendChild(input);
+
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.className = "customize-reset-btn";
+    resetBtn.textContent = "Réinitialiser";
+    resetBtn.addEventListener("click", () => {
+      delete state.customColors[key];
+      applyCustomColors();
+      saveState();
+      renderCustomizeModalBody();
+    });
+    row.appendChild(resetBtn);
+
+    body.appendChild(row);
+  });
+}
+
+document.getElementById("btnCustomize").addEventListener("click", openCustomizeModal);
+document.getElementById("customizeModalClose").addEventListener("click", closeCustomizeModal);
+document.getElementById("customizeModal").addEventListener("click", (e) => {
+  if (e.target.id === "customizeModal") closeCustomizeModal();
 });
 
 // ---------- Démarrage ----------

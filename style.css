@@ -23,6 +23,15 @@
   --header-bg: #1f2937;
   --header-text: #f9fafb;
   --bg: #f8fafc;
+
+  /* Personnalisation (25/07/2026, ⚙ → "Personnalisation") : ces 4 couleurs sont éditables depuis
+     l'appli sans toucher au code (voir applyCustomColors() dans app.js, state.customColors) --
+     valeurs ci-dessous = défauts si rien n'est personnalisé. Ne jamais renommer ces variables sans
+     mettre à jour CUSTOM_COLOR_FIELDS dans app.js en même temps. */
+  --custom-day-start: #94a3b8;
+  --custom-absence: #fecaca;
+  --custom-tp: #cbd5e1;
+  --custom-off: #fef3c7;
 }
 
 * { box-sizing: border-box; }
@@ -518,6 +527,40 @@ body {
   margin-top: 12px;
 }
 
+/* Personnalisation (25/07/2026) : une ligne par couleur éditable, voir CUSTOM_COLOR_FIELDS/
+   renderCustomizeModalBody() dans app.js. */
+.customize-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+.customize-row:last-child { border-bottom: none; }
+.customize-row label {
+  flex: 1;
+  font-size: 13px;
+}
+.customize-row input[type="color"] {
+  width: 40px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.customize-reset-btn {
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+.customize-reset-btn:hover {
+  background: #e2e8f0;
+}
+
 main {
   display: flex;
   gap: 16px;
@@ -821,7 +864,7 @@ tr.group-end td {
    `.day-start`) sur la 1re case de chaque jour, en-tête ET corps, dans tous les tableaux
    Jour x Créneau (vue Modalité/Personnel, Trame Vacation/Personnel). */
 .day-start {
-  border-left: 2px solid #94a3b8;
+  border-left: 2px solid var(--custom-day-start);
 }
 
 .slot-cell {
@@ -898,21 +941,21 @@ tr.group-end td {
 }
 .slot-cell.cell-absence-conge,
 .slot-cell.cell-absence-repos {
-  background: #fecaca;
+  background: var(--custom-absence);
 }
 .slot-cell.cell-absence-conge:hover,
 .slot-cell.cell-absence-repos:hover {
-  background: #fecaca;
+  background: var(--custom-absence);
 }
 /* RG-020 (Temps Partiel, 25/07/2026) : bloqué comme un congé/repos ci-dessus (même
    .cell-absence-blocked, cursor not-allowed), mais à la granularité du CRÉNEAU (pas du jour
    entier). Teinte distincte (gris ardoise) pour ne pas la confondre avec une vraie absence
    (rouge) ni avec Off (ambre, voir .cell-off-marked plus bas). */
 .slot-cell.cell-absence-tp {
-  background: #cbd5e1;
+  background: var(--custom-tp);
 }
 .slot-cell.cell-absence-tp:hover {
-  background: #cbd5e1;
+  background: var(--custom-tp);
 }
 
 /* RG-018 ("Jour Off", 24/07/2026) : contrairement à congé/repos ci-dessus, cette case reste
@@ -921,7 +964,7 @@ tr.group-end td {
    sobre et distincte du rouge des absences (pas un blocage total) pour signaler "créneau Off" au
    coup d'œil sans le confondre avec une vraie absence. */
 .slot-cell.cell-off-marked {
-  background: #fef3c7;
+  background: var(--custom-off);
 }
 
 /* Trame Personnel (RG-020, 25/07/2026) : même teinte que .cell-absence-tp (vue Personnel réelle)
@@ -929,7 +972,7 @@ tr.group-end td {
    (contrairement à Off/RG-018 ci-dessus, décision explicite de Samir), pas seulement sur une
    semaine réelle. */
 .slot-cell.cell-tp-marked {
-  background: #cbd5e1;
+  background: var(--custom-tp);
 }
 
 .absence-label {
