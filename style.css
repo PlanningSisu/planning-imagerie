@@ -814,6 +814,16 @@ tr.group-end td {
   border-bottom: 3px solid #334155;
 }
 
+/* Séparateur de jour plus visible (25/07/2026, demande de Samir) : le bord fin standard
+   (th, td { border: 1px solid var(--border) }) se distinguait mal entre deux jours -- surtout
+   quand deux jours consécutifs affichent une case fusionnée de même couleur (Congés/Temps
+   Partiel, voir CLAUDE.md §6.28), sans rupture visuelle entre eux. Posée en JS (classe
+   `.day-start`) sur la 1re case de chaque jour, en-tête ET corps, dans tous les tableaux
+   Jour x Créneau (vue Modalité/Personnel, Trame Vacation/Personnel). */
+.day-start {
+  border-left: 2px solid #334155;
+}
+
 .slot-cell {
   min-width: 110px;
   cursor: pointer;

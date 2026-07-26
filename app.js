@@ -1987,10 +1987,11 @@ function renderTable() {
   }
   creneauRow.appendChild(modaliteTh);
   DAYS.forEach((day) => {
-    CRENEAUX.forEach((c) => {
+    CRENEAUX.forEach((c, creneauIdx) => {
       const th = document.createElement("th");
       th.textContent = c.label;
       th.className = "creneau-header creneau-header-focusable";
+      if (creneauIdx === 0) th.classList.add("day-start"); // séparateur de jour, voir §6.28/style.css
       if (staffFocusFilter && staffFocusFilter.day === day && staffFocusFilter.creneauId === c.id) {
         th.classList.add("focus-active");
       }
@@ -2246,12 +2247,18 @@ function renderModaliteRows(tbody) {
 
     DAYS.forEach((day) => {
       if (activity.id === "scan-u") {
-        CRENEAUX.forEach((creneau) => tr.appendChild(buildModaliteCell(activity, day, creneau)));
+        CRENEAUX.forEach((creneau, creneauIdx) => {
+          const cell = buildModaliteCell(activity, day, creneau);
+          if (creneauIdx === 0) cell.classList.add("day-start"); // séparateur de jour, voir §6.28/style.css
+          tr.appendChild(cell);
+        });
       } else {
         // RG-012 : l'astreinte n'existe pas ici -- au lieu d'une case grisée à part, on fusionne
         // la colonne Astreinte dans la case Après-midi (colSpan 2) : la case reste une case
         // Après-midi normale, juste visuellement plus large, la colonne Astreinte "disparaît".
-        tr.appendChild(buildModaliteCell(activity, day, CRENEAU_MATIN));
+        const matinCell = buildModaliteCell(activity, day, CRENEAU_MATIN);
+        matinCell.classList.add("day-start"); // séparateur de jour, voir §6.28/style.css
+        tr.appendChild(matinCell);
         const apresMidiCell = buildModaliteCell(activity, day, CRENEAU_APRES_MIDI);
         apresMidiCell.colSpan = 2;
         tr.appendChild(apresMidiCell);
@@ -2288,10 +2295,16 @@ function renderVacationSpecRows(tbody) {
 
     DAYS.forEach((day) => {
       if (activity.id === "scan-u") {
-        CRENEAUX.forEach((creneau) => tr.appendChild(buildVacationSpecCell(activity, day, creneau)));
+        CRENEAUX.forEach((creneau, creneauIdx) => {
+          const cell = buildVacationSpecCell(activity, day, creneau);
+          if (creneauIdx === 0) cell.classList.add("day-start"); // séparateur de jour, voir §6.28/style.css
+          tr.appendChild(cell);
+        });
       } else {
         // RG-012 : même fusion Astreinte+Après-midi que dans la vue Modalité, voir buildModaliteCell().
-        tr.appendChild(buildVacationSpecCell(activity, day, CRENEAU_MATIN));
+        const matinCell = buildVacationSpecCell(activity, day, CRENEAU_MATIN);
+        matinCell.classList.add("day-start"); // séparateur de jour, voir §6.28/style.css
+        tr.appendChild(matinCell);
         const apresMidiCell = buildVacationSpecCell(activity, day, CRENEAU_APRES_MIDI);
         apresMidiCell.colSpan = 2;
         tr.appendChild(apresMidiCell);
@@ -2711,10 +2724,16 @@ function renderPersonnelRows(tbody) {
       const label = absenceLabel || "Temps Partiel";
       const extraClass = absenceClass || "cell-absence-tp";
 
+      // .day-start (25/07/2026) : séparateur de jour plus visible, voir §6.28/style.css -- posé sur
+      // la 1re case du jour, qu'elle soit fusionnée (colSpan 3) ou non (matin seul).
       if (morningUnavailable && afternoonUnavailable) {
-        tr.appendChild(buildBlockedCell(label, extraClass, 3));
+        const cell = buildBlockedCell(label, extraClass, 3);
+        cell.classList.add("day-start");
+        tr.appendChild(cell);
       } else {
-        tr.appendChild(morningUnavailable ? buildBlockedCell(label, extraClass, 1) : buildNormalCell(CRENEAUX[0]));
+        const morningCell = morningUnavailable ? buildBlockedCell(label, extraClass, 1) : buildNormalCell(CRENEAUX[0]);
+        morningCell.classList.add("day-start");
+        tr.appendChild(morningCell);
         if (afternoonUnavailable) {
           tr.appendChild(buildBlockedCell(label, extraClass, 2));
         } else {
@@ -4168,10 +4187,11 @@ function renderTramePersonnelView() {
   cornerLabel.textContent = "Personnel";
   creneauRow.appendChild(cornerLabel);
   DAYS.forEach(() => {
-    CRENEAUX.forEach((c) => {
+    CRENEAUX.forEach((c, creneauIdx) => {
       const th = document.createElement("th");
       th.textContent = c.label;
       th.className = "creneau-header";
+      if (creneauIdx === 0) th.classList.add("day-start"); // séparateur de jour, voir §6.28/style.css
       creneauRow.appendChild(th);
     });
   });
@@ -4284,10 +4304,15 @@ function renderTramePersonnelView() {
         return td;
       };
 
+      // .day-start (25/07/2026) : séparateur de jour plus visible, voir §6.28/style.css.
       if (morningTP && afternoonTP) {
-        tr.appendChild(buildMergedTPCell(3));
+        const cell = buildMergedTPCell(3);
+        cell.classList.add("day-start");
+        tr.appendChild(cell);
       } else {
-        tr.appendChild(buildCell(CRENEAUX[0]));
+        const morningCell = buildCell(CRENEAUX[0]);
+        morningCell.classList.add("day-start");
+        tr.appendChild(morningCell);
         if (afternoonTP) {
           tr.appendChild(buildMergedTPCell(2));
         } else {
