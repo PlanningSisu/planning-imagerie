@@ -2098,34 +2098,40 @@ function toggleStaffFocusFilter(day, creneauId) {
   render();
 }
 
-// `staffId` est-elle déjà postée sur le jour/créneau du focus actif -- toutes activités confondues ?
-// creneauId `null` (jour entier) regarde les 3 créneaux ; un créneau précis n'en regarde qu'un seul
-// (ex. "Lundi Matin" ignore une éventuelle présence l'après-midi du même jour).
-function isPersonPostedInFocus(staffId, day, creneauId) {
-  const creneauIds = creneauId ? [creneauId] : CRENEAUX.map((c) => c.id);
-  return state.activities.some((activity) =>
-    creneauIds.some((cId) => effectiveAssignedIds(cellKey(activity.id, day, cId)).includes(staffId))
+// `staffId` est-elle déjà postée sur CE créneau précis -- toutes activités confondues ? Utilisée
+// uniquement pour un focus demi-journée (voir personMatchesFocusFilter()) -- le focus jour entier a
+// sa propre logique depuis le 25/07/2026, voir isPersonUnavailableAllDay() juste en dessous.
+function isPersonPostedOnCreneau(staffId, day, creneauId) {
+  return state.activities.some((activity) => effectiveAssignedIds(cellKey(activity.id, day, creneauId)).includes(staffId));
+}
+
+// RG-018/RG-020 (25/07/2026, retour de Samir sur le focus JOUR ENTIER) : une personne est
+// indisponible "toute la journée" si Off et/ou Temps Partiel couvrent les 2 demi-journées (matin ET
+// après-midi -- jamais l'astreinte, hors sujet pour ces deux statuts). Peu importe lequel des deux
+// statuts couvre quelle moitié : Temps Partiel le matin + Off l'après-midi compte aussi comme
+// indisponible toute la journée (union des deux, demandé explicitement).
+function isPersonUnavailableAllDay(staffId, day) {
+  return ["matin", "apres-midi"].every((creneauId) =>
+    isPersonTPOnSlot(staffId, day, creneauId) || isPersonOffOnSlot(staffId, day, creneauId)
   );
 }
 
-// `staffId` est-elle en Temps Partiel (RG-020) sur le jour/créneau du focus actif ? Même expansion
-// que isPersonPostedInFocus() : creneauId `null` (jour entier) regarde matin ET après-midi (jamais
-// l'astreinte, RG-020 ne la concerne pas -- voir isPersonTPOnSlot()).
-function isPersonTPInFocus(staffId, day, creneauId) {
-  const creneauIds = creneauId ? [creneauId] : ["matin", "apres-midi"];
-  return creneauIds.some((cId) => isPersonTPOnSlot(staffId, day, cId));
-}
-
-// Filtre du panneau Personnel dérivé du focus actif (voir staffFocusFilter) : présente ce jour-là
-// (RG-014, ni congé ni repos de garde), pas à Temps Partiel ce jour/créneau (RG-020, "non postable
-// -- pas afficher comme éligible", demandé explicitement par Samir) ET pas déjà postée sur le
-// jour/créneau ciblé. Renvoie true (rien à filtrer) si aucun focus n'est actif.
+// Filtre du panneau Personnel dérivé du focus actif (voir staffFocusFilter). Congé/repos de garde
+// (RG-014) exclut toujours, jour entier ou demi-journée.
+// - **Focus JOUR ENTIER** (revu le 25/07/2026, retour de Samir) : n'exclut plus rien d'autre que
+//   congé/repos et "indisponible toute la journée" (voir isPersonUnavailableAllDay() ci-dessus). Le
+//   check "déjà postée quelque part ce jour" (n'importe quelle activité, une seule demi-journée
+//   suffisait) a été RETIRÉ -- il masquait à tort quelqu'un qui n'avait qu'une seule demi-journée
+//   occupée, remplacé par ce critère plutôt que cumulé avec.
+// - **Focus DEMI-JOURNÉE** (inchangé) : Temps Partiel ce créneau précis, ou déjà postée sur CE
+//   créneau précis (Off y compris, une activité comme une autre pour ce check).
 function personMatchesFocusFilter(person) {
   if (!staffFocusFilter) return true;
   const { day, creneauId } = staffFocusFilter;
   if (isPersonAbsentOnDay(person.id, day)) return false;
-  if (isPersonTPInFocus(person.id, day, creneauId)) return false;
-  return !isPersonPostedInFocus(person.id, day, creneauId);
+  if (!creneauId) return !isPersonUnavailableAllDay(person.id, day);
+  if (isPersonTPOnSlot(person.id, day, creneauId)) return false;
+  return !isPersonPostedOnCreneau(person.id, day, creneauId);
 }
 
 // Construit une case assignable de la vue Modalité pour une activité/jour/créneau donnés.
