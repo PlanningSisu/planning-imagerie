@@ -484,8 +484,10 @@ const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "fermetur
 // l'appli sans toucher au code -- une entrée par variable CSS `--custom-xxx` (voir :root dans
 // style.css pour les valeurs par défaut). `state.customColors[key]` absent/vide = valeur par défaut
 // du CSS (ne rien poser en style inline pour cette variable-là).
+// `widthKey`/`widthVar` (25/07/2026, demande de Samir) : seul le séparateur de jour a en plus un
+// réglage d'épaisseur (px) -- pas généralisé aux 3 autres couleurs, qui n'en ont pas besoin.
 const CUSTOM_COLOR_FIELDS = [
-  { key: "daySeparator", cssVar: "--custom-day-start", label: "Séparateur de jour" },
+  { key: "daySeparator", cssVar: "--custom-day-start", label: "Séparateur de jour", widthKey: "daySeparatorWidth", widthVar: "--custom-day-start-width" },
   { key: "absence", cssVar: "--custom-absence", label: "Congé / repos de garde" },
   { key: "tempsPartiel", cssVar: "--custom-tp", label: "Temps Partiel" },
   { key: "off", cssVar: "--custom-off", label: "Off" },
@@ -495,12 +497,20 @@ const CUSTOM_COLOR_FIELDS = [
 // chaque modification depuis le panneau de personnalisation. Une clé absente/vide retire la
 // variable en style inline (retombe sur la valeur par défaut de :root dans style.css).
 function applyCustomColors() {
-  CUSTOM_COLOR_FIELDS.forEach(({ key, cssVar }) => {
+  CUSTOM_COLOR_FIELDS.forEach(({ key, cssVar, widthKey, widthVar }) => {
     const value = state.customColors[key];
     if (value) {
       document.documentElement.style.setProperty(cssVar, value);
     } else {
       document.documentElement.style.removeProperty(cssVar);
+    }
+    if (widthKey) {
+      const width = state.customColors[widthKey];
+      if (width) {
+        document.documentElement.style.setProperty(widthVar, `${width}px`);
+      } else {
+        document.documentElement.style.removeProperty(widthVar);
+      }
     }
   });
 }
@@ -1975,7 +1985,7 @@ function renderTable() {
   DAYS.forEach((day, dayIdx) => {
     const th = document.createElement("th");
     th.colSpan = CRENEAUX.length;
-    th.className = "day-header day-header-focusable";
+    th.className = "day-header day-header-focusable day-start"; // séparateur de jour, voir §6.28/§6.29
     if (staffFocusFilter && staffFocusFilter.day === day && staffFocusFilter.creneauId === null) {
       th.classList.add("focus-active");
     }
@@ -4205,7 +4215,7 @@ function renderTramePersonnelView() {
   DAYS.forEach((day) => {
     const th = document.createElement("th");
     th.colSpan = CRENEAUX.length;
-    th.className = "day-header";
+    th.className = "day-header day-start"; // séparateur de jour, voir §6.28/§6.29
     const label = document.createElement("div");
     label.className = "day-header-label";
     label.textContent = day;
@@ -5803,7 +5813,7 @@ function renderCustomizeModalBody() {
   const body = document.getElementById("customizeModalBody");
   body.innerHTML = '<p class="bulk-hint">Ajuste quelques couleurs de l\'appli -- appliqué immédiatement, sans recharger.</p>';
 
-  CUSTOM_COLOR_FIELDS.forEach(({ key, cssVar, label }) => {
+  CUSTOM_COLOR_FIELDS.forEach(({ key, cssVar, label, widthKey, widthVar }) => {
     const row = document.createElement("div");
     row.className = "customize-row";
 
@@ -5823,12 +5833,32 @@ function renderCustomizeModalBody() {
     });
     row.appendChild(input);
 
+    // Réglage d'épaisseur (25/07/2026, demande de Samir) : seul le séparateur de jour en a un.
+    if (widthKey) {
+      const defaultWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue(widthVar), 10) || 2;
+      const widthInput = document.createElement("input");
+      widthInput.type = "range";
+      widthInput.min = "1";
+      widthInput.max = "6";
+      widthInput.step = "1";
+      widthInput.className = "customize-width-input";
+      widthInput.title = "Épaisseur du trait";
+      widthInput.value = state.customColors[widthKey] || defaultWidth;
+      widthInput.addEventListener("input", () => {
+        state.customColors[widthKey] = widthInput.value;
+        applyCustomColors();
+        saveState();
+      });
+      row.appendChild(widthInput);
+    }
+
     const resetBtn = document.createElement("button");
     resetBtn.type = "button";
     resetBtn.className = "customize-reset-btn";
     resetBtn.textContent = "Réinitialiser";
     resetBtn.addEventListener("click", () => {
       delete state.customColors[key];
+      if (widthKey) delete state.customColors[widthKey];
       applyCustomColors();
       saveState();
       renderCustomizeModalBody();

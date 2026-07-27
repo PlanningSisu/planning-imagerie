@@ -24,11 +24,12 @@
   --header-text: #f9fafb;
   --bg: #f8fafc;
 
-  /* Personnalisation (25/07/2026, ⚙ → "Personnalisation") : ces 4 couleurs sont éditables depuis
-     l'appli sans toucher au code (voir applyCustomColors() dans app.js, state.customColors) --
-     valeurs ci-dessous = défauts si rien n'est personnalisé. Ne jamais renommer ces variables sans
-     mettre à jour CUSTOM_COLOR_FIELDS dans app.js en même temps. */
+  /* Personnalisation (25/07/2026, ⚙ → "Personnalisation") : ces 4 couleurs (+ 1 épaisseur) sont
+     éditables depuis l'appli sans toucher au code (voir applyCustomColors() dans app.js,
+     state.customColors) -- valeurs ci-dessous = défauts si rien n'est personnalisé. Ne jamais
+     renommer ces variables sans mettre à jour CUSTOM_COLOR_FIELDS dans app.js en même temps. */
   --custom-day-start: #94a3b8;
+  --custom-day-start-width: 2px;
   --custom-absence: #fecaca;
   --custom-tp: #cbd5e1;
   --custom-off: #fef3c7;
@@ -560,6 +561,9 @@ body {
 .customize-reset-btn:hover {
   background: #e2e8f0;
 }
+.customize-width-input {
+  width: 70px;
+}
 
 main {
   display: flex;
@@ -864,7 +868,9 @@ tr.group-end td {
    `.day-start`) sur la 1re case de chaque jour, en-tête ET corps, dans tous les tableaux
    Jour x Créneau (vue Modalité/Personnel, Trame Vacation/Personnel). */
 .day-start {
-  border-left: 2px solid var(--custom-day-start);
+  border-left-width: var(--custom-day-start-width);
+  border-left-style: solid;
+  border-left-color: var(--custom-day-start);
 }
 
 .slot-cell {
