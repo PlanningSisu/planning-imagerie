@@ -1323,6 +1323,11 @@ tr.group-end td {
   z-index: 60;
 }
 .popover-select-list.hidden { display: none; }
+/* Bascule quand la place manque en dessous du déclencheur (togglePopoverSelectList(), app.js). */
+.popover-select-list-up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
 .popover-select-option {
   padding: 6px 10px;
   font-size: 13px;

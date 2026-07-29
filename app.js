@@ -2496,14 +2496,65 @@ function buildFermetureTag(closureKey) {
   return tag;
 }
 
+// Positionnement partagé par les 6 popovers de l'appli (tous réutilisent #assignPopover) -- ergonomie
+// revue le 29/07/2026 (retour de Samir sur la Trame Personnel, "la liste déroulante peut s'afficher
+// tout en bas et ne me permet pas de l'utiliser même si je scroll down") : sur un tableau proche de
+// la hauteur de la fenêtre (§6.21), une case cliquée en bas de page plaçait le popover sous elle sans
+// jamais vérifier qu'il restait dans la fenêtre -- rien ne le ramenait à l'écran, ni le scroll de la
+// page (capté par le défilement interne de `.table-wrap` tant que la souris reste dessus) ni le
+// scroll de la liste interne (`.popover-select-list`, qui ne fait que 220px de haut, bien plus petite
+// que le dépassement réel). Fix : mesurer la taille RÉELLE du popover une fois son contenu déjà rendu
+// (`renderXPopoverContent()` doit toujours être appelé AVANT), puis le basculer au-dessus de la case
+// si la place manque en dessous ET qu'il y a davantage de place au-dessus -- sinon le garder en
+// dessous (mieux que de le coller au bord du haut si les deux côtés sont serrés). Toujours appelé en
+// dernier par chaque `open*Popover()`, à la place de la séquence dupliquée `pop.style.top/left` +
+// `pop.classList.remove("hidden")`.
+function positionPopover(pop, cellEl) {
+  const rect = cellEl.getBoundingClientRect();
+  pop.classList.remove("hidden"); // doit être visible pour mesurer sa vraie taille (display:none -> 0).
+  const popRect = pop.getBoundingClientRect();
+  const margin = 8;
+
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const spaceAbove = rect.top;
+  const flipUp = spaceBelow < popRect.height + margin && spaceAbove > spaceBelow;
+
+  let top = flipUp
+    ? window.scrollY + rect.top - popRect.height - 4
+    : window.scrollY + rect.bottom + 4;
+  top = Math.max(window.scrollY + margin, top); // jamais au-dessus du tout début de la page.
+
+  let left = window.scrollX + rect.left;
+  const maxLeft = window.scrollX + window.innerWidth - popRect.width - margin;
+  left = Math.min(left, Math.max(window.scrollX + margin, maxLeft)); // jamais hors écran à droite/gauche.
+
+  pop.style.top = `${top}px`;
+  pop.style.left = `${left}px`;
+}
+
+// Bascule la liste déroulante interne (`.popover-select-list`, celle qui liste les personnes/modalités
+// à ajouter) -- même souci que positionPopover() ci-dessus, mais pour ce second niveau : elle s'ouvre
+// toujours vers le bas en CSS (`top: calc(100% + 4px)`), sans jamais vérifier la place disponible.
+// Bascule vers le haut (`.popover-select-list-up`, voir style.css) si la place manque en dessous ET
+// qu'il y en a davantage au-dessus du déclencheur.
+function togglePopoverSelectList(trigger, list) {
+  const opening = list.classList.contains("hidden");
+  list.classList.toggle("hidden");
+  list.classList.remove("popover-select-list-up");
+  if (!opening) return;
+  const triggerRect = trigger.getBoundingClientRect();
+  const listRect = list.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - triggerRect.bottom;
+  const spaceAbove = triggerRect.top;
+  if (spaceBelow < listRect.height + 8 && spaceAbove > spaceBelow) {
+    list.classList.add("popover-select-list-up");
+  }
+}
+
 function openVacationSpecPopover(specKey, cellEl, activity, day, creneau) {
   const pop = document.getElementById("assignPopover");
   renderVacationSpecPopoverContent(specKey, activity, day, creneau);
-
-  const rect = cellEl.getBoundingClientRect();
-  pop.style.top = `${window.scrollY + rect.bottom + 4}px`;
-  pop.style.left = `${window.scrollX + rect.left}px`;
-  pop.classList.remove("hidden");
+  positionPopover(pop, cellEl);
 }
 
 function renderVacationSpecPopoverContent(specKey, activity, day, creneau) {
@@ -2655,11 +2706,7 @@ function setWeekClosedForActivity(activity, closed) {
 function openBulkFermeturePopover(activity, cellEl) {
   const pop = document.getElementById("assignPopover");
   renderBulkFermeturePopoverContent(activity);
-
-  const rect = cellEl.getBoundingClientRect();
-  pop.style.top = `${window.scrollY + rect.bottom + 4}px`;
-  pop.style.left = `${window.scrollX + rect.left}px`;
-  pop.classList.remove("hidden");
+  positionPopover(pop, cellEl);
 }
 
 // Même patron visuel que renderCongePopoverContent() (bouton "toute la semaine" en toggle + une
@@ -3278,11 +3325,7 @@ window.addEventListener("resize", () => {
 function openCongePopover(person, monday, cellEl) {
   const pop = document.getElementById("assignPopover");
   renderCongePopoverContent(person, monday);
-
-  const rect = cellEl.getBoundingClientRect();
-  pop.style.top = `${window.scrollY + rect.bottom + 4}px`;
-  pop.style.left = `${window.scrollX + rect.left}px`;
-  pop.classList.remove("hidden");
+  positionPopover(pop, cellEl);
 }
 
 // Popover de la vue Congés (22/07/2026) : plus de saisie par plage de dates -- un bouton "Toute la
@@ -4174,11 +4217,7 @@ function handleTrameModaliteDrop(e, targetStaffId, targetDay, targetCreneauId) {
 function openTramePersonPopover(person, day, creneau, cellEl) {
   const pop = document.getElementById("assignPopover");
   renderTramePersonPopoverContent(person, day, creneau);
-
-  const rect = cellEl.getBoundingClientRect();
-  pop.style.top = `${window.scrollY + rect.bottom + 4}px`;
-  pop.style.left = `${window.scrollX + rect.left}px`;
-  pop.classList.remove("hidden");
+  positionPopover(pop, cellEl);
 }
 
 // Équivalent de renderPersonPopoverContent() pour la trame -- écrit dans state.trame, pas de
@@ -4263,7 +4302,7 @@ function renderTramePersonPopoverContent(person, day, creneau) {
 
     document.getElementById("popTrigger").addEventListener("click", (e) => {
       e.stopPropagation();
-      list.classList.toggle("hidden");
+      togglePopoverSelectList(e.currentTarget, list);
     });
   }
 
@@ -4504,11 +4543,7 @@ function removeAssignment(key, staffId) {
 function openAssignPopover(key, cellEl, activity, day, creneau) {
   const pop = document.getElementById("assignPopover");
   renderPopoverContent(key, activity, day, creneau);
-
-  const rect = cellEl.getBoundingClientRect();
-  pop.style.top = `${window.scrollY + rect.bottom + 4}px`;
-  pop.style.left = `${window.scrollX + rect.left}px`;
-  pop.classList.remove("hidden");
+  positionPopover(pop, cellEl);
 }
 
 function renderPopoverContent(key, activity, day, creneau) {
@@ -4576,7 +4611,7 @@ function renderPopoverContent(key, activity, day, creneau) {
   document.getElementById("popClose").addEventListener("click", () => pop.classList.add("hidden"));
   document.getElementById("popTrigger").addEventListener("click", (e) => {
     e.stopPropagation();
-    list.classList.toggle("hidden");
+    togglePopoverSelectList(e.currentTarget, list);
   });
 }
 
@@ -4584,11 +4619,7 @@ function renderPopoverContent(key, activity, day, creneau) {
 function openPersonAssignPopover(person, day, creneau, cellEl) {
   const pop = document.getElementById("assignPopover");
   renderPersonPopoverContent(person, day, creneau);
-
-  const rect = cellEl.getBoundingClientRect();
-  pop.style.top = `${window.scrollY + rect.bottom + 4}px`;
-  pop.style.left = `${window.scrollX + rect.left}px`;
-  pop.classList.remove("hidden");
+  positionPopover(pop, cellEl);
 }
 
 function renderPersonPopoverContent(person, day, creneau) {
@@ -4648,7 +4679,7 @@ function renderPersonPopoverContent(person, day, creneau) {
   document.getElementById("popClose").addEventListener("click", () => pop.classList.add("hidden"));
   document.getElementById("popTrigger").addEventListener("click", (e) => {
     e.stopPropagation();
-    list.classList.toggle("hidden");
+    togglePopoverSelectList(e.currentTarget, list);
   });
 }
 
