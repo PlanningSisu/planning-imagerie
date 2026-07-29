@@ -583,8 +583,9 @@ let state = {
   trame: {}, // key: `${activityId}|${day}|${creneauId}` -> [staffId, ...]
   // Temps Partiel (RG-020, 25/07/2026) : créneaux structurellement NON travaillés d'une personne à
   // temps partiel -- clé PAR PERSONNE (pas d'activité concernée, voir tpKey()), structurel comme la
-  // trame. Bloque toute affectation sur ce créneau (partout, y compris dans la Trame Personnel
-  // elle-même) et est totalement exclu des Stats -- voir isPersonTPOnSlot()/isAssignmentBlocked().
+  // trame. Bloque toute affectation sur ce créneau dans la Trame Personnel elle-même ; sur le
+  // planning réel (semaines), ne bloque plus rien depuis le 25/07/2026 (juste une violation
+  // signalée, voir isPersonTPOnSlot()) -- et reste totalement exclu des Stats.
   tempsPartiel: {}, // key: `${staffId}|${day}|${creneauId}` -> true
   weekOffset: 0,
   // Ordre des colonnes de la vue Stats (24/07/2026, réordonnables par glisser-déposer des en-têtes,
@@ -1499,15 +1500,16 @@ function validateAbsences() {
               message: `${activity.nom}, ${day} ${creneau.label} : ${person.prenom} ${person.nom} est absent(e) ce jour-là.`,
             });
           } else if (isPersonTPOnSlot(staffId, day, creneau.id)) {
-            // RG-020 : filet de sécurité si un ajout malgré tout passe par le popover (même logique
-            // que RG-018 -- "non postable" bloque le glisser-déposer, pas le popover d'ajout manuel).
+            // RG-020 : plus aucun blocage à l'ajout depuis le 25/07/2026 (ni popover, ni glisser-
+            // déposer) -- ce message est désormais le seul signal de la contradiction.
             violations.push({
               rg: "RG-020",
               message: `${activity.nom}, ${day} ${creneau.label} : ${person.prenom} ${person.nom} est à Temps Partiel ce créneau-là.`,
             });
           } else if (activity.id !== "off" && isPersonOffOnSlot(staffId, day, creneau.id)) {
-            // RG-018 : filet de sécurité si Off + une autre activité coexistent malgré tout sur ce
-            // créneau (le popover d'ajout n'est volontairement pas filtré, voir renderPersonnelRows()).
+            // RG-018 : Off + une autre activité peuvent coexister sur ce créneau (ni le popover
+            // d'ajout ni le glisser-déposer ne bloquent, voir renderPersonnelRows()/handleModaliteDrop()) --
+            // ce message est le seul signal de la contradiction.
             violations.push({
               rg: "RG-018",
               message: `${activity.nom}, ${day} ${creneau.label} : ${person.prenom} ${person.nom} est en Off ce créneau-là.`,
@@ -1725,20 +1727,19 @@ function buildGardeChip(person) {
 // Personnel, qui ne fournit pas de source-key et se comporte donc en simple ajout).
 // Renvoie false si le dépôt est refusé (rien n'est modifié) -- l'appelant s'en sert pour donner un
 // retour visuel (flash rouge, voir buildModaliteCell()), true si l'affectation a bien eu lieu.
-function handleAssignmentDrop(e, targetKey, day) {
+//
+// RG-014/RG-018/RG-019/RG-020 (25/07/2026, revu -- retour de Samir "je ne veux plus de blocage
+// quand je positionne quelqu'un sur le planning") : une personne en congé, en repos de garde, en
+// Off ce créneau-là, en Temps Partiel, ou déjà postée ailleurs en conflit avec Scan U/Echo U N'EST
+// PLUS bloquée ici -- le glisser-déposer aboutit toujours, la contradiction remonte uniquement via
+// la violation + contour rouge existants (voir buildAssignedChip()/buildModaliteTag(), déjà le seul
+// mécanisme pour un conflit glissé via le popover, jamais filtré). Ancien comportement : un
+// `isAssignmentBlocked()` dédié refusait le dépôt avant cette date -- retiré, plus aucun appelant.
+function handleAssignmentDrop(e, targetKey) {
   const staffId = e.dataTransfer.getData("text/plain");
   if (!staffId || !staffById(staffId)) return false;
   const sourceKey = e.dataTransfer.getData("application/x-source-key");
   if (sourceKey && sourceKey === targetKey) return false;
-
-  // RG-014/RG-018/RG-019 : une personne en congé, en repos de garde, en Off ce créneau-là, ou déjà
-  // postée ailleurs en conflit avec Scan U/Echo U, ne peut pas être posée -- bloqué ici au niveau du
-  // glisser-déposer (le popover d'ajout, lui, n'est pas filtré : si un conflit s'y glisse quand même,
-  // il remonte en violation + contour rouge, voir buildModaliteCell()). `targetActivityId`/
-  // `targetCreneauId` extraits de targetKey (déjà un cellKey(), pas besoin de les faire remonter
-  // comme paramètres séparés).
-  const [targetActivityId, , targetCreneauId] = trameKeyFromCellKey(targetKey).split("|");
-  if (isAssignmentBlocked(staffId, day, targetCreneauId, targetActivityId)) return false;
 
   // RG-017 : matérialise systématiquement (source ET cible) avant de modifier -- une case source
   // encore purement issue de la trame (jamais touchée cette semaine) n'a pas de clé explicite dans
@@ -2058,10 +2059,11 @@ function renderTable() {
 }
 
 // RG-014 (22/07/2026, voir regles-gestion.md) : une personne en congé ou en repos de garde
-// (RG-013) le jour `day` de la semaine ACTUELLEMENT AFFICHÉE (state.weekOffset) ne peut pas être
-// postée ce jour-là. Centralisé ici pour être consulté à la fois par le blocage du glisser-déposer
-// (handleAssignmentDrop()) et par le moteur de validation (validateAbsences()) -- une seule
-// définition de "absent(e)", pas deux logiques qui pourraient diverger.
+// (RG-013) le jour `day` de la semaine ACTUELLEMENT AFFICHÉE (state.weekOffset). Centralisé ici
+// pour une seule définition de "absent(e)", consultée par le blocage total de la case en vue
+// Personnel (renderPersonnelRows()), le moteur de validation (validateAbsences()) et le contour
+// rouge de violation (buildAssignedChip()/buildModaliteTag()) -- depuis le 25/07/2026, ne bloque
+// PLUS le glisser-déposer en vue Modalité (handleAssignmentDrop()), voir le commentaire dédié là-bas.
 function isPersonAbsentOnDay(staffId, day) {
   const iso = weekIsoDates(getMonday(state.weekOffset))[DAYS.indexOf(day)];
   return isOnCongeDay(staffId, iso) || isOnReposGardeDay(staffId, iso);
@@ -2080,8 +2082,9 @@ function isPersonOffOnSlot(staffId, day, creneauId) {
 // RG-020 (Temps Partiel, 25/07/2026, demande de Samir) : une personne à temps partiel n'est pas
 // disponible sur les créneaux hors de son contrat -- donnée STRUCTURELLE (comme la trame), jamais
 // liée à une semaine précise (pas de notion d'"override" ponctuel comme assignments/trame). Bloque
-// "partout" comme un congé (RG-014) -- y compris dans la Trame Personnel elle-même, contrairement à
-// Off (RG-018) qui ne bloque que sur une semaine réelle -- décision explicite de Samir le 25/07/2026.
+// dans la Trame Personnel elle-même (décision explicite du 25/07/2026) ; sur le planning réel, ne
+// bloque plus le glisser-déposer depuis le même jour (retour de Samir, voir handleAssignmentDrop()/
+// handleModaliteDrop()) -- juste une violation signalée, comme congé/Off/l'exclusivité Scan U.
 function tpKey(staffId, day, creneauId) {
   return `${staffId}|${day}|${creneauId}`;
 }
@@ -2114,20 +2117,6 @@ function hasUrgenceConflict(staffId, day, creneauId, activityId) {
     if (!targetIsUrgence && !isUrgenceActivity(activity.id)) return false;
     return effectiveAssignedIds(cellKey(activity.id, day, creneauId)).includes(staffId);
   });
-}
-
-// Point d'entrée unique combinant RG-014 (congé/repos, jour entier), RG-018 (Off, créneau précis),
-// RG-019 (exclusivité Scan U/Echo U, créneau précis) et RG-020 (Temps Partiel, créneau précis) --
-// "cette personne peut-elle être postée sur CETTE activité, ce jour, ce créneau ?". `activityId`
-// sert à ne jamais bloquer une activité contre son propre statut (poser "off" n'est pas un conflit
-// avec Off lui-même ; `hasUrgenceConflict()` exclut déjà `activityId` de sa propre comparaison, pas
-// besoin de le refaire ici).
-function isAssignmentBlocked(staffId, day, creneauId, activityId) {
-  if (isPersonAbsentOnDay(staffId, day)) return true;
-  if (isPersonTPOnSlot(staffId, day, creneauId)) return true;
-  if (activityId !== "off" && isPersonOffOnSlot(staffId, day, creneauId)) return true;
-  if (hasUrgenceConflict(staffId, day, creneauId, activityId)) return true;
-  return false;
 }
 
 // Bascule le focus jour/demi-journée (voir déclaration de staffFocusFilter) : un clic sur exactement
@@ -2236,11 +2225,11 @@ function buildModaliteCell(activity, day, creneau) {
       addCellGroup(seniors);
       addCellGroup(internes);
 
-      // RG-014/RG-018 : filet de sécurité si une personne absente (ou en Off ce créneau, sur une
-      // AUTRE activité que "off") s'est malgré tout retrouvée assignée (ex. congé déclaré après
-      // coup, ou ajoutée via le popover -- seul le glisser-déposer est bloqué en amont, voir plus
-      // bas). Contour rouge, en plus de la violation dans la zone du moteur (validateAbsences()),
-      // pour repérer directement la case en cause dans le tableau.
+      // RG-014/RG-018 : une personne absente (ou en Off ce créneau, sur une AUTRE activité que
+      // "off") peut se retrouver assignée malgré tout -- ni le glisser-déposer ni le popover
+      // d'ajout ne bloquent plus rien (25/07/2026, retour de Samir : "je ne veux plus de blocage
+      // quand je positionne quelqu'un"), donc ce contour rouge est désormais le SEUL signal de la
+      // contradiction, en plus de la violation dans la zone du moteur (validateAbsences()).
       if (people.some((p) => isPersonAbsentOnDay(p.id, day) || (activity.id !== "off" && isPersonOffOnSlot(p.id, day, creneau.id)))) {
         td.classList.add("cell-absence-violation");
       }
@@ -2259,10 +2248,11 @@ function buildModaliteCell(activity, day, creneau) {
       td.addEventListener("drop", (e) => {
         e.preventDefault();
         td.classList.remove("drag-over");
-        if (!handleAssignmentDrop(e, key, day)) {
-          // RG-014 : dépôt refusé (personne absente ce jour-là) -- flash rouge bref pour signaler
-          // que le glisser-déposer n'a rien fait, plutôt qu'un échec silencieux qui pourrait
-          // passer pour un bug.
+        if (!handleAssignmentDrop(e, key)) {
+          // Dépôt sans effet (source === cible, ou dataTransfer invalide) -- flash rouge bref pour
+          // signaler que le glisser-déposer n'a rien fait, plutôt qu'un échec silencieux qui
+          // pourrait passer pour un bug. Ne couvre plus RG-014/018/019/020 depuis le 25/07/2026 :
+          // le dépôt aboutit désormais toujours pour ces cas, voir handleAssignmentDrop().
           td.classList.add("drop-rejected");
           setTimeout(() => td.classList.remove("drop-rejected"), 400);
         }
@@ -2801,10 +2791,10 @@ function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
   // préfixe via trameKeyFromCellKey() pour retomber sur le format de vacationSpecKey().
   const [, tagDay, tagCreneauId] = trameKeyFromCellKey(key).split("|");
   const vacSpec = state.vacationSpecialites[trameKeyFromCellKey(key)];
-  // RG-014/RG-018/RG-019 (24/07/2026) : même logique de contour rouge que buildAssignedChip() côté
-  // vue Modalité -- ne peut arriver ici que via le popover (vue Personnel bloque déjà le
-  // glisser-déposer en amont, voir handleModaliteDrop()), filet de sécurité pour rester cohérent
-  // visuellement.
+  // RG-014/RG-018/RG-019/RG-020 : même logique de contour rouge que buildAssignedChip() côté vue
+  // Modalité -- peut désormais arriver aussi bien via le popover que via le glisser-déposer (plus
+  // aucun des deux n'est bloqué depuis le 25/07/2026, voir handleModaliteDrop()) : ce contour rouge
+  // est le seul signal de la contradiction, pas un filet de sécurité pour un cas résiduel.
   const isAbsenceViolation = isPersonAbsentOnDay(staffId, tagDay);
   const isTPViolation = !isAbsenceViolation && isPersonTPOnSlot(staffId, tagDay, tagCreneauId);
   const isOffViolation = !isAbsenceViolation && !isTPViolation && activity.id !== "off" && isPersonOffOnSlot(staffId, tagDay, tagCreneauId);
@@ -2859,11 +2849,11 @@ function handleModaliteDrop(e, targetStaffId, targetDay, targetCreneauId) {
   const targetKey = cellKey(activityId, targetDay, targetCreneauId);
   if (sourceKey === targetKey) return false;
 
-  // RG-014/RG-018/RG-019 : la case cible n'est plus bloquée en amont pour Off (contrairement à
-  // congé/repos, voir renderPersonnelRows()) -- vérifié ici à la place, pour ne pas permettre d'y
-  // glisser une AUTRE activité par-dessus (ni Scan U/Echo U par-dessus une autre activité déjà
-  // posée, et réciproquement).
-  if (isAssignmentBlocked(targetStaffId, targetDay, targetCreneauId, activityId)) return false;
+  // RG-014/RG-018/RG-019/RG-020 (25/07/2026, revu -- retour de Samir "je ne veux plus de blocage
+  // quand je positionne quelqu'un sur le planning") : glisser une autre activité par-dessus une
+  // case Off/congé/Temps Partiel, ou par-dessus/depuis Scan U/Echo U en conflit, n'est plus
+  // refusé -- le dépôt aboutit toujours, la contradiction remonte via le contour rouge existant
+  // (buildModaliteTag()), déjà le seul mécanisme pour un conflit glissé via le popover.
 
   // RG-017 : voir le commentaire équivalent dans handleAssignmentDrop() -- matérialiser avant de
   // modifier, sinon une case source encore purement issue de la trame ne perdrait jamais son
