@@ -194,6 +194,25 @@ function orderedSpecialites(person) {
   );
 }
 
+// Compétences (26/07/2026, demande de Samir) : cases à cocher indépendantes de `person.specialites`
+// -- 0 à 5 parmi les mêmes clés (`SPECIALITE_ORDER`), sans contrainte liée au grade. Aucune
+// représentation visuelle (pas de couleur/dégradé, contrairement à specialites) -- affichées
+// uniquement au survol (voir personTooltip()) et destinées au futur moteur de règles.
+function orderedCompetences(person) {
+  const set = new Set(person.competences || []);
+  return SPECIALITE_ORDER.filter((k) => set.has(k));
+}
+
+// Texte de survol standard pour une personne -- nom complet, plus la liste de ses compétences si
+// elle en a (rien d'ajouté sinon, pour ne pas alourdir le tooltip des personnes sans compétence
+// renseignée). Centralisé pour que toutes les vues qui affichent un nom au survol restent cohérentes.
+function personTooltip(person) {
+  const base = `${person.prenom} ${person.nom}`;
+  const competences = orderedCompetences(person);
+  if (competences.length === 0) return base;
+  return `${base} — Compétences : ${competences.map((k) => SPECIALITES[k].label).join(", ")}`;
+}
+
 // Clé de regroupement : "socle" pour les internes sans spécialité, sinon "digestif-uro" etc.
 function specialiteKey(person) {
   const specs = orderedSpecialites(person);
@@ -2667,7 +2686,7 @@ function renderPersonnelRows(tbody) {
     // Nom complet dans l'attribut title (survol).
     const nameCell = document.createElement("td");
     nameCell.textContent = `${person.prenom[0]}. ${person.nom}`;
-    nameCell.title = `${person.prenom} ${person.nom}`;
+    nameCell.title = personTooltip(person);
     nameCell.className = "activity-cell person-name-cell";
     nameCell.style.cssText += personCellStyle(person);
     tr.appendChild(nameCell);
@@ -2884,6 +2903,7 @@ function renderStaffPerson(ul, person, { divider = false, boxed = false, boxEnd 
   const suffix = specLabel ? ` — ${specLabel}` : "";
   const { className, style } = chipVisual(person);
   li.innerHTML = `<span class="${className}" style="margin-right:6px;${style}">${person.prenom[0]}.${person.nom}</span> ${gradeLabel}${suffix}`;
+  li.title = personTooltip(person); // compétences (26/07/2026) affichées uniquement ici, au survol.
 
   li.draggable = true;
   li.classList.add("staff-draggable");
@@ -3077,7 +3097,7 @@ function renderCongesView() {
     th.style.cssText = personCellStyle(p);
     const span = document.createElement("span");
     span.textContent = personAcronym(p);
-    span.title = `${p.prenom} ${p.nom}`;
+    span.title = personTooltip(p);
     th.appendChild(span);
     headRow.appendChild(th);
     personHeaderCells.push(th);
@@ -3952,7 +3972,7 @@ function renderStatsView() {
 
     const nameCell = document.createElement("td");
     nameCell.textContent = `${person.prenom[0]}. ${person.nom}`;
-    nameCell.title = `${person.prenom} ${person.nom}`;
+    nameCell.title = personTooltip(person);
     nameCell.className = "activity-cell person-name-cell";
     nameCell.style.cssText += personCellStyle(person);
     tr.appendChild(nameCell);
@@ -4239,7 +4259,7 @@ function renderTramePersonnelView() {
 
     const nameCell = document.createElement("td");
     nameCell.textContent = `${person.prenom[0]}. ${person.nom}`;
-    nameCell.title = `${person.prenom} ${person.nom}`;
+    nameCell.title = personTooltip(person);
     nameCell.className = "activity-cell person-name-cell";
     nameCell.style.cssText += personCellStyle(person);
     tr.appendChild(nameCell);
@@ -4819,6 +4839,13 @@ function renderStaffAddForm(container, existingPerson = null) {
         <label id="formSpec2Label" for="formSpec2">2e spécialité</label>
         <select id="formSpec2">${specialiteOptionsHtml()}</select>
       </div>
+      <div class="form-row form-row-competences">
+        <label>Compétences</label>
+        <div class="form-competences-list">
+          ${SPECIALITE_ORDER.map((k) => `<label class="form-competence-option"><input type="checkbox" class="formCompetence" value="${k}"> ${SPECIALITES[k].label}</label>`).join("")}
+        </div>
+        <span class="form-hint">Indépendant de la spécialité ci-dessus -- sert au futur moteur de règles, affiché seulement au survol (jamais de couleur).</span>
+      </div>
       <div class="form-actions">
         <button type="button" id="formSubmit">${existingPerson ? "Enregistrer" : "Ajouter"}</button>
         <button type="button" id="formCancel">Annuler</button>
@@ -4834,6 +4861,12 @@ function renderStaffAddForm(container, existingPerson = null) {
   const spec2Select = document.getElementById("formSpec2");
 
   horsSisuCheckbox.checked = initialHorsSisu;
+
+  const competenceCheckboxes = [...container.querySelectorAll(".formCompetence")];
+  if (existingPerson) {
+    const initialCompetences = new Set(existingPerson.competences || []);
+    competenceCheckboxes.forEach((cb) => { cb.checked = initialCompetences.has(cb.value); });
+  }
 
   if (existingPerson) {
     document.getElementById("formPrenom").value = existingPerson.prenom;
@@ -4950,14 +4983,18 @@ function renderStaffAddForm(container, existingPerson = null) {
       }
     }
 
+    // Compétences : indépendantes du grade/de la spécialité, aucune contrainte de nombre.
+    const competences = competenceCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
+
     if (existingPerson) {
       existingPerson.prenom = prenom;
       existingPerson.nom = nom;
       existingPerson.horsSisu = horsSisu;
       existingPerson.grade = grade;
       existingPerson.specialites = specialites;
+      existingPerson.competences = competences;
     } else {
-      state.staff.push({ id: generateStaffId(), prenom, nom, horsSisu, grade, specialites });
+      state.staff.push({ id: generateStaffId(), prenom, nom, horsSisu, grade, specialites, competences });
     }
     saveState();
     render();

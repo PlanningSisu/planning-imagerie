@@ -389,6 +389,23 @@ body {
   color: #6b7280;
   margin-left: 22px;
 }
+
+/* Compétences (26/07/2026) : cases à cocher indépendantes de la spécialité, aucune couleur --
+   voir renderStaffAddForm() dans app.js. */
+.form-competences-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.form-competence-option {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 400;
+  color: #1f2937;
+  cursor: pointer;
+}
 .form-actions button {
   border: none;
   border-radius: 6px;
