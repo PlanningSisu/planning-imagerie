@@ -1037,10 +1037,13 @@ function ensureMaterializedAssignments(key) {
 // matérialisées (décision explicite de Samir, "je gère les retraits à la main au cas par cas") --
 // seule une semaine jamais touchée voit un retrait de trame se répercuter, ce qui est déjà le
 // comportement par défaut d'effectiveAssignedIds(), sans code supplémentaire ici.
+// Renvoie le nombre d'ajouts réellement effectués (0 si rien à faire) -- utilisé par
+// resyncTrameToTouchedWeeks() pour afficher un résumé à Samir après une resynchronisation manuelle.
 function propagateTrameAdditionToTouchedWeeks(activityId, day, creneauId, staffId) {
   const currentWeekKey = weekKey(getMonday(0)); // semaine réelle actuelle (pas state.weekOffset,
   // qui reflète juste la semaine affichée à l'écran au moment de l'édition, sans rapport ici).
   const suffix = `${activityId}|${day}|${creneauId}`;
+  let addedCount = 0;
   Object.keys(state.assignments).forEach((assignKey) => {
     const parts = assignKey.split("|");
     if (parts.length !== 4 || `${parts[1]}|${parts[2]}|${parts[3]}` !== suffix) return;
@@ -1048,8 +1051,25 @@ function propagateTrameAdditionToTouchedWeeks(activityId, day, creneauId, staffI
     if (assignWeekKey < currentWeekKey) return; // jamais les semaines passées, comme RG-017.
     if (!state.assignments[assignKey].includes(staffId)) {
       state.assignments[assignKey].push(staffId);
+      addedCount++;
     }
   });
+  return addedCount;
+}
+
+// Resynchronisation manuelle (26/07/2026, ⚙ → "Resynchroniser la trame") : applique
+// rétroactivement propagateTrameAdditionToTouchedWeeks() à TOUTE la trame déjà saisie -- rattrape
+// les ajouts faits AVANT que cette propagation n'existe (une trame remplie plus tôt n'a jamais pu
+// déclencher la propagation, qui n'existait pas encore). Jamais de retrait, comme au fil de l'eau.
+function resyncTrameToTouchedWeeks() {
+  let count = 0;
+  Object.keys(state.trame).forEach((trameKeyStr) => {
+    const [activityId, day, creneauId] = trameKeyStr.split("|");
+    (state.trame[trameKeyStr] || []).forEach((staffId) => {
+      count += propagateTrameAdditionToTouchedWeeks(activityId, day, creneauId, staffId);
+    });
+  });
+  return count;
 }
 
 // ---------- Congés ----------
@@ -4718,6 +4738,17 @@ document.getElementById("fileInput").addEventListener("change", (e) => {
   };
   reader.readAsText(file);
   e.target.value = "";
+});
+
+// RG-017 (26/07/2026, ⚙ → "Resynchroniser la trame") : rattrape en une fois les ajouts de trame
+// faits AVANT que propagateTrameAdditionToTouchedWeeks() n'existe -- purement additif (jamais de
+// retrait), donc confirm() en amont est plus une précaution qu'un vrai risque de perte de données.
+document.getElementById("btnResyncTrame").addEventListener("click", () => {
+  if (!confirm("Resynchroniser la trame vers les semaines déjà touchées ? Chaque personne présente dans la Trame Personnel sera ajoutée sur les semaines actuelle/futures qui ont déjà une affectation différente pour ce créneau précis -- rien n'est jamais retiré ni remplacé.")) return;
+  const count = resyncTrameToTouchedWeeks();
+  saveState();
+  render();
+  alert(count > 0 ? `${plural(count, "ajout")} appliqué${count > 1 ? "s" : ""} sur les semaines déjà touchées.` : "Rien à ajouter -- les semaines déjà touchées correspondaient déjà à la trame.");
 });
 
 document.getElementById("btnReset").addEventListener("click", () => {
