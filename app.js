@@ -1025,6 +1025,33 @@ function ensureMaterializedAssignments(key) {
   return state.assignments[key];
 }
 
+// RG-017 (26/07/2026, retour de Samir) : une semaine déjà "touchée" (matérialisée dans
+// state.assignments, donc devenue indépendante de la trame -- voir ensureMaterializedAssignments())
+// ignorait complètement toute évolution ultérieure de la trame, y compris un simple AJOUT --
+// résultat gênant : ajouter quelqu'un dans sa trame ne le faisait apparaître nulle part sur une
+// semaine déjà en cours d'utilisation. Corrigé en propageant les AJOUTS (jamais les retraits, voir
+// juste en dessous) vers toute semaine actuelle/future déjà matérialisée pour ce créneau précis --
+// sans jamais retirer qui que ce soit d'autre déjà présent. Les semaines PAS encore touchées n'ont
+// besoin d'aucune propagation : effectiveAssignedIds() reflète déjà la trame en direct pour elles.
+// **Volontairement asymétrique** : retirer quelqu'un de sa trame ne le retire PAS des semaines déjà
+// matérialisées (décision explicite de Samir, "je gère les retraits à la main au cas par cas") --
+// seule une semaine jamais touchée voit un retrait de trame se répercuter, ce qui est déjà le
+// comportement par défaut d'effectiveAssignedIds(), sans code supplémentaire ici.
+function propagateTrameAdditionToTouchedWeeks(activityId, day, creneauId, staffId) {
+  const currentWeekKey = weekKey(getMonday(0)); // semaine réelle actuelle (pas state.weekOffset,
+  // qui reflète juste la semaine affichée à l'écran au moment de l'édition, sans rapport ici).
+  const suffix = `${activityId}|${day}|${creneauId}`;
+  Object.keys(state.assignments).forEach((assignKey) => {
+    const parts = assignKey.split("|");
+    if (parts.length !== 4 || `${parts[1]}|${parts[2]}|${parts[3]}` !== suffix) return;
+    const assignWeekKey = parts[0];
+    if (assignWeekKey < currentWeekKey) return; // jamais les semaines passées, comme RG-017.
+    if (!state.assignments[assignKey].includes(staffId)) {
+      state.assignments[assignKey].push(staffId);
+    }
+  });
+}
+
 // ---------- Congés ----------
 // Contrairement à assignments/fermetures, les congés ne sont pas rattachés à la "semaine affichée"
 // (state.weekOffset) : ils vivent dans leur propre navigation trimestre/année (congesYear/congesQuarter).
@@ -4104,6 +4131,7 @@ function handleTrameModaliteDrop(e, targetStaffId, targetDay, targetCreneauId) {
   if (!state.trame[targetKey]) state.trame[targetKey] = [];
   if (!state.trame[targetKey].includes(targetStaffId)) {
     state.trame[targetKey].push(targetStaffId);
+    propagateTrameAdditionToTouchedWeeks(activityId, targetDay, targetCreneauId, targetStaffId);
   }
   saveState();
   render();
@@ -4178,6 +4206,7 @@ function renderTramePersonPopoverContent(person, day, creneau) {
           if (!state.trame[key]) state.trame[key] = [];
           if (!state.trame[key].includes(person.id)) {
             state.trame[key].push(person.id);
+            propagateTrameAdditionToTouchedWeeks(activity.id, day, creneau.id, person.id);
             saveState();
             render();
             renderTramePersonPopoverContent(person, day, creneau);
