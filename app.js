@@ -1748,7 +1748,7 @@ function buildAssignedChip(person, key, day) {
   // statut. RG-019 (même jour) : idem pour un conflit d'exclusivité Scan U/Echo U. RG-020 (25/07/2026) :
   // idem pour un conflit Temps Partiel.
   const [activityId, , creneauId] = trameKeyFromCellKey(key).split("|");
-  if (isPersonAbsentOnDay(person.id, day)) {
+  if (activityId !== "off" && isPersonAbsentOnDay(person.id, day)) {
     chip.classList.add("chip-absence-violation");
     chip.title = `${person.prenom} ${person.nom} est absent(e) ce jour-là`;
   } else if (isPersonTPOnSlot(person.id, day, creneauId)) {
@@ -2307,7 +2307,10 @@ function buildModaliteCell(activity, day, creneau) {
       // d'ajout ne bloquent plus rien (25/07/2026, retour de Samir : "je ne veux plus de blocage
       // quand je positionne quelqu'un"), donc ce contour rouge est désormais le SEUL signal de la
       // contradiction, en plus de la violation dans la zone du moteur (validateAbsences()).
-      if (people.some((p) => isPersonAbsentOnDay(p.id, day) || (activity.id !== "off" && isPersonOffOnSlot(p.id, day, creneau.id)))) {
+      if (
+        activity.id !== "off" &&
+        people.some((p) => isPersonAbsentOnDay(p.id, day) || isPersonOffOnSlot(p.id, day, creneau.id))
+      ) {
         td.classList.add("cell-absence-violation");
       }
     }
@@ -2872,7 +2875,7 @@ function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
   // Modalité -- peut désormais arriver aussi bien via le popover que via le glisser-déposer (plus
   // aucun des deux n'est bloqué depuis le 25/07/2026, voir handleModaliteDrop()) : ce contour rouge
   // est le seul signal de la contradiction, pas un filet de sécurité pour un cas résiduel.
-  const isAbsenceViolation = isPersonAbsentOnDay(staffId, tagDay);
+  const isAbsenceViolation = activity.id !== "off" && isPersonAbsentOnDay(staffId, tagDay);
   const isTPViolation = !isAbsenceViolation && isPersonTPOnSlot(staffId, tagDay, tagCreneauId);
   const isOffViolation = !isAbsenceViolation && !isTPViolation && activity.id !== "off" && isPersonOffOnSlot(staffId, tagDay, tagCreneauId);
   const isUrgenceViolation = !isAbsenceViolation && !isTPViolation && !isOffViolation && hasUrgenceConflict(staffId, tagDay, tagCreneauId, activity.id);
