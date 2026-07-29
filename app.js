@@ -4207,6 +4207,14 @@ function renderTramePersonPopoverContent(person, day, creneau) {
   document.getElementById("popClose").addEventListener("click", () => pop.classList.add("hidden"));
 }
 
+// Jour ouvré actuel ("Lundi".."Vendredi"), ou `null` le week-end -- la Trame Personnel n'a pas de
+// notion de semaine (contrairement à Congés/.conges-current-week), le jour du calendrier en tient
+// lieu pour le repère "on est ici" (voir renderTramePersonnelView()).
+function todayDayName() {
+  const idx = new Date().getDay() - 1; // getDay() : 0=dimanche..6=samedi -> idx 0=Lundi..4=Vendredi
+  return idx >= 0 && idx < DAYS.length ? DAYS[idx] : null;
+}
+
 function renderTramePersonnelView() {
   const container = document.getElementById("tramePersonnelView");
   container.innerHTML = "";
@@ -4218,6 +4226,14 @@ function renderTramePersonnelView() {
 
   const thead = document.createElement("thead");
 
+  // Surlignage au survol (26/07/2026, demande de Samir -- même principe que la vue Congés,
+  // voir personHeaderCells/.conges-highlight) : `dayHeaderCells`/`creneauHeaderCells` gardent une
+  // référence vers chaque en-tête pour les mettre en valeur au survol d'une case du corps.
+  const dayHeaderCells = {}; // day -> th (ligne du haut, colSpan=3)
+  const creneauHeaderCells = {}; // `${day}|${creneauId}` -> th (ligne du bas)
+  const today = todayDayName(); // pas de notion de semaine ici (contrairement à Congés) -- le jour
+  // ouvré du calendrier en tient lieu pour le repère "on est ici" (null le week-end, rien surligné).
+
   const dayRow = document.createElement("tr");
   const corner = document.createElement("th");
   corner.className = "corner-cell";
@@ -4226,11 +4242,13 @@ function renderTramePersonnelView() {
     const th = document.createElement("th");
     th.colSpan = CRENEAUX.length;
     th.className = "day-header day-start"; // séparateur de jour, voir §6.28/§6.29
+    if (day === today) th.classList.add("trame-current-day");
     const label = document.createElement("div");
     label.className = "day-header-label";
     label.textContent = day;
     th.appendChild(label);
     dayRow.appendChild(th);
+    dayHeaderCells[day] = th;
   });
   thead.appendChild(dayRow);
 
@@ -4239,13 +4257,14 @@ function renderTramePersonnelView() {
   cornerLabel.className = "modalite-header";
   cornerLabel.textContent = "Personnel";
   creneauRow.appendChild(cornerLabel);
-  DAYS.forEach(() => {
+  DAYS.forEach((day) => {
     CRENEAUX.forEach((c, creneauIdx) => {
       const th = document.createElement("th");
       th.textContent = c.label;
       th.className = "creneau-header";
       if (creneauIdx === 0) th.classList.add("day-start"); // séparateur de jour, voir §6.28/style.css
       creneauRow.appendChild(th);
+      creneauHeaderCells[`${day}|${c.id}`] = th;
     });
   });
   thead.appendChild(creneauRow);
@@ -4321,6 +4340,18 @@ function renderTramePersonnelView() {
           handleTrameModaliteDrop(e, person.id, day, creneau.id);
         });
 
+        // Surlignage au survol (26/07/2026) : met en valeur le nom (ligne) et le créneau précis
+        // (colonne) -- même principe que la vue Congés (personHeaderCells/.conges-highlight).
+        const creneauHeaderCell = creneauHeaderCells[`${day}|${creneau.id}`];
+        td.addEventListener("mouseenter", () => {
+          nameCell.classList.add("trame-highlight");
+          creneauHeaderCell.classList.add("trame-highlight");
+        });
+        td.addEventListener("mouseleave", () => {
+          nameCell.classList.remove("trame-highlight");
+          creneauHeaderCell.classList.remove("trame-highlight");
+        });
+
         return td;
       };
 
@@ -4353,6 +4384,18 @@ function renderTramePersonnelView() {
           e.preventDefault();
           td.classList.remove("drag-over");
           handleTrameModaliteDrop(e, person.id, day, "apres-midi");
+        });
+
+        // Surlignage au survol : une case fusionnée couvre plusieurs créneaux, donc la case
+        // "colonne" mise en valeur est l'en-tête du JOUR entier (pas un créneau précis).
+        const dayHeaderCell = dayHeaderCells[day];
+        td.addEventListener("mouseenter", () => {
+          nameCell.classList.add("trame-highlight");
+          dayHeaderCell.classList.add("trame-highlight");
+        });
+        td.addEventListener("mouseleave", () => {
+          nameCell.classList.remove("trame-highlight");
+          dayHeaderCell.classList.remove("trame-highlight");
         });
         return td;
       };

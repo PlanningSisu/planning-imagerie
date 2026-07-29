@@ -1735,6 +1735,24 @@ tr.group-end td {
   min-width: 70px;
 }
 
+/* Surlignage au survol (26/07/2026, demande de Samir -- même principe que la vue Congés, voir
+   .conges-highlight/.conges-current-week) : survoler une case met en valeur le nom (fond) et le
+   créneau/jour survolé (contour), voir renderTramePersonnelView(). */
+.trame-personnel-table .person-name-cell.trame-highlight {
+  background: #e0e7ff;
+}
+.trame-personnel-table .creneau-header.trame-highlight,
+.trame-personnel-table .day-header.trame-highlight {
+  outline: 3px solid #4338ca;
+  outline-offset: -3px;
+}
+/* Pas de notion de semaine ici (contrairement à Congés) -- le jour ouvré du calendrier tient lieu
+   de repère "on est ici", posé une fois pour toutes sur l'en-tête du jour (pas au survol). */
+.trame-personnel-table .day-header.trame-current-day {
+  background: #ede9fe !important;
+  border-bottom: 3px solid #7c3aed;
+}
+
 /* Utilitaire générique -- volontairement tout en bas du fichier : à spécificité égale (une seule
    classe), la règle déclarée en dernier gagne. Placé plus haut, il perdait contre .validation-zone
    { display: flex } (déclarée plus bas) et #validationZone.hidden restait visible -- bug réel
