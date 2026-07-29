@@ -2181,7 +2181,14 @@ function hasUrgenceConflict(staffId, day, creneauId, activityId) {
   return state.activities.some((activity) => {
     if (activity.id === activityId) return false;
     if (!targetIsUrgence && !isUrgenceActivity(activity.id)) return false;
-    return effectiveAssignedIds(cellKey(activity.id, day, creneauId)).includes(staffId);
+    const key = cellKey(activity.id, day, creneauId);
+    // RG-010 : une case fermée n'a plus de composition attendue, jamais un conflit -- notamment pour
+    // une vieille fermeture antérieure au 24/07/2026 qui n'a jamais matérialisé state.assignments à
+    // vide (bug corrigé depuis pour toute nouvelle fermeture, voir setDayClosedForActivity()) : sans
+    // ce garde-fou, le repli trame de la case fermée continue de "compter" indéfiniment pour RG-019,
+    // invisible à l'écran puisque la case n'affiche qu'une croix.
+    if (state.fermetures[key]) return false;
+    return effectiveAssignedIds(key).includes(staffId);
   });
 }
 
