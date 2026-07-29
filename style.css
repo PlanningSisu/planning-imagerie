@@ -1742,9 +1742,15 @@ tr.group-end td {
 
 /* Surlignage au survol (26/07/2026, demande de Samir -- même principe que la vue Congés, voir
    .conges-highlight/.conges-current-week) : survoler une case met en valeur le nom (fond) et le
-   créneau/jour survolé (contour), voir renderTramePersonnelView(). */
+   créneau/jour survolé (contour), voir renderTramePersonnelView().
+   !important nécessaire (29/07/2026, bug remonté par Samir -- rien ne s'affichait sur le nom) :
+   .person-name-cell porte déjà un fond en style INLINE (personCellStyle(), couleur de spécialité),
+   qui gagne toujours contre une règle de classe externe sans !important -- confirmé en testant :
+   la classe .trame-highlight était bien posée au survol, mais le fond restait celui de la
+   spécialité (vert digestif, etc.), invisible. Un !important dans la feuille de style bat un
+   style inline simple (sans son propre !important), donc ce garde-fou suffit. */
 .trame-personnel-table .person-name-cell.trame-highlight {
-  background: #e0e7ff;
+  background: #e0e7ff !important;
 }
 .trame-personnel-table .creneau-header.trame-highlight,
 .trame-personnel-table .day-header.trame-highlight {
