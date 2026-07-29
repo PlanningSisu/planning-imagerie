@@ -1560,7 +1560,11 @@ function validateAbsences() {
         assigned.forEach((staffId) => {
           const person = staffById(staffId);
           if (!person) return;
-          if (isPersonAbsentOnDay(staffId, day)) {
+          if (activity.id !== "off" && isPersonAbsentOnDay(staffId, day)) {
+            // Off ne compte pas comme un conflit avec une absence (congé/repos de garde) : les deux
+            // disent la même chose ("cette personne ne travaille pas"), jamais une contradiction --
+            // demande de Samir le 29/07/2026 ("si je suis en congés et qu'on m'a mis un Off, c'est
+            // pas grave"). Même principe que le `activity.id !== "off"` déjà posé sur RG-018 plus bas.
             violations.push({
               rg: "RG-014",
               message: `${activity.nom}, ${day} ${creneau.label} : ${person.prenom} ${person.nom} est absent(e) ce jour-là.`,
