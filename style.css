@@ -480,6 +480,18 @@ body {
   gap: 8px;
   margin-bottom: 16px;
 }
+
+/* Recherche par nom/prénom dans Gestion Personnel (29/07/2026). */
+.staff-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  font-family: inherit;
+  margin-bottom: 12px;
+}
 .btn-primary.btn-outline {
   background: white;
   color: #2563eb;

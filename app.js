@@ -337,6 +337,13 @@ let statsRangeEnd = null;
 // toggleStaffFocusFilter().
 let staffFocusFilter = null;
 
+// Recherche par nom/prénom dans "Gestion Personnel" (29/07/2026, demande de Samir) -- transitoire
+// comme les autres states d'UI ci-dessus, remise à vide à chaque ouverture de la modale
+// (openStaffModal()) mais PAS à chaque re-rendu de la liste (ajout/modif/suppression) : Samir
+// cherche "Dubois", modifie la fiche, la liste doit rester filtrée sur "Dubois" après coup plutôt
+// que de revenir silencieusement à la liste complète.
+let staffModalSearchQuery = "";
+
 // Filtres du panneau Personnel : OR à l'intérieur d'une catégorie, ET entre les deux catégories.
 // grades: "senior" | "interne" | "cca". specialites: "digestif"|"uro"|"gyneco"|"thorax"|"socle".
 // Réutilisés tels quels par la vue Congés (colonnes filtrées par les mêmes puces, voir 6.x
@@ -4868,6 +4875,7 @@ function specialiteOptionsHtml() {
 }
 
 function openStaffModal() {
+  staffModalSearchQuery = "";
   document.getElementById("staffModal").classList.remove("hidden");
   renderStaffModal();
 }
@@ -4883,6 +4891,7 @@ function renderStaffModal() {
       <button type="button" id="btnOpenStaffForm" class="btn-primary">+ Ajouter un membre</button>
       <button type="button" id="btnOpenBulkImport" class="btn-primary btn-outline">Importer en masse</button>
     </div>
+    <input type="text" id="staffSearchInput" class="staff-search-input" placeholder="Rechercher un nom ou prénom...">
     <div id="staffFormContainer"></div>
     <div id="bulkImportContainer"></div>
     <div id="staffModalList"></div>
@@ -4895,17 +4904,33 @@ function renderStaffModal() {
     document.getElementById("staffFormContainer").innerHTML = "";
     renderBulkImportForm(document.getElementById("bulkImportContainer"));
   });
+  const searchInput = document.getElementById("staffSearchInput");
+  searchInput.value = staffModalSearchQuery;
+  searchInput.addEventListener("input", () => {
+    staffModalSearchQuery = searchInput.value;
+    renderStaffModalList(document.getElementById("staffModalList"));
+  });
   renderStaffModalList(document.getElementById("staffModalList"));
+}
+
+// Insensible aux accents/casse (normalizeToken(), déjà utilisée pour l'import ARI/en masse) --
+// cherche le texte tapé comme sous-chaîne dans "prénom nom", donc "dubois" ou "maeva" (sans tréma)
+// matchent aussi bien que "Dubois"/"Maëva".
+function personMatchesSearch(person, query) {
+  if (!query.trim()) return true;
+  const haystack = normalizeToken(`${person.prenom} ${person.nom}`);
+  return haystack.includes(normalizeToken(query));
 }
 
 function renderStaffModalList(container) {
   container.innerHTML = "";
-  const normal = state.staff.filter((p) => !p.horsSisu);
+  const searched = state.staff.filter((p) => personMatchesSearch(p, staffModalSearchQuery));
+  const normal = searched.filter((p) => !p.horsSisu);
   const seniors = normal.filter((p) => p.grade === "senior").sort(compareSpecialiteKeys);
   const internes = normal.filter((p) => p.grade !== "senior").sort(compareSpecialiteKeys);
   // RG-016 (23/07/2026) : à part, jamais mélangées aux séniors/internes -- pas forcément de grade,
   // triées alphabétiquement (voir regles-gestion.md).
-  const horsSisu = state.staff.filter((p) => p.horsSisu).sort(compareNomPrenom);
+  const horsSisu = searched.filter((p) => p.horsSisu).sort(compareNomPrenom);
 
   const addSection = (label, people) => {
     if (people.length === 0) return;
@@ -4963,6 +4988,11 @@ function renderStaffModalList(container) {
     const empty = document.createElement("div");
     empty.className = "staff-modal-empty";
     empty.textContent = "Aucun membre pour l'instant.";
+    container.appendChild(empty);
+  } else if (searched.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "staff-modal-empty";
+    empty.textContent = "Aucun membre ne correspond à cette recherche.";
     container.appendChild(empty);
   }
 }
