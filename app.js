@@ -3727,14 +3727,34 @@ function defaultStatsPeriod() {
   return { start: toISODateLocal(start), end: toISODateLocal(end) };
 }
 
+// Équivalent de effectiveAssignedIds(), mais pour une semaine ARBITRAIRE (pas forcément celle
+// affichée dans le planning principal) -- 29/07/2026, bug remonté par Samir : le mode "Période"
+// (voir computeVacationStatsForPeriod() juste en dessous) lisait state.assignments à sec, sans
+// jamais retomber sur la trame, alors que le mode "Semaine" (via effectiveAssignedIds()) le fait
+// pour la semaine actuelle/future -- résultat, une même période choisie dans les deux modes donnait
+// des totaux différents (ex. Off/Bureau posés seulement dans la trame de Dubois : visibles en mode
+// Semaine sur la semaine du 27/07, disparus en mode Période sur cette même semaine). Cause racine :
+// effectiveAssignedIds() teste `state.weekOffset >= 0` (la semaine AFFICHÉE dans le planning
+// principal), une notion sans rapport avec une semaine arbitraire parcourue ici -- le mode Période
+// itère potentiellement plusieurs semaines (passées ET futures) dans une même plage, donc un seul
+// flag global ne peut pas trancher correctement pour chacune. Cette variante compare directement la
+// weekKey de la semaine en question à celle de la semaine réelle actuelle (comparaison de chaînes
+// ISO, comme partout ailleurs dans le fichier) -- chaque semaine de la période reçoit donc sa propre
+// décision, correcte même quand la plage mélange passé et futur.
+function effectiveAssignedIdsForWeek(key, weekKeyPart) {
+  if (Object.prototype.hasOwnProperty.call(state.assignments, key)) {
+    return state.assignments[key];
+  }
+  if (weekKeyPart >= weekKey(getMonday(0))) {
+    return state.trame[trameKeyFromCellKey(key)] || [];
+  }
+  return [];
+}
+
 // Équivalent de computeVacationStatsForWeek() pour le mode "Période" (24/07/2026) -- même forme de
-// résultat (avec `astreinte` en plus directement dans l'entrée, voir plus bas), mais lit UNIQUEMENT
-// state.assignments directement, jamais effectiveAssignedIds()/la trame : le repli trame se base sur
-// state.weekOffset (la semaine affichée dans le PLANNING PRINCIPAL), une notion sans rapport avec une
-// période arbitraire choisie ici (qui peut mélanger semaines passées ET futures dans la même plage) --
-// y appliquer le repli trame serait incorrect ou incohérent selon les cas. Choix assumé : plus simple
-// et prévisible ("ce qui est écrit compte, un point c'est tout"), quitte à ne pas deviner une case
-// jamais matérialisée pour une semaine de la période.
+// résultat (avec `astreinte` en plus directement dans l'entrée, voir plus bas). Consulte désormais la
+// trame via effectiveAssignedIdsForWeek() ci-dessus (29/07/2026, voir son commentaire) exactement
+// comme le mode Semaine, pour que les deux modes restent cohérents sur une même période.
 function computeVacationStatsForPeriod(startIso, endIso) {
   const stats = new Map(); // staffId -> { total, badges, days: Set(iso), bureau, off, astreinte }
 
@@ -3749,7 +3769,7 @@ function computeVacationStatsForPeriod(startIso, endIso) {
         if (!isCreneauApplicable(activity.id, creneau.id)) return;
         const key = `${weekKeyPart}|${activity.id}|${dayName}|${creneau.id}`;
         if (state.fermetures[key]) return;
-        const assigned = state.assignments[key] || [];
+        const assigned = effectiveAssignedIdsForWeek(key, weekKeyPart);
         if (assigned.length === 0) return;
 
         if (creneau.id === "astreinte") {
