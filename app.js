@@ -1172,6 +1172,7 @@ function isoAddDays(iso, delta) {
 function addCongeDay(staffId, iso) {
   if (isOnCongeDay(staffId, iso)) return;
   state.conges.push({ id: generateId(), staffId, dateDebut: iso, dateFin: iso });
+  depostAssignmentsForDay(staffId, iso); // RG-014, voir depostAssignmentsForDay().
 }
 
 // Retire un jour de congé pour `staffId`. Doit gérer le cas où ce jour fait partie d'une plage
@@ -1251,13 +1252,17 @@ function isOnReposGardeDay(staffId, iso) {
 // cas limite déjà documenté pour isOnReposGardeDay()) : aucune case n'existe pour ce jour-là de toute
 // façon. Retirer une garde (toggleGardeDay(), branche suppression) ne restaure JAMAIS les affectations
 // dépostées -- même asymétrie que rouvrir une case fermée (RG-010), délibérée.
-function depostAssignmentsForReposGardeDay(staffId, gardeIso) {
-  const reposIso = isoAddDays(gardeIso, 1);
-  const reposDate = new Date(`${reposIso}T00:00:00`);
-  const dow = reposDate.getDay(); // 0 = dimanche ... 6 = samedi
+// Cœur partagé du dépostage RG-013/RG-014 (29/07/2026) : vide TOUTES les affectations de `staffId`
+// pour le jour ISO donné (matin+astreinte+après-midi, toutes activités), quelle que soit la semaine
+// à laquelle ce jour appartient. Ne fait rien si `iso` tombe hors grille (samedi/dimanche -- DAYS
+// s'arrête au vendredi). Réutilisé pour un jour de repos de garde (le lendemain d'une garde) ET pour
+// un jour de congé déclaré directement (voir depostAssignmentsForReposGardeDay()/addCongeDay()).
+function depostAssignmentsForDay(staffId, iso) {
+  const date = new Date(`${iso}T00:00:00`);
+  const dow = date.getDay(); // 0 = dimanche ... 6 = samedi
   if (dow < 1 || dow > 5) return;
   const dayName = DAYS[dow - 1];
-  const weekKeyPart = weekKey(mondayOfDate(reposDate));
+  const weekKeyPart = weekKey(mondayOfDate(date));
 
   state.activities.forEach((activity) => {
     CRENEAUX.forEach((creneau) => {
@@ -1268,6 +1273,10 @@ function depostAssignmentsForReposGardeDay(staffId, gardeIso) {
       if (idx !== -1) list.splice(idx, 1);
     });
   });
+}
+
+function depostAssignmentsForReposGardeDay(staffId, gardeIso) {
+  depostAssignmentsForDay(staffId, isoAddDays(gardeIso, 1));
 }
 
 function coveredReposGardeDaysForWeek(staffId, monday) {
@@ -2813,9 +2822,19 @@ function renderBulkFermeturePopoverContent(activity) {
 
 // Vue alternative : une ligne par personne (ordre alphabétique), on y voit où chacun est posté
 // et on peut lui assigner une modalité directement. Mêmes colonnes jour/créneau que l'autre vue.
+// RG-010 (29/07/2026, bug remonté par Samir : "sur le planning perso des gens, on les voit encore
+// postés" sur une vacation fermée) : contrairement à buildModaliteCell() côté vue Modalité (qui
+// masque entièrement le contenu d'une case fermée, croix noire à la place des pastilles quelle que
+// soit la donnée sous-jacente), cette fonction ne vérifiait jamais state.fermetures -- une case
+// fermée AVANT le correctif du 24/07/2026 qui matérialise state.assignments à vide (jamais touchée
+// depuis) continuait donc de "peupler" la vue Personnel via le repli trame, fantôme invisible côté
+// vue Modalité mais bien visible ici. Fix : une case fermée ne compte plus jamais comme une
+// affectation, quelle que soit la donnée en dessous (matérialisée ou pas) -- aligné sur le
+// comportement de buildModaliteCell().
 function activitiesForPersonSlot(personId, day, creneauId) {
   return state.activities.filter((activity) => {
     const key = cellKey(activity.id, day, creneauId);
+    if (state.fermetures[key]) return false;
     return effectiveAssignedIds(key).includes(personId);
   });
 }
@@ -4726,7 +4745,12 @@ function renderPersonPopoverContent(person, day, creneau) {
   const assignedActivities = activitiesForPersonSlot(person.id, day, creneau.id);
   const assignedIds = new Set(assignedActivities.map((a) => a.id));
   // RG-012 : le créneau "astreinte" ne propose que Scan U (voir isCreneauApplicable()).
-  const available = state.activities.filter((a) => !assignedIds.has(a.id) && isCreneauApplicable(a.id, creneau.id));
+  // RG-010 (29/07/2026) : une activité fermée ce créneau-là n'est plus proposée non plus -- fermait
+  // déjà le "contournement par la vue Personnel" documenté depuis le 21/07/2026 (assignable ici alors
+  // qu'impossible en vue Modalité).
+  const available = state.activities.filter((a) =>
+    !assignedIds.has(a.id) && isCreneauApplicable(a.id, creneau.id) && !state.fermetures[cellKey(a.id, day, creneau.id)]
+  );
 
   pop.innerHTML = `
     <span class="close-btn" id="popClose">×</span>
@@ -5673,6 +5697,9 @@ function applyAriImportItems(items) {
   items.forEach((item) => {
     if (item.kind === "conge") {
       state.conges.push({ id: generateId(), staffId: item.person.id, dateDebut: item.dateDebut, dateFin: item.dateFin });
+      // RG-014 : une plage ARI peut couvrir plusieurs jours ouvrés -- dépostage de chacun d'eux
+      // (isoWeekdaysInRange() donne directement les jours ouvrés de la plage, week-ends exclus).
+      isoWeekdaysInRange(item.dateDebut, item.dateFin).forEach(({ iso }) => depostAssignmentsForDay(item.person.id, iso));
     } else {
       state.gardes.push({ id: generateId(), staffId: item.person.id, date: item.gardeDate });
       depostAssignmentsForReposGardeDay(item.person.id, item.gardeDate); // RG-013/014, voir sa déclaration.
