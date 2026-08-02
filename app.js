@@ -1564,7 +1564,7 @@ function validateAbsences() {
             // Off ne compte pas comme un conflit avec une absence (congé/repos de garde) : les deux
             // disent la même chose ("cette personne ne travaille pas"), jamais une contradiction --
             // demande de Samir le 29/07/2026 ("si je suis en congés et qu'on m'a mis un Off, c'est
-            // pas grave"). Même principe que le `activity.id !== "off"` déjà posé sur RG-018 plus bas.
+            // pas grave").
             violations.push({
               rg: "RG-014",
               message: `${activity.nom}, ${day} ${creneau.label} : ${person.prenom} ${person.nom} est absent(e) ce jour-là.`,
@@ -1576,15 +1576,10 @@ function validateAbsences() {
               rg: "RG-020",
               message: `${activity.nom}, ${day} ${creneau.label} : ${person.prenom} ${person.nom} est à Temps Partiel ce créneau-là.`,
             });
-          } else if (activity.id !== "off" && isPersonOffOnSlot(staffId, day, creneau.id)) {
-            // RG-018 : Off + une autre activité peuvent coexister sur ce créneau (ni le popover
-            // d'ajout ni le glisser-déposer ne bloquent, voir renderPersonnelRows()/handleModaliteDrop()) --
-            // ce message est le seul signal de la contradiction.
-            violations.push({
-              rg: "RG-018",
-              message: `${activity.nom}, ${day} ${creneau.label} : ${person.prenom} ${person.nom} est en Off ce créneau-là.`,
-            });
           }
+          // RG-018 (conflit Off) fusionnée dans RG-021 le 29/07/2026 -- voir validateActivityExclusivity(),
+          // qui couvre désormais Off comme n'importe quelle autre activité. Ne plus réintroduire de
+          // branche dédiée ici, ça produirait un double signalement du même conflit.
         });
       });
     });
@@ -1593,33 +1588,31 @@ function validateAbsences() {
   return { violations, recommendations };
 }
 
-// RG-019 (24/07/2026, demande de Samir) : Scan U/Echo U exclusifs -- voir hasUrgenceConflict() pour
-// le détail de la règle. Fonction à PART (pas ajoutée à validateAbsences(), pourtant thématiquement
-// proche) plutôt que d'itérer TOUTES les activités × jours × créneaux comme validateAbsences() : un
-// conflit RG-019 implique toujours au moins une activité d'urgence, donc ne parcourir QUE les cases
-// Scan U/Echo U suffit à trouver tous les cas, et surtout évite de compter le même conflit deux fois
-// (une fois depuis la case Scan U, une fois depuis l'autre case) -- `reported` déduplique par
-// personne pour chaque (jour, créneau).
-function validateUrgenceExclusivity() {
+// RG-021 (29/07/2026, généralise RG-018/RG-019) : voir hasActivityExclusivityConflict() pour le
+// détail de la règle. Fonction à PART (pas ajoutée à validateAbsences(), pourtant thématiquement
+// proche), mais parcourt désormais TOUTES les activités (pas seulement Scan U/Echo U comme
+// l'ancienne RG-019) puisque n'importe quelle paire peut désormais entrer en conflit -- `reported`
+// déduplique par personne pour chaque (jour, créneau), pour ne compter le même conflit qu'une seule
+// fois même s'il est retrouvé depuis plusieurs des activités impliquées.
+function validateActivityExclusivity() {
   const violations = [];
 
   DAYS.forEach((day) => {
     CRENEAUX.forEach((creneau) => {
-      if (creneau.id === "astreinte") return; // hors-sujet, voir hasUrgenceConflict().
+      if (creneau.id === "astreinte") return; // hors-sujet, voir hasActivityExclusivityConflict().
       const reported = new Set();
       state.activities.forEach((activity) => {
-        if (!isUrgenceActivity(activity.id)) return;
         const key = cellKey(activity.id, day, creneau.id);
         if (state.fermetures[key]) return;
         effectiveAssignedIds(key).forEach((staffId) => {
           if (reported.has(staffId)) return;
           const person = staffById(staffId);
           if (!person) return;
-          if (hasUrgenceConflict(staffId, day, creneau.id, activity.id)) {
+          if (hasActivityExclusivityConflict(staffId, day, creneau.id, activity.id)) {
             reported.add(staffId);
             violations.push({
-              rg: "RG-019",
-              message: `${day} ${creneau.label} : ${person.prenom} ${person.nom} est posté(e) sur plusieurs activités à la fois (Scan U/Echo U exclusif).`,
+              rg: "RG-021",
+              message: `${day} ${creneau.label} : ${person.prenom} ${person.nom} est posté(e) sur plusieurs activités à la fois.`,
             });
           }
         });
@@ -1655,7 +1648,7 @@ function validateGardes() {
 
 // Point d'entrée unique du moteur : ajouter ici l'appel de toute nouvelle fonction validateXxx().
 function runValidation() {
-  const results = [validateScanU(), validateScanA(), validateAbsences(), validateGardes(), validateUrgenceExclusivity()];
+  const results = [validateScanU(), validateScanA(), validateAbsences(), validateGardes(), validateActivityExclusivity()];
   return {
     violations: results.flatMap((r) => r.violations),
     recommendations: results.flatMap((r) => r.recommendations),
@@ -1743,10 +1736,9 @@ function buildAssignedChip(person, key, day) {
   // RG-014 (24/07/2026, retour de Samir) : le contour rouge posé sur toute la case
   // (.cell-absence-violation) ne disait pas QUI, parmi plusieurs personnes assignées, est la
   // personne absente en cause -- entoure désormais aussi la pastille de la personne concernée.
-  // RG-018 (même jour) : même traitement pour un conflit Off (créneau précis, pas jour entier) --
-  // `activityId` (extrait de `key`) évite de flaguer l'activité "off" elle-même contre son propre
-  // statut. RG-019 (même jour) : idem pour un conflit d'exclusivité Scan U/Echo U. RG-020 (25/07/2026) :
-  // idem pour un conflit Temps Partiel.
+  // RG-020 (25/07/2026) : idem pour un conflit Temps Partiel. RG-021 (29/07/2026, généralise
+  // RG-018/RG-019) : idem pour un double-positionnement sur une autre activité ce même créneau --
+  // Off n'est plus un cas particulier, voir hasActivityExclusivityConflict().
   const [activityId, , creneauId] = trameKeyFromCellKey(key).split("|");
   if (activityId !== "off" && isPersonAbsentOnDay(person.id, day)) {
     chip.classList.add("chip-absence-violation");
@@ -1754,12 +1746,9 @@ function buildAssignedChip(person, key, day) {
   } else if (isPersonTPOnSlot(person.id, day, creneauId)) {
     chip.classList.add("chip-absence-violation");
     chip.title = `${person.prenom} ${person.nom} est à Temps Partiel ce créneau-là`;
-  } else if (activityId !== "off" && isPersonOffOnSlot(person.id, day, creneauId)) {
+  } else if (hasActivityExclusivityConflict(person.id, day, creneauId, activityId)) {
     chip.classList.add("chip-absence-violation");
-    chip.title = `${person.prenom} ${person.nom} est en Off ce créneau-là`;
-  } else if (hasUrgenceConflict(person.id, day, creneauId, activityId)) {
-    chip.classList.add("chip-absence-violation");
-    chip.title = `${person.prenom} ${person.nom} est déjà posté(e) ailleurs ce créneau-là (Scan U/Echo U exclusif)`;
+    chip.title = `${person.prenom} ${person.nom} est déjà posté(e) ailleurs ce créneau-là`;
   }
   chip.textContent = `${person.prenom[0]}. ${person.nom}`;
   chip.draggable = true;
@@ -2163,33 +2152,28 @@ function isPersonTPOnSlot(staffId, day, creneauId) {
   return !!state.tempsPartiel[tpKey(staffId, day, creneauId)];
 }
 
-function isUrgenceActivity(activityId) {
-  return activityId === "scan-u" || activityId === "echo-u";
-}
-
-// RG-019 (24/07/2026, demande de Samir) : Scan U et Echo U ("les activités d'urgence",
-// `activity.urgence`) sont EXCLUSIVES -- une personne postée sur l'une des deux pour un jour+créneau
-// donné ne peut être postée sur AUCUNE autre activité pour ce même jour+créneau (y compris l'autre
-// activité d'urgence), et réciproquement une personne déjà postée ailleurs ne peut pas être ajoutée
-// sur Scan U/Echo U ce créneau-là. Symétrique : `activityId` peut être l'activité d'urgence qu'on
-// essaie de poser (on vérifie alors si la personne est déjà ailleurs) ou une activité normale (on
-// vérifie alors si elle est déjà sur Scan U/Echo U).
-// Ne concerne QUE Matin/Après-midi -- l'astreinte (créneau à part, propre à Scan U, RG-012) est
-// explicitement hors-sujet ("l'astreinte c'est autre chose", confirmé par Samir le 24/07/2026).
-// Contrairement à RG-014/018, ne bloque JAMAIS deux activités non-urgence entre elles (ex. Scan B +
-// ECN-1 le même créneau restent autorisés) -- RG-006 (double-positionnement) reste "à préciser" pour
-// ce cas général, cette RG ne répond qu'au cas précis de Scan U/Echo U.
-function hasUrgenceConflict(staffId, day, creneauId, activityId) {
+// RG-021 (29/07/2026, demande de Samir -- généralise RG-018/RG-019) : deux activités DIFFÉRENTES
+// sont désormais toujours exclusives sur un même jour+créneau, quelles qu'elles soient -- une
+// personne postée au Scan B ne peut plus être postée aussi en Mammo le même créneau, exactement
+// comme Scan U/Echo U l'étaient déjà entre elles depuis le 24/07/2026. Off n'est plus un cas
+// particulier : c'est juste une activité comme les autres pour ce calcul (avant le 29/07/2026, RG-018
+// et RG-019 étaient deux implémentations séparées de la même idée, l'une bornée à Off, l'autre bornée
+// à Scan U/Echo U -- fusionnées ici en une seule fonction, RG-006 "double-positionnement" n'a donc
+// plus de cas non couvert). Symétrique : `activityId` peut être l'activité qu'on essaie de poser (on
+// vérifie alors si la personne est déjà ailleurs) ou une activité déjà en place (on vérifie alors si
+// elle est postée sur une autre activité).
+// Ne concerne QUE Matin/Après-midi -- l'astreinte (créneau à part, propre à Scan U, RG-012) reste
+// hors-sujet ("l'astreinte c'est autre chose", confirmé par Samir le 24/07/2026) : elle ne peut de
+// toute façon accueillir que Scan U (isCreneauApplicable()), aucun double-positionnement possible.
+function hasActivityExclusivityConflict(staffId, day, creneauId, activityId) {
   if (creneauId === "astreinte") return false;
-  const targetIsUrgence = isUrgenceActivity(activityId);
   return state.activities.some((activity) => {
     if (activity.id === activityId) return false;
-    if (!targetIsUrgence && !isUrgenceActivity(activity.id)) return false;
     const key = cellKey(activity.id, day, creneauId);
     // RG-010 : une case fermée n'a plus de composition attendue, jamais un conflit -- notamment pour
     // une vieille fermeture antérieure au 24/07/2026 qui n'a jamais matérialisé state.assignments à
     // vide (bug corrigé depuis pour toute nouvelle fermeture, voir setDayClosedForActivity()) : sans
-    // ce garde-fou, le repli trame de la case fermée continue de "compter" indéfiniment pour RG-019,
+    // ce garde-fou, le repli trame de la case fermée continue de "compter" indéfiniment pour RG-021,
     // invisible à l'écran puisque la case n'affiche qu'une croix.
     if (state.fermetures[key]) return false;
     return effectiveAssignedIds(key).includes(staffId);
@@ -2302,14 +2286,20 @@ function buildModaliteCell(activity, day, creneau) {
       addCellGroup(seniors);
       addCellGroup(internes);
 
-      // RG-014/RG-018 : une personne absente (ou en Off ce créneau, sur une AUTRE activité que
-      // "off") peut se retrouver assignée malgré tout -- ni le glisser-déposer ni le popover
-      // d'ajout ne bloquent plus rien (25/07/2026, retour de Samir : "je ne veux plus de blocage
-      // quand je positionne quelqu'un"), donc ce contour rouge est désormais le SEUL signal de la
-      // contradiction, en plus de la violation dans la zone du moteur (validateAbsences()).
+      // RG-014/RG-021 : une personne absente, ou postée sur une autre activité ce même créneau
+      // (double-positionnement, RG-021 généralise l'ancienne RG-018/RG-019 depuis le 29/07/2026),
+      // peut se retrouver assignée malgré tout -- ni le glisser-déposer ni le popover d'ajout ne
+      // bloquent plus rien (25/07/2026, retour de Samir : "je ne veux plus de blocage quand je
+      // positionne quelqu'un"), donc ce contour rouge est désormais le SEUL signal de la
+      // contradiction, en plus de la violation dans la zone du moteur (validateAbsences()/
+      // validateActivityExclusivity()). L'absence reste ignorée sur la case Off elle-même (RG-014,
+      // "être en congés et avoir un Off, c'est pas grave") ; le double-positionnement, lui,
+      // s'applique désormais aussi à Off comme à n'importe quelle autre activité.
       if (
-        activity.id !== "off" &&
-        people.some((p) => isPersonAbsentOnDay(p.id, day) || isPersonOffOnSlot(p.id, day, creneau.id))
+        people.some((p) =>
+          (activity.id !== "off" && isPersonAbsentOnDay(p.id, day)) ||
+          hasActivityExclusivityConflict(p.id, day, creneau.id, activity.id)
+        )
       ) {
         td.classList.add("cell-absence-violation");
       }
@@ -2918,15 +2908,15 @@ function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
   // préfixe via trameKeyFromCellKey() pour retomber sur le format de vacationSpecKey().
   const [, tagDay, tagCreneauId] = trameKeyFromCellKey(key).split("|");
   const vacSpec = state.vacationSpecialites[trameKeyFromCellKey(key)];
-  // RG-014/RG-018/RG-019/RG-020 : même logique de contour rouge que buildAssignedChip() côté vue
+  // RG-014/RG-020/RG-021 : même logique de contour rouge que buildAssignedChip() côté vue
   // Modalité -- peut désormais arriver aussi bien via le popover que via le glisser-déposer (plus
   // aucun des deux n'est bloqué depuis le 25/07/2026, voir handleModaliteDrop()) : ce contour rouge
-  // est le seul signal de la contradiction, pas un filet de sécurité pour un cas résiduel.
+  // est le seul signal de la contradiction, pas un filet de sécurité pour un cas résiduel. RG-021
+  // (29/07/2026) généralise l'ancienne RG-018/RG-019 -- Off n'est plus un cas particulier.
   const isAbsenceViolation = activity.id !== "off" && isPersonAbsentOnDay(staffId, tagDay);
   const isTPViolation = !isAbsenceViolation && isPersonTPOnSlot(staffId, tagDay, tagCreneauId);
-  const isOffViolation = !isAbsenceViolation && !isTPViolation && activity.id !== "off" && isPersonOffOnSlot(staffId, tagDay, tagCreneauId);
-  const isUrgenceViolation = !isAbsenceViolation && !isTPViolation && !isOffViolation && hasUrgenceConflict(staffId, tagDay, tagCreneauId, activity.id);
-  const isViolation = isAbsenceViolation || isTPViolation || isOffViolation || isUrgenceViolation;
+  const isExclusivityViolation = !isAbsenceViolation && !isTPViolation && hasActivityExclusivityConflict(staffId, tagDay, tagCreneauId, activity.id);
+  const isViolation = isAbsenceViolation || isTPViolation || isExclusivityViolation;
   tag.className = "chip modalite-tag" +
     (activity.urgence ? " urgence-tag" : "") +
     (vacSpec ? ` spec-${vacSpec}` : "") +
@@ -2938,9 +2928,7 @@ function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
         ? `${person.prenom} ${person.nom} est absent(e) ce jour-là`
         : isTPViolation
           ? `${person.prenom} ${person.nom} est à Temps Partiel ce créneau-là`
-          : isOffViolation
-            ? `${person.prenom} ${person.nom} est en Off ce créneau-là`
-            : `${person.prenom} ${person.nom} est déjà posté(e) ailleurs ce créneau-là (Scan U/Echo U exclusif)`;
+          : `${person.prenom} ${person.nom} est déjà posté(e) ailleurs ce créneau-là`;
     }
   }
   tag.textContent = activity.nom;
