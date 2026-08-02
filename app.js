@@ -1207,8 +1207,12 @@ function isOnGardeDay(staffId, iso) {
 
 function toggleGardeDay(staffId, iso) {
   const idx = state.gardes.findIndex((g) => g.staffId === staffId && g.date === iso);
-  if (idx >= 0) state.gardes.splice(idx, 1);
-  else state.gardes.push({ id: generateId(), staffId, date: iso });
+  if (idx >= 0) {
+    state.gardes.splice(idx, 1);
+  } else {
+    state.gardes.push({ id: generateId(), staffId, date: iso });
+    depostAssignmentsForReposGardeDay(staffId, iso); // RG-013/014, voir sa déclaration.
+  }
 }
 
 // Personnes de garde un jour donné (iso), triées comme le reste de l'appli (compareStaffOrder) --
@@ -1232,6 +1236,38 @@ function gardeStaffForDate(iso) {
 // s'arrête au vendredi) -- la donnée reste correcte, seulement rien ne l'affiche ce cas-là.
 function isOnReposGardeDay(staffId, iso) {
   return isOnGardeDay(staffId, isoAddDays(iso, -1));
+}
+
+// RG-013/014 (29/07/2026, demande de Samir : "si je t'annonce une garde dans les absences, tu dois
+// faire sauter toutes les affectations sur le repos de garde qui en découle") : déclarer une garde
+// (popover à la main OU import ARI, les deux passent par ici) déposte immédiatement la personne de
+// TOUTES ses affectations sur le jour de repos de garde qui en découle (lendemain, RG-013) --
+// granularité JOURNÉE ENTIÈRE (matin+astreinte+après-midi, toutes activités), comme RG-014 partout
+// ailleurs. Même principe qu'une fermeture de vacation (RG-010) : un dépostage PONCTUEL au moment de
+// l'action, jamais un blocage permanent -- si Samir la réassigne ensuite à la main sur ce même jour,
+// rien ne l'empêche, seule la violation RG-014 (contour rouge) signale la contradiction comme pour
+// n'importe quelle absence ajoutée après coup ("si je rajoute après à la main, tu les affiches comme
+// d'hab en conflit"). Ne fait rien si le repos tombe un jour hors grille (samedi -- garde le vendredi,
+// cas limite déjà documenté pour isOnReposGardeDay()) : aucune case n'existe pour ce jour-là de toute
+// façon. Retirer une garde (toggleGardeDay(), branche suppression) ne restaure JAMAIS les affectations
+// dépostées -- même asymétrie que rouvrir une case fermée (RG-010), délibérée.
+function depostAssignmentsForReposGardeDay(staffId, gardeIso) {
+  const reposIso = isoAddDays(gardeIso, 1);
+  const reposDate = new Date(`${reposIso}T00:00:00`);
+  const dow = reposDate.getDay(); // 0 = dimanche ... 6 = samedi
+  if (dow < 1 || dow > 5) return;
+  const dayName = DAYS[dow - 1];
+  const weekKeyPart = weekKey(mondayOfDate(reposDate));
+
+  state.activities.forEach((activity) => {
+    CRENEAUX.forEach((creneau) => {
+      if (!isCreneauApplicable(activity.id, creneau.id)) return;
+      const key = `${weekKeyPart}|${activity.id}|${dayName}|${creneau.id}`;
+      const list = ensureMaterializedAssignmentsForWeek(key, weekKeyPart);
+      const idx = list.indexOf(staffId);
+      if (idx !== -1) list.splice(idx, 1);
+    });
+  });
 }
 
 function coveredReposGardeDaysForWeek(staffId, monday) {
@@ -3756,6 +3792,17 @@ function effectiveAssignedIdsForWeek(key, weekKeyPart) {
   return [];
 }
 
+// Équivalent de ensureMaterializedAssignments(), mais pour une semaine ARBITRAIRE -- même besoin
+// que effectiveAssignedIdsForWeek() juste au-dessus (29/07/2026, voir depostAssignmentsForReposGardeDay()
+// plus bas) : ensureMaterializedAssignments() d'origine dépend de state.weekOffset (la semaine
+// affichée), donc incorrecte si on matérialise une case pour une semaine différente de celle-là.
+function ensureMaterializedAssignmentsForWeek(key, weekKeyPart) {
+  if (!Object.prototype.hasOwnProperty.call(state.assignments, key)) {
+    state.assignments[key] = effectiveAssignedIdsForWeek(key, weekKeyPart).slice();
+  }
+  return state.assignments[key];
+}
+
 // Équivalent de computeVacationStatsForWeek() pour le mode "Période" (24/07/2026) -- même forme de
 // résultat (avec `astreinte` en plus directement dans l'entrée, voir plus bas). Consulte désormais la
 // trame via effectiveAssignedIdsForWeek() ci-dessus (29/07/2026, voir son commentaire) exactement
@@ -5628,6 +5675,7 @@ function applyAriImportItems(items) {
       state.conges.push({ id: generateId(), staffId: item.person.id, dateDebut: item.dateDebut, dateFin: item.dateFin });
     } else {
       state.gardes.push({ id: generateId(), staffId: item.person.id, date: item.gardeDate });
+      depostAssignmentsForReposGardeDay(item.person.id, item.gardeDate); // RG-013/014, voir sa déclaration.
     }
   });
   saveState();
