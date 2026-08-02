@@ -1471,10 +1471,17 @@ tr.group-end td {
 }
 /* Surbrillance des en-têtes (ligne semaine + colonne personne) au survol d'une case, 22/07/2026 --
    voir personHeaderCells dans renderCongesView(). outline (pas background) sur le th personne car
-   son fond est déjà coloré par spécialité en style inline (personCellStyle()). */
+   son fond est déjà coloré par spécialité en style inline (personCellStyle()).
+   Plus de font-weight ici (29/07/2026, bug remonté par Samir : "les colonnes bougent légèrement
+   quand je repasse sur un nom en haut du tableau") : passer .conges-week-label en gras au survol
+   changeait sa largeur naturelle (colonne non figée en largeur), ce qui décalait toutes les colonnes
+   suivantes de quelques pixels -- confirmé en mesurant en vrai (getBoundingClientRect() avant/pendant/
+   après survol : 90.1px -> 94.75px -> 90.1px, et une colonne personne bien plus loin dans le tableau
+   se déplaçait du même delta). background/outline seuls ne changent jamais la taille d'une boîte
+   (contrairement à font-weight, border ou padding), donc aucun des deux styles de surbrillance de
+   cette vue ne doit plus jamais toucher à autre chose qu'eux. */
 .conges-week-label.conges-highlight {
   background: #e0e7ff;
-  font-weight: 700;
 }
 .conges-person-header.conges-highlight {
   outline: 3px solid #4338ca;
