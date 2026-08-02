@@ -338,10 +338,16 @@ let statsRangeEnd = null;
 let staffFocusFilter = null;
 
 // Filtres du panneau Personnel : OR à l'intérieur d'une catégorie, ET entre les deux catégories.
-// grades: "senior" | "interne". specialites: "digestif"|"uro"|"gyneco"|"thorax"|"socle".
+// grades: "senior" | "interne" | "cca". specialites: "digestif"|"uro"|"gyneco"|"thorax"|"socle".
 // Réutilisés tels quels par la vue Congés (colonnes filtrées par les mêmes puces, voir 6.x
 // CLAUDE.md) -- volontairement le même state partagé, pas une copie, pour rester cohérent
 // entre les deux vues sans dupliquer la logique de filtre.
+// "cca" (29/07/2026) : pas un grade à part entière (aucun person.grade ne vaut jamais "cca"), juste
+// une 3e VALEUR dans le même Set que "senior"/"interne" -- CCA est un sous-ensemble de Sénior
+// (person.cca === true implique toujours person.grade === "senior"). Grâce au OR déjà en place dans
+// cette catégorie, cliquer "Sénior" seul montre tous les séniors CCA compris (ils ont grade==="senior",
+// donc matchent déjà) ; cliquer "CCA" seul isole les CCA ; cocher les deux ne change rien de plus que
+// "Sénior" seul (CCA ⊆ Sénior) -- exactement le comportement demandé par Samir, sans code spécial.
 // showHorsSisu (23/07/2026) : bascule à part, PAS un 3e Set -- sémantique différente des deux
 // autres catégories (qui RESTREIGNENT la liste quand actives). Ici, par défaut les personnes
 // "Hors Sisu" sont invisibles PARTOUT où personMatchesFilters() fait la loi ; cocher la puce les
@@ -354,7 +360,10 @@ const staffFilters = {
 
 function personMatchesFilters(person) {
   if (person.horsSisu && !staffFilters.showHorsSisu) return false;
-  if (staffFilters.grades.size > 0 && !staffFilters.grades.has(person.grade)) return false;
+  if (staffFilters.grades.size > 0) {
+    const matchesGrade = [...staffFilters.grades].some((g) => (g === "cca" ? !!person.cca : person.grade === g));
+    if (!matchesGrade) return false;
+  }
   if (staffFilters.specialites.size > 0) {
     const specs = person.specialites || [];
     const matchesAny = [...staffFilters.specialites].some((token) => {
@@ -1991,6 +2000,7 @@ function renderLegend() {
   const neutral = "background:#f1f5f9;border-color:#94a3b8;color:#1f2937;";
   addChip("Sénior", "grades", "senior", neutral + "border-radius:4px;font-weight:700;");
   addChip("Interne", "grades", "interne", neutral);
+  addChip("CCA", "grades", "cca", neutral);
 
   // Saut de ligne forcé : les spécialités passent sous Sénior/Interne, sans réduire leur propre largeur.
   const lineBreak = document.createElement("span");
@@ -5006,6 +5016,10 @@ function renderStaffAddForm(container, existingPerson = null) {
           <option value="interne">Interne</option>
         </select>
       </div>
+      <div class="form-row form-row-checkbox" id="formCCARow">
+        <label for="formCCA"><input type="checkbox" id="formCCA"> CCA</label>
+        <span class="form-hint">Un type de sénior -- filtrable à part dans le panneau Personnel.</span>
+      </div>
       <div class="form-row" id="formInterneTypeRow">
         <label for="formInterneType">Statut</label>
         <select id="formInterneType">
@@ -5038,11 +5052,13 @@ function renderStaffAddForm(container, existingPerson = null) {
 
   const horsSisuCheckbox = document.getElementById("formHorsSisu");
   const gradeSelect = document.getElementById("formGrade");
+  const ccaCheckbox = document.getElementById("formCCA");
   const typeSelect = document.getElementById("formInterneType");
   const spec1Select = document.getElementById("formSpec1");
   const spec2Select = document.getElementById("formSpec2");
 
   horsSisuCheckbox.checked = initialHorsSisu;
+  ccaCheckbox.checked = existingPerson ? !!existingPerson.cca : false;
 
   const competenceCheckboxes = [...container.querySelectorAll(".formCompetence")];
   if (existingPerson) {
@@ -5074,6 +5090,12 @@ function renderStaffAddForm(container, existingPerson = null) {
   const updateVisibility = () => {
     const horsSisu = horsSisuCheckbox.checked;
     document.getElementById("formGradeRow").style.display = "flex"; // toujours visible (juste plus obligatoire si Hors Sisu)
+
+    // CCA n'a de sens que pour un sénior (grade === "senior") -- masqué et décoché sinon, pour ne
+    // jamais enregistrer un CCA fantôme sur un interne ou une personne sans grade renseigné.
+    const isSenior = gradeSelect.value === "senior";
+    document.getElementById("formCCARow").style.display = isSenior ? "flex" : "none";
+    if (!isSenior) ccaCheckbox.checked = false;
 
     if (horsSisu) {
       // Pas de notion de "socle"/"spécialisé" pour Hors Sisu -- les 2 spécialités sont montrées
@@ -5167,6 +5189,10 @@ function renderStaffAddForm(container, existingPerson = null) {
 
     // Compétences : indépendantes du grade/de la spécialité, aucune contrainte de nombre.
     const competences = competenceCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
+    // CCA : un type de sénior -- jamais vrai si le grade final n'est pas "senior" (la case est de
+    // toute façon masquée/décochée par updateVisibility() dans ce cas, ce garde-fou est redondant
+    // mais évite tout risque si le DOM était dans un état inattendu).
+    const cca = grade === "senior" && ccaCheckbox.checked;
 
     if (existingPerson) {
       existingPerson.prenom = prenom;
@@ -5175,8 +5201,9 @@ function renderStaffAddForm(container, existingPerson = null) {
       existingPerson.grade = grade;
       existingPerson.specialites = specialites;
       existingPerson.competences = competences;
+      existingPerson.cca = cca;
     } else {
-      state.staff.push({ id: generateStaffId(), prenom, nom, horsSisu, grade, specialites, competences });
+      state.staff.push({ id: generateStaffId(), prenom, nom, horsSisu, grade, specialites, competences, cca });
     }
     saveState();
     render();
