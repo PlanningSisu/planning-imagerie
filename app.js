@@ -3825,11 +3825,24 @@ function computeVacationStatsForPeriod(startIso, endIso) {
   return stats;
 }
 
-// Regroupement par disponibilité en mode "Période" (24/07/2026) -- volontairement plus simple que
-// statsAvailabilityTier() (mode Semaine) : pas de bloc "congé toute la période" (isFullyOnLeaveThisWeek
-// est spécifique à une semaine de 5 jours, ne se généralise pas proprement à une plage arbitraire sans
-// plus de précisions de Samir) -- seulement "a des données" (badges, Bureau ou Off) vs "rien du tout".
-function statsPeriodTier(person, stats) {
+// Équivalent de isFullyOnLeaveThisWeek(), mais pour une plage de jours ouvrés ARBITRAIRE (mode
+// "Période", 29/07/2026, bug remonté par Samir : "les Bureau/Off/Congés sont gérés différemment
+// entre Semaine et Période sur les mêmes dates"). `businessDaysIso` = tableau de dates ISO déjà
+// calculé une fois par rendu (voir periodDaysIso dans renderStatsView()), pour ne pas recalculer
+// isoWeekdaysInRange() à chaque personne/comparaison de tri. Une plage vide n'est jamais "en congé".
+function isFullyOnLeaveForRange(staffId, businessDaysIso) {
+  return businessDaysIso.length > 0 && businessDaysIso.every((iso) => isOnCongeDay(staffId, iso) || isOnReposGardeDay(staffId, iso));
+}
+
+// Regroupement par disponibilité en mode "Période" (24/07/2026, revu le 29/07/2026) -- même principe
+// que statsAvailabilityTier() (mode Semaine) : un congé couvrant TOUTE la période choisie prime sur
+// n'importe quel décompte, même logique de généralisation qu'isFullyOnLeaveForRange() ci-dessus.
+// **Avant le 29/07/2026, ce bloc n'existait pas du tout** ("pas de bloc congé toute la période...
+// ne se généralise pas proprement à une plage arbitraire sans plus de précisions de Samir") -- une
+// personne en congé sur toute une période se retrouvait mélangée avec les personnes réellement
+// libres (bloc 1), ce qui a motivé le retour de Samir.
+function statsPeriodTier(person, stats, periodDaysIso) {
+  if (isFullyOnLeaveForRange(person.id, periodDaysIso)) return 2;
   const entry = stats.get(person.id);
   const hasData = entry && (entry.days.size > 0 || entry.bureau > 0 || entry.off > 0);
   return hasData ? 0 : 1;
@@ -3861,13 +3874,17 @@ function renderStatsView() {
   // En mode Période, l'astreinte est directement dans `stats` (entry.astreinte), voir
   // computeVacationStatsForPeriod().
   const pastAstreintes = statsMode === "week" ? computePastAstreinteCounts(monday) : null;
+  // Jours ouvrés de la période choisie, calculés une seule fois par rendu (29/07/2026) -- réutilisé
+  // par statsPeriodTier() ci-dessous ET par la colonne Vacations plus bas (isFullyOnLeaveForRange()),
+  // pour ne jamais recalculer isoWeekdaysInRange() par personne.
+  const periodDaysIso = statsMode === "period" ? isoWeekdaysInRange(statsRangeStart, statsRangeEnd).map((d) => d.iso) : null;
 
   // Tri à deux niveaux : d'abord le bloc de disponibilité (statsAvailabilityTier() en mode Semaine,
   // statsPeriodTier() en mode Période, plus simple -- voir sa déclaration), puis le tri habituel
   // (grade/spécialité/alphabétique) à l'intérieur d'un bloc. L'astreinte n'entre JAMAIS dans ce tri.
   const people = state.staff.filter(personMatchesFilters).sort((a, b) => {
     const tierDiff = statsMode === "period"
-      ? statsPeriodTier(a, stats) - statsPeriodTier(b, stats)
+      ? statsPeriodTier(a, stats, periodDaysIso) - statsPeriodTier(b, stats, periodDaysIso)
       : statsAvailabilityTier(a, stats) - statsAvailabilityTier(b, stats);
     if (tierDiff !== 0) return tierDiff;
     return compareStaffOrder(a, b);
@@ -3967,10 +3984,19 @@ function renderStatsView() {
           // Ligne gardée visible plutôt que masquée (contrairement au panneau Personnel, voir
           // isFullyOnLeaveThisWeek()) : un total à 0 sans explication laisserait croire à un oubli
           // plutôt qu'à une absence -- voir aussi buildAbsenceBar() pour la même logique ailleurs.
-          // Spécifique au mode Semaine -- voir statsPeriodTier()/le mode Période pour la raison.
           const absence = document.createElement("span");
           absence.className = "stats-absence-label";
           absence.textContent = "Congés toute la semaine";
+          td.appendChild(absence);
+        } else if (statsMode === "period" && isFullyOnLeaveForRange(person.id, periodDaysIso)) {
+          // Équivalent période (29/07/2026) -- voir isFullyOnLeaveForRange()/statsPeriodTier() : avant
+          // ce fix, une personne en congé sur toute la période choisie tombait dans la branche `!entry`
+          // juste en dessous (texte générique "Aucune vacation..."), indiscernable d'une personne
+          // simplement libre -- désormais le même message explicite qu'en mode Semaine, adapté au mot
+          // "période".
+          const absence = document.createElement("span");
+          absence.className = "stats-absence-label";
+          absence.textContent = "Congés toute la période";
           td.appendChild(absence);
         } else if (!entry) {
           const empty = document.createElement("span");
