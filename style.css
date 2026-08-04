@@ -274,6 +274,38 @@ body {
 .file-sync-status.file-sync-invalid-token { background: #78350f; color: #fde68a; }
 .file-sync-status.file-sync-conflict { background: #78350f; color: #fde68a; }
 
+/* Verrouillage des semaines (29/07/2026) : icône cadenas à côté du statut de synchro -- reflète la
+   semaine actuellement affichée (renderWeekLockButton()). Fond neutre déverrouillée, rouge sourd
+   verrouillée (cohérent avec le rouge "action destructive/bloquante" déjà utilisé pour RG-010,
+   voir .fermeture-tag/.closed-mark) -- pour que l'état verrouillé saute aux yeux sans avoir à lire. */
+.week-lock-btn {
+  display: inline-block;
+  font-size: 13px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  margin-left: 4px;
+  border: 1px solid var(--border);
+  background: #f1f5f9;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.week-lock-btn:hover { border-color: #94a3b8; }
+.week-lock-btn.week-lock-active {
+  background: #7f1d1d;
+  border-color: #7f1d1d;
+}
+
+/* Case/pastille sur une semaine verrouillée (29/07/2026) : grisée, curseur "interdit" -- même
+   traitement visuel qu'une case fermée (.cell-closed) ou Os (.cell-os-blocked), voir RG-010/011. */
+.cell-week-locked {
+  background: #f1f5f9 !important;
+  cursor: not-allowed;
+}
+.chip-week-locked {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* ---------- Modale Gestion Personnel ---------- */
 
 .modal-overlay {

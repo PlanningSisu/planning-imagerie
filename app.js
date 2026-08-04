@@ -459,7 +459,7 @@ const STORAGE_KEY = "planningAppState_v3";
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 5;
+const STATE_SCHEMA_VERSION = 6;
 
 // Clé = version de départ, valeur = fonction qui transforme les données de cette version vers la
 // version suivante (N -> N+1, jamais un saut direct). migrateState() les enchaîne jusqu'à
@@ -484,6 +484,10 @@ const STATE_MIGRATIONS = {
   // 4 -> 5 : ajout de `customColors` (personnalisation de quelques couleurs sans coder, 25/07/2026)
   // -- un objet vide suffit (aucune couleur personnalisée = valeurs par défaut du CSS).
   4: (data) => ({ ...data, customColors: data.customColors || {} }),
+  // 5 -> 6 : ajout de `weekLocks` (verrouillage manuel des semaines, 29/07/2026) -- un objet vide
+  // suffit, le comportement automatique (verrouillée si strictement passée) s'applique déjà sans
+  // aucune entrée explicite.
+  5: (data) => ({ ...data, weekLocks: data.weekLocks || {} }),
 };
 
 function migrateState(rawData) {
@@ -513,7 +517,7 @@ function migrateState(rawData) {
 // pour ne jamais en oublier un dans l'un des trois chemins). Délibérément SANS `activities` (piloté
 // par le code, jamais par des données utilisateur -- voir CLAUDE.md §4) ni `schemaVersion` (ajouté à
 // part par buildPersistedState()).
-const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "customColors"];
+const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "customColors", "weekLocks"];
 
 // Personnalisation (25/07/2026, ⚙ → "Personnalisation") : quelques couleurs éditables depuis
 // l'appli sans toucher au code -- une entrée par variable CSS `--custom-xxx` (voir :root dans
@@ -629,6 +633,11 @@ let state = {
   // Personnalisation (25/07/2026, ⚙ → "Personnalisation") : quelques couleurs éditables sans coder
   // -- voir CUSTOM_COLOR_FIELDS/applyCustomColors(). Clé absente = valeur par défaut du CSS.
   customColors: {}, // key: voir CUSTOM_COLOR_FIELDS -> "#rrggbb"
+  // Verrouillage manuel des semaines (29/07/2026, "des modifications ont été reversées sur des
+  // semaines qu'on avait faites, sans savoir comment") -- voir isWeekLocked()/toggleCurrentWeekLock().
+  // Clé absente = comportement automatique (verrouillée si strictement passée) ; true/false = override
+  // manuel qui gagne toujours sur l'automatique.
+  weekLocks: {}, // key: weekKey (Lundi ISO) -> true (verrouillée) | false (déverrouillée explicitement)
 };
 
 function loadState() {
@@ -787,6 +796,23 @@ function setFileSyncStatus(status) {
   // avec le libellé complet -- pour ne pas perdre le contexte "c'est le statut de synchro GitHub".
   el.title = `Synchro GitHub : ${fileSyncStatusLabel()}`;
   el.className = "file-sync-status file-sync-" + status;
+}
+
+// Verrouillage des semaines (29/07/2026) : icône à côté du statut de synchro -- reflète TOUJOURS la
+// semaine ACTUELLEMENT AFFICHÉE (state.weekOffset), mise à jour à chaque rendu (appelée depuis
+// render()) puisque naviguer d'une semaine à l'autre change ce qu'elle doit montrer. Le clic
+// (toggleCurrentWeekLock()) est le SEUL moyen de déverrouiller une semaine passée, ou de verrouiller
+// une semaine actuelle/future à la main -- voir isWeekLocked().
+function renderWeekLockButton() {
+  const btn = document.getElementById("btnWeekLock");
+  if (!btn) return;
+  const wk = weekKey(getMonday(state.weekOffset));
+  const locked = isWeekLocked(wk);
+  btn.textContent = locked ? "🔒" : "🔓";
+  btn.className = "week-lock-btn" + (locked ? " week-lock-active" : "");
+  btn.title = locked
+    ? "Semaine verrouillée -- rien ne peut la modifier. Cliquer pour déverrouiller."
+    : "Semaine non verrouillée -- cliquer pour verrouiller.";
 }
 
 // Debounce (~400ms après la dernière modif) pour ne pas écrire à chaque action individuelle, +
@@ -989,6 +1015,34 @@ function cellKey(activityId, day, creneauId) {
   return `${wk}|${activityId}|${day}|${creneauId}`;
 }
 
+// Verrouillage des semaines (29/07/2026, demande de Samir : "des modifications ont été reversées
+// sur des semaines qu'on avait faites, sans savoir comment"). RÈGLE : `state.weekLocks[weekKeyStr]`
+// gagne TOUJOURS quand il est présent (true OU false) -- c'est le SEUL moyen de déverrouiller une
+// semaine passée, et le seul moyen de verrouiller une semaine actuelle/future à la main. En son
+// absence, une semaine STRICTEMENT passée (avant la semaine réelle actuelle, jamais la semaine en
+// cours elle-même) est verrouillée automatiquement ; une semaine actuelle/future est déverrouillée
+// par défaut. `weekKeyStr` doit toujours être la weekKey brute (ex. weekKey(getMonday(offset))),
+// jamais recalculée différemment ailleurs, pour rester comparable à weekKey(getMonday(0)).
+function isWeekLocked(weekKeyStr) {
+  if (Object.prototype.hasOwnProperty.call(state.weekLocks, weekKeyStr)) {
+    return state.weekLocks[weekKeyStr];
+  }
+  return weekKeyStr < weekKey(getMonday(0));
+}
+
+// Bascule le verrouillage de LA SEMAINE ACTUELLEMENT AFFICHÉE (state.weekOffset) -- c'est la seule
+// action manuelle qui existe pour verrouiller/déverrouiller (icône cadenas de la topbar, voir
+// renderLockButton()). Écrit toujours un booléen explicite dans state.weekLocks (jamais retiré),
+// pour que ce choix manuel gagne définitivement sur le calcul automatique, y compris s'il redevient
+// "faux par défaut" plus tard (ex. déverrouiller une semaine qui était verrouillée automatiquement
+// parce que passée -- il faut que ça reste déverrouillé, pas que ça reverrouille tout seul).
+function toggleCurrentWeekLock() {
+  const wk = weekKey(getMonday(state.weekOffset));
+  state.weekLocks[wk] = !isWeekLocked(wk);
+  saveState();
+  render();
+}
+
 // Pas de weekKey ici : une spécialité de vacation est structurelle, la même toutes les semaines.
 function vacationSpecKey(activityId, day, creneauId) {
   return `${activityId}|${day}|${creneauId}`;
@@ -1034,11 +1088,41 @@ function effectiveAssignedIds(key) {
 // y touche : les autres semaines/cases continuent de suivre la trame normalement. Renvoie le
 // tableau (la référence dans state.assignments, pas une copie) pour que l'appelant puisse le
 // modifier en place (push/filter puis réassigner).
+// Verrouillage (29/07/2026) : point d'entrée UNIQUE pour toute addition, donc endroit naturel pour
+// bloquer une semaine verrouillée -- si verrouillée, renvoie un tableau JETABLE (jamais stocké dans
+// state.assignments) : tout push de l'appelant dessus reste sans le moindre effet réel.
 function ensureMaterializedAssignments(key) {
+  if (isWeekLocked(key.split("|")[0])) return [];
   if (!Object.prototype.hasOwnProperty.call(state.assignments, key)) {
     state.assignments[key] = effectiveAssignedIds(key).slice();
   }
   return state.assignments[key];
+}
+
+// Retire `staffId` de la case `key` -- point d'entrée UNIQUE pour tout retrait direct (par
+// opposition à ensureMaterializedAssignments(), pour les ajouts), remplace toute écriture directe
+// équivalente (state.assignments[key] = effectiveAssignedIds(key).filter(...)). Utilisée par
+// removeAssignment() (bouton ×), et par la case SOURCE d'un glisser-déposer (handleAssignmentDrop()/
+// handleModaliteDrop()). Verrouillage (29/07/2026) : aucun effet si la semaine est verrouillée --
+// mêmes garanties que ensureMaterializedAssignments() côté ajout.
+function removeFromAssignments(key, staffId) {
+  if (isWeekLocked(key.split("|")[0])) return;
+  state.assignments[key] = effectiveAssignedIds(key).filter((id) => id !== staffId);
+}
+
+// RG-010 : ferme/rouvre la case `key` -- point d'entrée UNIQUE pour toute écriture dans
+// state.fermetures (popover case par case, fermeture en masse). Fermer matérialise aussi la case à
+// vide (voir le commentaire d'origine sur ce comportement dans regles-gestion.md RG-010).
+// Verrouillage (29/07/2026) : aucun effet si la semaine est verrouillée, ni pour fermer ni pour
+// rouvrir -- une fermeture change l'état de la semaine tout autant qu'une assignation.
+function setFermeture(key, closed) {
+  if (isWeekLocked(key.split("|")[0])) return;
+  if (closed) {
+    state.fermetures[key] = true;
+    state.assignments[key] = [];
+  } else {
+    delete state.fermetures[key];
+  }
 }
 
 // RG-017 (26/07/2026, retour de Samir) : une semaine déjà "touchée" (matérialisée dans
@@ -1065,6 +1149,7 @@ function propagateTrameAdditionToTouchedWeeks(activityId, day, creneauId, staffI
     if (parts.length !== 4 || `${parts[1]}|${parts[2]}|${parts[3]}` !== suffix) return;
     const assignWeekKey = parts[0];
     if (assignWeekKey < currentWeekKey) return; // jamais les semaines passées, comme RG-017.
+    if (isWeekLocked(assignWeekKey)) return; // verrouillage (29/07/2026) : bypass tout le reste, y compris la propagation de trame.
     if (!state.assignments[assignKey].includes(staffId)) {
       state.assignments[assignKey].push(staffId);
       addedCount++;
@@ -1794,14 +1879,18 @@ function applyChipVisual(el, person) {
 function buildAssignedChip(person, key, day) {
   const chip = document.createElement("span");
   applyChipVisual(chip, person);
+  const locked = isWeekLocked(key.split("|")[0]); // verrouillage (29/07/2026), voir isWeekLocked().
   // RG-014 (24/07/2026, retour de Samir) : le contour rouge posé sur toute la case
   // (.cell-absence-violation) ne disait pas QUI, parmi plusieurs personnes assignées, est la
   // personne absente en cause -- entoure désormais aussi la pastille de la personne concernée.
   // RG-020 (25/07/2026) : idem pour un conflit Temps Partiel. RG-021 (29/07/2026, généralise
   // RG-018/RG-019) : idem pour un double-positionnement sur une autre activité ce même créneau --
-  // Off n'est plus un cas particulier, voir hasActivityExclusivityConflict().
+  // Off n'est plus un cas particulier, voir hasActivityExclusivityConflict(). Verrouillage : prime
+  // sur tout le reste, aucune violation n'a de sens à signaler sur une case gelée.
   const [activityId, , creneauId] = trameKeyFromCellKey(key).split("|");
-  if (activityId !== "off" && isPersonAbsentOnDay(person.id, day)) {
+  if (locked) {
+    chip.title = "Semaine verrouillée";
+  } else if (activityId !== "off" && isPersonAbsentOnDay(person.id, day)) {
     chip.classList.add("chip-absence-violation");
     chip.title = `${person.prenom} ${person.nom} est absent(e) ce jour-là`;
   } else if (isPersonTPOnSlot(person.id, day, creneauId)) {
@@ -1812,6 +1901,10 @@ function buildAssignedChip(person, key, day) {
     chip.title = `${person.prenom} ${person.nom} est déjà posté(e) ailleurs ce créneau-là`;
   }
   chip.textContent = `${person.prenom[0]}. ${person.nom}`;
+  if (locked) {
+    chip.classList.add("chip-week-locked");
+    return chip; // ni glisser (draggable), ni bouton de retrait -- "rien d'actif" sur une semaine verrouillée.
+  }
   chip.draggable = true;
   chip.addEventListener("dragstart", (e) => {
     e.dataTransfer.setData("text/plain", person.id);
@@ -1868,7 +1961,7 @@ function handleAssignmentDrop(e, targetKey) {
   // dans la cible -- elle serait alors affichée deux fois (l'ancienne case continuant de suivre la
   // trame, jamais décrochée).
   if (sourceKey) {
-    state.assignments[sourceKey] = effectiveAssignedIds(sourceKey).filter((id) => id !== staffId);
+    removeFromAssignments(sourceKey, staffId);
   }
   const targetList = ensureMaterializedAssignments(targetKey);
   if (!targetList.includes(staffId)) {
@@ -1881,6 +1974,7 @@ function handleAssignmentDrop(e, targetKey) {
 
 function render() {
   document.getElementById("weekLabel").textContent = currentWeekLabel();
+  renderWeekLockButton();
 
   // Dérivées du mode Trame (voir déclaration plus haut) -- recalculées en tout premier ici pour que
   // tout le reste de render() (et tout ce qu'il appelle) les voie déjà à jour.
@@ -2300,6 +2394,10 @@ function buildModaliteCell(activity, day, creneau) {
   const key = cellKey(activity.id, day, creneau.id);
   const assigned = effectiveAssignedIds(key); // RG-017 : peut venir de la trame si jamais touchée cette semaine.
   const closed = !!state.fermetures[key]; // RG-010 : fermeture hebdomadaire, voir regles-gestion.md
+  // Verrouillage (29/07/2026) : bypass TOUT le reste -- une case verrouillée n'accepte ni clic ni
+  // glisser-déposer, quel que soit son état par ailleurs (voir isWeekLocked()).
+  const locked = isWeekLocked(key.split("|")[0]);
+  if (locked) td.classList.add("cell-week-locked");
 
   const vacSpec = state.vacationSpecialites[vacationSpecKey(activity.id, day, creneau.id)];
   if (vacSpec) td.classList.add(`tint-${vacSpec}`);
@@ -2330,7 +2428,7 @@ function buildModaliteCell(activity, day, creneau) {
       if (!osBlocked) {
         const hint = document.createElement("span");
         hint.className = "empty-hint";
-        hint.textContent = "+ ajouter";
+        hint.textContent = locked ? "Verrouillée" : "+ ajouter";
         td.appendChild(hint);
       }
     } else {
@@ -2358,6 +2456,7 @@ function buildModaliteCell(activity, day, creneau) {
       // "être en congés et avoir un Off, c'est pas grave") ; le double-positionnement, lui,
       // s'applique désormais aussi à Off comme à n'importe quelle autre activité.
       if (
+        !locked &&
         people.some((p) =>
           (activity.id !== "off" && isPersonAbsentOnDay(p.id, day)) ||
           hasActivityExclusivityConflict(p.id, day, creneau.id, activity.id)
@@ -2367,7 +2466,12 @@ function buildModaliteCell(activity, day, creneau) {
       }
     }
 
-    if (!osBlocked) {
+    if (locked) {
+      // Verrouillage (29/07/2026) : "rien d'actif" -- aucun écouteur posé, tooltip explicite au
+      // survol (que la case soit vide ou déjà peuplée), même patron qu'une case fermée (RG-010) ou
+      // Os (RG-011) : le blocage vient d'un `if`/`else if` qui ne pose simplement pas les écouteurs.
+      td.title = "Semaine verrouillée -- aucune modification possible.";
+    } else if (!osBlocked) {
       td.addEventListener("click", () => openAssignPopover(key, td, activity, day, creneau));
 
       td.addEventListener("dragover", (e) => {
@@ -2540,7 +2644,7 @@ function buildFermetureTag(closureKey) {
   remove.title = "Rouvrir";
   remove.addEventListener("click", (e) => {
     e.stopPropagation();
-    delete state.fermetures[closureKey];
+    setFermeture(closureKey, false);
     saveState();
     render();
   });
@@ -2664,13 +2768,13 @@ function renderVacationSpecPopoverContent(specKey, activity, day, creneau) {
     closeRow.className = "popover-select-option fermeture-option";
     closeRow.textContent = "Fermé";
     closeRow.addEventListener("click", () => {
-      state.fermetures[closureKey] = true;
       // Bug remonté par Samir le 24/07/2026 : fermer une case ne dépostait personne -- la personne
       // restait dans state.assignments (juste masquée visuellement), donc encore comptée "postée"
       // partout où l'app lit effectiveAssignedIds() directement sans vérifier state.fermetures (ex.
       // le filtre "Focus jour/créneau", §6.17). Fix : fermer = matérialiser la case à vide, EXACTEMENT
       // comme si on avait retiré chaque personne à la main (×) -- ne touche jamais state.trame.
-      state.assignments[closureKey] = [];
+      // Voir setFermeture() pour le détail (et le verrouillage de semaine, 29/07/2026).
+      setFermeture(closureKey, true);
       saveState();
       render();
       renderVacationSpecPopoverContent(specKey, activity, day, creneau);
@@ -2733,25 +2837,13 @@ function isWeekFullyClosedForActivity(activity) {
 // vérifier state.fermetures (ex. le filtre Focus jour/créneau). Ne touche jamais state.trame.
 function setDayClosedForActivity(activity, day, closed) {
   fermableCellsForDay(activity, day).forEach(({ creneau }) => {
-    const key = cellKey(activity.id, day, creneau.id);
-    if (closed) {
-      state.fermetures[key] = true;
-      state.assignments[key] = [];
-    } else {
-      delete state.fermetures[key];
-    }
+    setFermeture(cellKey(activity.id, day, creneau.id), closed);
   });
 }
 
 function setWeekClosedForActivity(activity, closed) {
   fermableCellsForWeek(activity).forEach(({ day, creneau }) => {
-    const key = cellKey(activity.id, day, creneau.id);
-    if (closed) {
-      state.fermetures[key] = true;
-      state.assignments[key] = [];
-    } else {
-      delete state.fermetures[key];
-    }
+    setFermeture(cellKey(activity.id, day, creneau.id), closed);
   });
 }
 
@@ -2847,6 +2939,8 @@ function renderPersonnelRows(tbody) {
   const people = state.staff.filter(personMatchesFilters).sort(compareStaffOrder);
   const monday = getMonday(state.weekOffset);
   const weekDates = weekIsoDates(monday);
+  // Verrouillage (29/07/2026) : une seule semaine affichée pour tout ce rendu, calculé une fois.
+  const weekLocked = isWeekLocked(weekKey(monday));
 
   people.forEach((person) => {
     const tr = document.createElement("tr");
@@ -2889,7 +2983,7 @@ function renderPersonnelRows(tbody) {
         if (activitiesHere.length === 0) {
           const hint = document.createElement("span");
           hint.className = "empty-hint";
-          hint.textContent = "+ ajouter";
+          hint.textContent = weekLocked ? "Verrouillée" : "+ ajouter";
           td.appendChild(hint);
         } else {
           activitiesHere.forEach((activity) => {
@@ -2900,23 +2994,31 @@ function renderPersonnelRows(tbody) {
 
         if (isOff) td.classList.add("cell-off-marked");
 
-        td.addEventListener("click", () => openPersonAssignPopover(person, day, creneau, td));
+        // Verrouillage (29/07/2026) : "rien d'actif" -- aucun écouteur posé sur une semaine
+        // verrouillée, tooltip explicite au survol (voir isWeekLocked()/buildModaliteCell() pour le
+        // même patron côté vue Modalité).
+        if (weekLocked) {
+          td.classList.add("cell-week-locked");
+          td.title = "Semaine verrouillée -- aucune modification possible.";
+        } else {
+          td.addEventListener("click", () => openPersonAssignPopover(person, day, creneau, td));
 
-        td.addEventListener("dragover", (e) => {
-          e.preventDefault();
-          td.classList.add("drag-over");
-        });
-        td.addEventListener("dragleave", () => {
-          td.classList.remove("drag-over");
-        });
-        td.addEventListener("drop", (e) => {
-          e.preventDefault();
-          td.classList.remove("drag-over");
-          if (!handleModaliteDrop(e, person.id, day, creneau.id)) {
-            td.classList.add("drop-rejected");
-            setTimeout(() => td.classList.remove("drop-rejected"), 400);
-          }
-        });
+          td.addEventListener("dragover", (e) => {
+            e.preventDefault();
+            td.classList.add("drag-over");
+          });
+          td.addEventListener("dragleave", () => {
+            td.classList.remove("drag-over");
+          });
+          td.addEventListener("drop", (e) => {
+            e.preventDefault();
+            td.classList.remove("drag-over");
+            if (!handleModaliteDrop(e, person.id, day, creneau.id)) {
+              td.classList.add("drop-rejected");
+              setTimeout(() => td.classList.remove("drop-rejected"), 400);
+            }
+          });
+        }
 
         return td;
       };
@@ -2980,20 +3082,25 @@ function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
   // préfixe via trameKeyFromCellKey() pour retomber sur le format de vacationSpecKey().
   const [, tagDay, tagCreneauId] = trameKeyFromCellKey(key).split("|");
   const vacSpec = state.vacationSpecialites[trameKeyFromCellKey(key)];
+  const locked = isWeekLocked(key.split("|")[0]); // verrouillage (29/07/2026), voir isWeekLocked().
   // RG-014/RG-020/RG-021 : même logique de contour rouge que buildAssignedChip() côté vue
   // Modalité -- peut désormais arriver aussi bien via le popover que via le glisser-déposer (plus
   // aucun des deux n'est bloqué depuis le 25/07/2026, voir handleModaliteDrop()) : ce contour rouge
   // est le seul signal de la contradiction, pas un filet de sécurité pour un cas résiduel. RG-021
   // (29/07/2026) généralise l'ancienne RG-018/RG-019 -- Off n'est plus un cas particulier.
-  const isAbsenceViolation = activity.id !== "off" && isPersonAbsentOnDay(staffId, tagDay);
-  const isTPViolation = !isAbsenceViolation && isPersonTPOnSlot(staffId, tagDay, tagCreneauId);
-  const isExclusivityViolation = !isAbsenceViolation && !isTPViolation && hasActivityExclusivityConflict(staffId, tagDay, tagCreneauId, activity.id);
+  // Verrouillage : prime sur toute violation, aucun conflit n'a de sens à signaler case gelée.
+  const isAbsenceViolation = !locked && activity.id !== "off" && isPersonAbsentOnDay(staffId, tagDay);
+  const isTPViolation = !locked && !isAbsenceViolation && isPersonTPOnSlot(staffId, tagDay, tagCreneauId);
+  const isExclusivityViolation = !locked && !isAbsenceViolation && !isTPViolation && hasActivityExclusivityConflict(staffId, tagDay, tagCreneauId, activity.id);
   const isViolation = isAbsenceViolation || isTPViolation || isExclusivityViolation;
   tag.className = "chip modalite-tag" +
     (activity.urgence ? " urgence-tag" : "") +
     (vacSpec ? ` spec-${vacSpec}` : "") +
-    (isViolation ? " chip-absence-violation" : "");
-  if (isViolation) {
+    (isViolation ? " chip-absence-violation" : "") +
+    (locked ? " chip-week-locked" : "");
+  if (locked) {
+    tag.title = "Semaine verrouillée";
+  } else if (isViolation) {
     const person = staffById(staffId);
     if (person) {
       tag.title = isAbsenceViolation
@@ -3004,6 +3111,7 @@ function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
     }
   }
   tag.textContent = activity.nom;
+  if (locked) return tag; // ni glisser, ni bouton de retrait -- "rien d'actif" sur une semaine verrouillée.
   if (draggable) {
     tag.draggable = true;
     tag.addEventListener("dragstart", (e) => {
@@ -3046,7 +3154,7 @@ function handleModaliteDrop(e, targetStaffId, targetDay, targetCreneauId) {
   // modifier, sinon une case source encore purement issue de la trame ne perdrait jamais son
   // affectation d'origine (aucune clé explicite à filtrer).
   if (sourceKey) {
-    state.assignments[sourceKey] = effectiveAssignedIds(sourceKey).filter((id) => id !== draggedStaffId);
+    removeFromAssignments(sourceKey, draggedStaffId);
   }
   const targetList = ensureMaterializedAssignments(targetKey);
   if (!targetList.includes(targetStaffId)) {
@@ -3816,6 +3924,7 @@ function effectiveAssignedIdsForWeek(key, weekKeyPart) {
 // plus bas) : ensureMaterializedAssignments() d'origine dépend de state.weekOffset (la semaine
 // affichée), donc incorrecte si on matérialise une case pour une semaine différente de celle-là.
 function ensureMaterializedAssignmentsForWeek(key, weekKeyPart) {
+  if (isWeekLocked(weekKeyPart)) return []; // verrouillage (29/07/2026), voir ensureMaterializedAssignments().
   if (!Object.prototype.hasOwnProperty.call(state.assignments, key)) {
     state.assignments[key] = effectiveAssignedIdsForWeek(key, weekKeyPart).slice();
   }
@@ -4650,9 +4759,9 @@ function renderTramePersonnelView() {
 function removeAssignment(key, staffId) {
   // RG-017 : part de effectiveAssignedIds() (pas state.assignments[key] || []) pour retirer
   // correctement une personne venue de la trame -- l'écriture juste après matérialise la case
-  // (tableau explicite, potentiellement plus petit) pour cette semaine précise.
-  const list = effectiveAssignedIds(key);
-  state.assignments[key] = list.filter((id) => id !== staffId);
+  // (tableau explicite, potentiellement plus petit) pour cette semaine précise. Verrouillage
+  // (29/07/2026) : voir removeFromAssignments(), sans effet si la semaine est verrouillée.
+  removeFromAssignments(key, staffId);
   saveState();
   render();
 }
@@ -4856,6 +4965,9 @@ document.getElementById("btnCurrentWeek").addEventListener("click", () => {
   render();
 });
 
+// Verrouillage des semaines (29/07/2026) : voir toggleCurrentWeekLock()/renderWeekLockButton().
+document.getElementById("btnWeekLock").addEventListener("click", toggleCurrentWeekLock);
+
 // Titre "Planning Imagerie" devenu bouton (24/07/2026, demande de Samir, remplace l'ancien bouton
 // "Retour Planning" séparé -- même comportement, juste porté par le titre) : toujours au même
 // endroit dans la topbar (à gauche, avant le statut de synchro), quel que soit l'écran affiché --
@@ -4926,9 +5038,16 @@ document.getElementById("btnReset").addEventListener("click", () => {
   // Samir le 24/07/2026 que c'est le comportement VOULU (pas un bug) : seul un retrait manuel (×)
   // découple une case précise de la trame. Le texte de confirmation l'explique maintenant
   // explicitement, pour ne plus laisser croire à un reset cassé.
-  if (!confirm("Réinitialiser le planning ? Toutes les affectations posées à la main (qui est posté où) et les fermetures de la semaine seront supprimées. Les cases qui suivent la Trame Personnel réapparaîtront automatiquement (retire-les à la main, avec le ×, si tu ne veux pas qu'elles reviennent). Le personnel et les spécialités de vacation ne sont pas concernés.")) return;
-  state.assignments = {};
-  state.fermetures = {};
+  if (!confirm("Réinitialiser le planning ? Toutes les affectations posées à la main (qui est posté où) et les fermetures de la semaine seront supprimées. Les cases qui suivent la Trame Personnel réapparaîtront automatiquement (retire-les à la main, avec le ×, si tu ne veux pas qu'elles reviennent). Le personnel et les spécialités de vacation ne sont pas concernés. Les semaines verrouillées ne sont jamais touchées.")) return;
+  // Verrouillage (29/07/2026) : ce bouton effaçait state.assignments/state.fermetures EN ENTIER,
+  // TOUTES semaines confondues (passées ET futures) -- contrairement à ce que son propre texte de
+  // confirmation laisse penser ("les fermetures de la semaine"), il n'a jamais été limité à la
+  // semaine affichée. Découvert en implémentant le verrouillage, probablement lié aux "modifications
+  // reversées sans savoir comment" remontées par Samir le 29/07/2026. Ne conserve désormais que les
+  // clés appartenant à une semaine verrouillée -- tout le reste est effacé comme avant.
+  const keepAssignment = ([key]) => isWeekLocked(key.split("|")[0]);
+  state.assignments = Object.fromEntries(Object.entries(state.assignments).filter(keepAssignment));
+  state.fermetures = Object.fromEntries(Object.entries(state.fermetures).filter(keepAssignment));
   saveState();
   render();
 });
