@@ -253,6 +253,13 @@ body {
   position: fixed;
   top: 0;
   left: 0;
+  right: auto; /* .dropdown-menu fixe right:0 pour #moreMenu -- sans ce reset, left (JS) + right:0
+                  hérité étirent la boîte jusqu'au bord droit de l'écran (bug réel signalé par Samir,
+                  05/08/2026 : zone blanche prenant tout l'écran). */
+  width: max-content;
+  min-width: 0; /* .dropdown-menu impose 200px (pensé pour #moreMenu, aux libellés plus longs) --
+                   trop large pour ce menu à 3-4 choix courts, retour Samir 05/08/2026 : "aligner sur
+                   la taille du texte". */
   z-index: 200;
 }
 
