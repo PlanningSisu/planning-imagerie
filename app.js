@@ -345,7 +345,7 @@ let staffFocusFilter = null;
 let staffModalSearchQuery = "";
 
 // Filtres du panneau Personnel : OR à l'intérieur d'une catégorie, ET entre les deux catégories.
-// grades: "senior" | "interne" | "cca". specialites: "digestif"|"uro"|"gyneco"|"thorax"|"socle".
+// grades: "senior" | "interne" | "cca" | "tempsPlein". specialites: "digestif"|"uro"|"gyneco"|"thorax"|"socle".
 // Réutilisés tels quels par la vue Congés (colonnes filtrées par les mêmes puces, voir 6.x
 // CLAUDE.md) -- volontairement le même state partagé, pas une copie, pour rester cohérent
 // entre les deux vues sans dupliquer la logique de filtre.
@@ -355,6 +355,10 @@ let staffModalSearchQuery = "";
 // cette catégorie, cliquer "Sénior" seul montre tous les séniors CCA compris (ils ont grade==="senior",
 // donc matchent déjà) ; cliquer "CCA" seul isole les CCA ; cocher les deux ne change rien de plus que
 // "Sénior" seul (CCA ⊆ Sénior) -- exactement le comportement demandé par Samir, sans code spécial.
+// "tempsPlein" (05/08/2026) : même principe qu'CCA, une 4e VALEUR dans le même Set -- mais
+// contrairement à CCA, PAS un sous-ensemble d'un seul grade (visible/cochable pour un sénior comme
+// pour un interne, voir renderStaffAddForm()) : cliquer "TP" seul isole tout le monde en Temps Plein,
+// peu importe le grade.
 // showHorsSisu (23/07/2026) : bascule à part, PAS un 3e Set -- sémantique différente des deux
 // autres catégories (qui RESTREIGNENT la liste quand actives). Ici, par défaut les personnes
 // "Hors Sisu" sont invisibles PARTOUT où personMatchesFilters() fait la loi ; cocher la puce les
@@ -368,7 +372,11 @@ const staffFilters = {
 function personMatchesFilters(person) {
   if (person.horsSisu && !staffFilters.showHorsSisu) return false;
   if (staffFilters.grades.size > 0) {
-    const matchesGrade = [...staffFilters.grades].some((g) => (g === "cca" ? !!person.cca : person.grade === g));
+    const matchesGrade = [...staffFilters.grades].some((g) => {
+      if (g === "cca") return !!person.cca;
+      if (g === "tempsPlein") return !!person.tempsPlein;
+      return person.grade === g;
+    });
     if (!matchesGrade) return false;
   }
   if (staffFilters.specialites.size > 0) {
@@ -2202,6 +2210,7 @@ function renderLegend() {
   addChip("Sénior", "grades", "senior", neutral + "border-radius:4px;font-weight:700;");
   addChip("Interne", "grades", "interne", neutral);
   addChip("CCA", "grades", "cca", neutral);
+  addChip("TP", "grades", "tempsPlein", neutral); // 05/08/2026 -- "TP" pour Temps Plein, libellé court demandé par Samir
 
   // Saut de ligne forcé : les spécialités passent sous Sénior/Interne, sans réduire leur propre largeur.
   const lineBreak = document.createElement("span");
@@ -5396,6 +5405,10 @@ function renderStaffAddForm(container, existingPerson = null) {
         <label for="formCCA"><input type="checkbox" id="formCCA"> CCA</label>
         <span class="form-hint">Un type de sénior -- filtrable à part dans le panneau Personnel.</span>
       </div>
+      <div class="form-row form-row-checkbox">
+        <label for="formTempsPlein"><input type="checkbox" id="formTempsPlein"> Temps Plein</label>
+        <span class="form-hint">Sénior ou interne -- filtrable à part ("TP") dans le panneau Personnel.</span>
+      </div>
       <div class="form-row" id="formInterneTypeRow">
         <label for="formInterneType">Statut</label>
         <select id="formInterneType">
@@ -5429,12 +5442,14 @@ function renderStaffAddForm(container, existingPerson = null) {
   const horsSisuCheckbox = document.getElementById("formHorsSisu");
   const gradeSelect = document.getElementById("formGrade");
   const ccaCheckbox = document.getElementById("formCCA");
+  const tempsPleinCheckbox = document.getElementById("formTempsPlein");
   const typeSelect = document.getElementById("formInterneType");
   const spec1Select = document.getElementById("formSpec1");
   const spec2Select = document.getElementById("formSpec2");
 
   horsSisuCheckbox.checked = initialHorsSisu;
   ccaCheckbox.checked = existingPerson ? !!existingPerson.cca : false;
+  tempsPleinCheckbox.checked = existingPerson ? !!existingPerson.tempsPlein : false;
 
   const competenceCheckboxes = [...container.querySelectorAll(".formCompetence")];
   if (existingPerson) {
@@ -5569,6 +5584,7 @@ function renderStaffAddForm(container, existingPerson = null) {
     // toute façon masquée/décochée par updateVisibility() dans ce cas, ce garde-fou est redondant
     // mais évite tout risque si le DOM était dans un état inattendu).
     const cca = grade === "senior" && ccaCheckbox.checked;
+    const tempsPlein = tempsPleinCheckbox.checked; // 05/08/2026 -- sénior ou interne, pas restreint comme CCA
 
     if (existingPerson) {
       existingPerson.prenom = prenom;
@@ -5578,8 +5594,9 @@ function renderStaffAddForm(container, existingPerson = null) {
       existingPerson.specialites = specialites;
       existingPerson.competences = competences;
       existingPerson.cca = cca;
+      existingPerson.tempsPlein = tempsPlein;
     } else {
-      state.staff.push({ id: generateStaffId(), prenom, nom, horsSisu, grade, specialites, competences, cca });
+      state.staff.push({ id: generateStaffId(), prenom, nom, horsSisu, grade, specialites, competences, cca, tempsPlein });
     }
     saveState();
     render();
