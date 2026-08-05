@@ -451,6 +451,11 @@ const CRENEAUX = [
   { id: "apres-midi", label: "Après-midi" },
 ];
 
+function creneauLabel(creneauId) {
+  const creneau = CRENEAUX.find((c) => c.id === creneauId);
+  return creneau ? creneau.label : creneauId;
+}
+
 // Seule Scan U utilise le créneau "astreinte" ; pour toute autre activité, cette case n'existe pas
 // fonctionnellement (pas d'assignation, pas de spécialité/fermeture) -- voir regles-gestion.md RG-012.
 function isCreneauApplicable(activityId, creneauId) {
@@ -2347,6 +2352,13 @@ function renderTable() {
 // commentaire dédié là-bas.
 function isPersonAbsentOnSlot(staffId, day, creneauId) {
   const iso = weekIsoDates(getMonday(state.weekOffset))[DAYS.indexOf(day)];
+  return isPersonAbsentOnIsoSlot(staffId, iso, creneauId);
+}
+
+// Cœur ISO (05/08/2026, indépendant de state.weekOffset) -- extrait d'isPersonAbsentOnSlot() pour
+// être réutilisable par tout calcul portant sur une date précise sans rapport avec la semaine
+// affichée (ex. le compteur de "manquants" en vue Stats, mode Période, voir missingSlotsForDate()).
+function isPersonAbsentOnIsoSlot(staffId, iso, creneauId) {
   return congeCoversSlot(staffId, iso, creneauId) || isOnReposGardeDay(staffId, iso);
 }
 
@@ -4090,6 +4102,38 @@ function ensureMaterializedAssignmentsForWeek(key, weekKeyPart) {
   return state.assignments[key];
 }
 
+// Compteur de "manquants" en vue Stats (05/08/2026, demande de Samir : "un compteur qui m'indique
+// si j'ai oublié de poster quelqu'un"). Ignore TOUJOURS l'astreinte (ni dans le total attendu ni
+// dans le décompte, cohérent avec le reste de la vue Stats, voir computeVacationStatsForWeek()) --
+// seuls matin/après-midi sont considérés, 10 créneaux possibles par semaine.
+// Un créneau est :
+// - EXCUSÉ (retiré du total attendu) s'il est couvert par un congé ou un repos de garde
+//   (isPersonAbsentOnIsoSlot(), RG-014). Un jour de garde, lui, ne change RIEN au compteur --
+//   confirmé explicitement par Samir (05/08/2026) : la garde ne remplace pas les 2 demi-journées
+//   normales attendues ce jour-là, donc aucune vérification dédiée à state.gardes ici.
+// - COUVERT s'il y a une vraie affectation (n'importe quelle activité, Bureau/Off compris) OU un
+//   Temps Partiel marqué dessus -- "Temps Partiel compte comme une vacation", demande explicite.
+// - MANQUANT sinon (ni excusé, ni couvert) : c'est ce qui remonte, un objet {day, creneauId} par
+//   créneau manquant.
+// `{iso, dayName, weekKeyPart}` : même triple que produit isoWeekdaysInRange(), pour rester
+// indépendant de state.weekOffset (utilisable aussi bien pour la semaine affichée que pour une
+// période arbitraire en mode "Période").
+function missingSlotsForDate(staffId, { iso, dayName, weekKeyPart }) {
+  const missing = [];
+  ["matin", "apres-midi"].forEach((creneauId) => {
+    if (isPersonAbsentOnIsoSlot(staffId, iso, creneauId)) return;
+    if (isPersonTPOnSlot(staffId, dayName, creneauId)) return;
+    const covered = state.activities.some((activity) => {
+      if (!isCreneauApplicable(activity.id, creneauId)) return false;
+      const key = `${weekKeyPart}|${activity.id}|${dayName}|${creneauId}`;
+      if (state.fermetures[key]) return false;
+      return effectiveAssignedIdsForWeek(key, weekKeyPart).includes(staffId);
+    });
+    if (!covered) missing.push({ day: dayName, creneauId, iso });
+  });
+  return missing;
+}
+
 // Équivalent de computeVacationStatsForWeek() pour le mode "Période" (24/07/2026) -- même forme de
 // résultat (avec `astreinte` en plus directement dans l'entrée, voir plus bas). Consulte désormais la
 // trame via effectiveAssignedIdsForWeek() ci-dessus (29/07/2026, voir son commentaire) exactement
@@ -4217,6 +4261,14 @@ function renderStatsView() {
   // par statsPeriodTier() ci-dessous ET par la colonne Vacations plus bas (isFullyOnLeaveForRange()),
   // pour ne jamais recalculer isoWeekdaysInRange() par personne.
   const periodDaysIso = statsMode === "period" ? isoWeekdaysInRange(statsRangeStart, statsRangeEnd).map((d) => d.iso) : null;
+  // Jours (triple complet iso/dayName/weekKeyPart, voir missingSlotsForDate()) pour le compteur de
+  // "manquants" (05/08/2026) -- `periodDaysIso` juste au-dessus ne garde que l'iso, insuffisant ici.
+  // Calculé une seule fois par rendu, réutilisé pour toutes les personnes de la colonne Total.
+  const mondayFriday = new Date(monday);
+  mondayFriday.setDate(monday.getDate() + 4);
+  const missingDaysList = statsMode === "period"
+    ? isoWeekdaysInRange(statsRangeStart, statsRangeEnd)
+    : isoWeekdaysInRange(toISODateLocal(monday), toISODateLocal(mondayFriday));
 
   // Tri à deux niveaux : d'abord le bloc de disponibilité (statsAvailabilityTier() en mode Semaine,
   // statsPeriodTier() en mode Période, plus simple -- voir sa déclaration), puis le tri habituel
@@ -4311,6 +4363,22 @@ function renderStatsView() {
         badge.className = "stats-total-badge";
         badge.textContent = entry ? entry.total : 0;
         td.appendChild(badge);
+
+        // Compteur de "manquants" (05/08/2026) : silencieux si rien à signaler (choix de Samir,
+        // "j'aime bien" l'option sans bruit visuel quand tout va bien) -- badge rouge uniquement si
+        // au moins un créneau n'est ni excusé (congé/repos) ni couvert (affectation/Bureau/Off/Temps
+        // Partiel). Détail des créneaux précis au survol, voir missingSlotsForDate().
+        const missing = missingDaysList.flatMap((d) => missingSlotsForDate(person.id, d));
+        if (missing.length > 0) {
+          const missingBadge = document.createElement("span");
+          missingBadge.className = "stats-missing-badge";
+          // Date incluse dans le libellé (pas juste le nom du jour) -- indispensable en mode Période
+          // qui peut couvrir plusieurs semaines : "Lundi Après-midi" seul serait ambigu (lequel des
+          // lundis de la période ?).
+          missingBadge.title = "Manquant : " + missing.map((m) => `${m.day} ${formatShort(new Date(`${m.iso}T00:00:00`))} ${creneauLabel(m.creneauId)}`).join(", ");
+          missingBadge.innerHTML = `<span class="stats-missing-icon">!</span> ${missing.length} manquant${missing.length > 1 ? "s" : ""}`;
+          td.appendChild(missingBadge);
+        }
         return td;
       },
     },
