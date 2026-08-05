@@ -245,6 +245,17 @@ body {
 .dropdown-menu #btnReset { background: transparent; color: #b91c1c; }
 .dropdown-menu #btnReset:hover { background: #fef2f2; }
 
+/* Menu contextuel de la pilule Congé (clic droit, 05/08/2026, congé demi-journée) -- même look que
+   .dropdown-menu (fond/ombre/boutons), mais position:fixed positionné aux coordonnées du clic (JS,
+   voir openCongeHalfDayMenu()) plutôt qu'ancré à un parent positionné comme #moreMenu. z-index plus
+   élevé que .popover (50) : peut s'ouvrir par-dessus le popover congés déjà affiché. */
+#congeHalfDayMenu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 200;
+}
+
 /* Synchro GitHub (23/07/2026, remplace le "Fichier partagé" du 22/07/2026) -- statut affiché en
    permanence dans la topbar, à côté du bouton "Synchro GitHub", pour repérer d'un coup d'œil si la
    dernière modif a bien été écrite sur GitHub avant de fermer l'onglet. */
@@ -1602,6 +1613,12 @@ tr.group-end td {
   background: #eafaf1;
   color: #166534;
   border-color: #22c55e;
+}
+/* Congé demi-journée (05/08/2026) : bordure en tirets pour signaler "seulement une moitié" sans
+   ajouter de nouvel élément visuel -- clic droit sur la pilule pour poser/retirer (voir
+   openCongeHalfDayMenu() dans app.js). Le texte de la pilule porte aussi un suffixe " ½". */
+.conge-pill-half {
+  border-style: dashed;
 }
 .conge-pill-garde.active {
   background: #e0e7ff;

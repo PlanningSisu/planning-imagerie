@@ -610,7 +610,10 @@ let state = {
   fermetures: {}, // key: cellKey(activityId, day, creneauId) -> true
   // Congés déclarés : données personnelles structurelles (comme staff/vacationSpecialites),
   // indépendantes de la semaine affichée -- voir 4.7 dans CLAUDE.md et quarterWeeks() plus bas.
-  conges: [], // { id, staffId, dateDebut: "YYYY-MM-DD", dateFin: "YYYY-MM-DD" }
+  // demiJournee (05/08/2026, congé demi-journée) : optionnel, "matin"|"apres-midi" -- absent/undefined
+  // = journée entière (comportement historique). Uniquement sur un enregistrement d'UN SEUL jour
+  // (dateDebut === dateFin), jamais sur une plage -- voir setCongeHalfDay().
+  conges: [], // { id, staffId, dateDebut: "YYYY-MM-DD", dateFin: "YYYY-MM-DD", demiJournee?: "matin"|"apres-midi" }
   // Gardes déclarées : structurelles comme conges (voir 4.8 dans CLAUDE.md), mais toujours un seul
   // jour (pas de notion de plage) -- pas encore exploitées par le moteur de validation, prévues
   // pour de futures RG (22/07/2026).
@@ -1225,6 +1228,30 @@ function isOnCongeDay(staffId, iso) {
   return state.conges.some((c) => congeCoversDay(c, staffId, iso));
 }
 
+// Un enregistrement de congé couvre-t-il un jour+créneau PRÉCIS ? (05/08/2026, congé demi-journée)
+// Une "journée entière" (pas de demiJournee) couvre matin+astreinte+après-midi, comme avant ; un
+// enregistrement "matin"/"apres-midi" ne couvre QUE ce créneau -- jamais l'astreinte (créneau à
+// part, RG-012), même principe que Off/Temps Partiel (voir isPersonUnavailableAllDay()).
+function congeCoversSlot(staffId, iso, creneauId) {
+  return state.conges.some((c) => {
+    if (!congeCoversDay(c, staffId, iso)) return false;
+    if (!c.demiJournee) return true;
+    return creneauId !== "astreinte" && c.demiJournee === creneauId;
+  });
+}
+
+// Suffixe " (matin)"/" (après-midi)" pour un jour couvert par UN SEUL congé demi-journée (05/08/2026)
+// -- vide si le jour est couvert en journée entière (un enregistrement complet, ou deux demi-
+// journées qui se complètent matin+après-midi). Utilisée par buildAbsenceBar() pour que Samir voie
+// d'un coup d'œil qu'une case "Lundi" n'est en réalité qu'une demi-absence.
+function congeHalfDaySuffixForDay(staffId, iso) {
+  const records = state.conges.filter((c) => congeCoversDay(c, staffId, iso));
+  if (records.length === 0 || records.some((c) => !c.demiJournee)) return "";
+  const halves = new Set(records.map((c) => c.demiJournee));
+  if (halves.size === 1) return halves.has("matin") ? " (matin)" : " (après-midi)";
+  return ""; // matin + après-midi séparés -> couvre toute la journée, pas de suffixe
+}
+
 // Dates ISO des 5 jours ouvrés de la semaine `monday`, dans l'ordre de DAYS.
 function weekIsoDates(monday) {
   return DAYS.map((_, i) => {
@@ -1285,6 +1312,21 @@ function removeCongeDay(staffId, iso) {
   state.conges = next;
 }
 
+// Définit l'état de congé d'un jour précis via le menu contextuel (clic droit sur la pilule Congé,
+// 05/08/2026, congé demi-journée) : remplace TOUJOURS ce qui existait déjà ce jour-là (jamais deux
+// enregistrements empilés sur le même jour, `removeCongeDay()` gère la découpe si ce jour faisait
+// partie d'une plage plus large) -- `demiJournee` vaut "matin"/"apres-midi" pour une demi-journée,
+// null/undefined pour une journée entière, ou la sentinelle "clear" pour retirer complètement. Le
+// clic gauche standard (bascule journée entière) continue de passer par addCongeDay()/
+// removeCongeDay(), inchangés -- demande explicite de Samir de ne pas changer ce geste existant.
+function setCongeHalfDay(staffId, iso, demiJournee) {
+  removeCongeDay(staffId, iso);
+  if (demiJournee === "clear") return;
+  state.conges.push({ id: generateId(), staffId, dateDebut: iso, dateFin: iso, demiJournee: demiJournee || undefined });
+  if (demiJournee) depostAssignmentsForSlot(staffId, iso, demiJournee); // ne vide QUE ce créneau
+  else depostAssignmentsForDay(staffId, iso); // journée entière, comportement inchangé
+}
+
 // Gardes : toujours un seul jour (pas de plage), donc pas besoin de la logique de découpe
 // ci-dessus -- ajout/retrait d'un enregistrement unique par jour.
 function isOnGardeDay(staffId, iso) {
@@ -1343,6 +1385,14 @@ function isOnReposGardeDay(staffId, iso) {
 // s'arrête au vendredi). Réutilisé pour un jour de repos de garde (le lendemain d'une garde) ET pour
 // un jour de congé déclaré directement (voir depostAssignmentsForReposGardeDay()/addCongeDay()).
 function depostAssignmentsForDay(staffId, iso) {
+  CRENEAUX.forEach((creneau) => depostAssignmentsForSlot(staffId, iso, creneau.id));
+}
+
+// Variante par créneau (05/08/2026, congé demi-journée) : vide uniquement le créneau `creneauId`
+// (matin ou après-midi -- jamais l'astreinte, non concernée par un congé demi-journée) de `staffId`,
+// toutes activités confondues, pour le jour ISO donné. Cœur partagé, `depostAssignmentsForDay()`
+// n'est plus qu'une boucle dessus sur les 3 créneaux.
+function depostAssignmentsForSlot(staffId, iso, creneauId) {
   const date = new Date(`${iso}T00:00:00`);
   const dow = date.getDay(); // 0 = dimanche ... 6 = samedi
   if (dow < 1 || dow > 5) return;
@@ -1350,13 +1400,11 @@ function depostAssignmentsForDay(staffId, iso) {
   const weekKeyPart = weekKey(mondayOfDate(date));
 
   state.activities.forEach((activity) => {
-    CRENEAUX.forEach((creneau) => {
-      if (!isCreneauApplicable(activity.id, creneau.id)) return;
-      const key = `${weekKeyPart}|${activity.id}|${dayName}|${creneau.id}`;
-      const list = ensureMaterializedAssignmentsForWeek(key, weekKeyPart);
-      const idx = list.indexOf(staffId);
-      if (idx !== -1) list.splice(idx, 1);
-    });
+    if (!isCreneauApplicable(activity.id, creneauId)) return;
+    const key = `${weekKeyPart}|${activity.id}|${dayName}|${creneauId}`;
+    const list = ensureMaterializedAssignmentsForWeek(key, weekKeyPart);
+    const idx = list.indexOf(staffId);
+    if (idx !== -1) list.splice(idx, 1);
   });
 }
 
@@ -1402,7 +1450,14 @@ function buildAbsenceBar(person, monday) {
   // par jour couvert, en toutes lettres -- le texte pivoté (writing-mode) essayé le 21/07/2026 était
   // illisible, ne pas y revenir.
   const isFullWeek = absentIdx.length === DAYS.length;
-  const labels = isFullWeek ? ["Semaine"] : absentIdx.map((i) => DAYS[i]);
+  // Suffixe " (matin)"/" (après-midi)" (05/08/2026, congé demi-journée) : uniquement hors "Semaine"
+  // entière -- ce cas reste un raccourci textuel grossier, pas la peine de le détailler par demi-
+  // journée. Un jour de repos de garde (toujours journée entière) n'a jamais de congé associé ce
+  // jour-là, congeHalfDaySuffixForDay() renvoie donc naturellement "" pour lui.
+  const isoDates = weekIsoDates(monday);
+  const labels = isFullWeek
+    ? ["Semaine"]
+    : absentIdx.map((i) => DAYS[i] + congeHalfDaySuffixForDay(person.id, isoDates[i]));
   labels.forEach((label) => {
     const mark = document.createElement("span");
     // Rouge plus soutenu pour "Semaine" que pour un jour isolé (22/07/2026, demandé par Samir) --
@@ -1706,7 +1761,7 @@ function validateAbsences() {
         assigned.forEach((staffId) => {
           const person = staffById(staffId);
           if (!person) return;
-          if (activity.id !== "off" && isPersonAbsentOnDay(staffId, day)) {
+          if (activity.id !== "off" && isPersonAbsentOnSlot(staffId, day, creneau.id)) {
             // Off ne compte pas comme un conflit avec une absence (congé/repos de garde) : les deux
             // disent la même chose ("cette personne ne travaille pas"), jamais une contradiction --
             // demande de Samir le 29/07/2026 ("si je suis en congés et qu'on m'a mis un Off, c'est
@@ -1890,9 +1945,9 @@ function buildAssignedChip(person, key, day) {
   const [activityId, , creneauId] = trameKeyFromCellKey(key).split("|");
   if (locked) {
     chip.title = "Semaine verrouillée";
-  } else if (activityId !== "off" && isPersonAbsentOnDay(person.id, day)) {
+  } else if (activityId !== "off" && isPersonAbsentOnSlot(person.id, day, creneauId)) {
     chip.classList.add("chip-absence-violation");
-    chip.title = `${person.prenom} ${person.nom} est absent(e) ce jour-là`;
+    chip.title = `${person.prenom} ${person.nom} est absent(e) ce créneau-là`;
   } else if (isPersonTPOnSlot(person.id, day, creneauId)) {
     chip.classList.add("chip-absence-violation");
     chip.title = `${person.prenom} ${person.nom} est à Temps Partiel ce créneau-là`;
@@ -2273,15 +2328,25 @@ function renderTable() {
   table.appendChild(tbody);
 }
 
-// RG-014 (22/07/2026, voir regles-gestion.md) : une personne en congé ou en repos de garde
-// (RG-013) le jour `day` de la semaine ACTUELLEMENT AFFICHÉE (state.weekOffset). Centralisé ici
-// pour une seule définition de "absent(e)", consultée par le blocage total de la case en vue
-// Personnel (renderPersonnelRows()), le moteur de validation (validateAbsences()) et le contour
-// rouge de violation (buildAssignedChip()/buildModaliteTag()) -- depuis le 25/07/2026, ne bloque
-// PLUS le glisser-déposer en vue Modalité (handleAssignmentDrop()), voir le commentaire dédié là-bas.
-function isPersonAbsentOnDay(staffId, day) {
+// RG-014 (22/07/2026, voir regles-gestion.md), granularité créneau depuis le 05/08/2026 (congé
+// demi-journée) : une personne en congé (matin/après-midi/journée entière) ou en repos de garde
+// (RG-013, toujours journée entière) sur le créneau `creneauId` du jour `day` de la semaine
+// ACTUELLEMENT AFFICHÉE (state.weekOffset). LE point d'entrée pour toute vérification liée à une
+// case précise -- moteur de validation (validateAbsences()), contour rouge de violation
+// (buildAssignedChip()/buildModaliteTag()), focus demi-journée (personMatchesFocusFilter()) -- depuis
+// le 25/07/2026, ne bloque PLUS le glisser-déposer en vue Modalité (handleAssignmentDrop()), voir le
+// commentaire dédié là-bas.
+function isPersonAbsentOnSlot(staffId, day, creneauId) {
   const iso = weekIsoDates(getMonday(state.weekOffset))[DAYS.indexOf(day)];
-  return isOnCongeDay(staffId, iso) || isOnReposGardeDay(staffId, iso);
+  return congeCoversSlot(staffId, iso, creneauId) || isOnReposGardeDay(staffId, iso);
+}
+
+// Absent(e) TOUTE la journée (matin ET après-midi) -- un congé "journée entière", ou deux congés
+// demi-journée qui se complètent (matin + après-midi), ou un repos de garde (toujours journée
+// entière). Utilisée pour tout ce qui raisonne au niveau du jour complet plutôt que d'un créneau
+// précis (focus jour entier) -- voir isPersonAbsentOnSlot() pour la version par créneau.
+function isPersonAbsentOnDay(staffId, day) {
+  return isPersonAbsentOnSlot(staffId, day, "matin") && isPersonAbsentOnSlot(staffId, day, "apres-midi");
 }
 
 // RG-018 ("Jour Off", 24/07/2026, demande de Samir) : "Off" (nom interne d'activité `off`, voir
@@ -2368,18 +2433,25 @@ function isPersonUnavailableAllDay(staffId, day) {
 
 // Filtre du panneau Personnel dérivé du focus actif (voir staffFocusFilter). Congé/repos de garde
 // (RG-014) exclut toujours, jour entier ou demi-journée.
-// - **Focus JOUR ENTIER** (revu le 25/07/2026, retour de Samir) : n'exclut plus rien d'autre que
-//   congé/repos et "indisponible toute la journée" (voir isPersonUnavailableAllDay() ci-dessus). Le
-//   check "déjà postée quelque part ce jour" (n'importe quelle activité, une seule demi-journée
-//   suffisait) a été RETIRÉ -- il masquait à tort quelqu'un qui n'avait qu'une seule demi-journée
-//   occupée, remplacé par ce critère plutôt que cumulé avec.
-// - **Focus DEMI-JOURNÉE** (inchangé) : Temps Partiel ce créneau précis, ou déjà postée sur CE
-//   créneau précis (Off y compris, une activité comme une autre pour ce check).
+// - **Focus JOUR ENTIER** (revu le 25/07/2026, retour de Samir) : exclut si absent(e) TOUTE la
+//   journée (isPersonAbsentOnDay(), les 2 demi-journées) ou "indisponible toute la journée" (voir
+//   isPersonUnavailableAllDay() ci-dessus). Le check "déjà postée quelque part ce jour" (n'importe
+//   quelle activité, une seule demi-journée suffisait) a été RETIRÉ -- il masquait à tort quelqu'un
+//   qui n'avait qu'une seule demi-journée occupée, remplacé par ce critère plutôt que cumulé avec.
+//   Depuis le 05/08/2026 (congé demi-journée), une personne absente seulement le matin OU seulement
+//   l'après-midi n'est donc plus exclue d'un focus jour entier (elle reste postable sur l'autre moitié).
+// - **Focus DEMI-JOURNÉE** (05/08/2026 : congé/repos vérifiés maintenant PAR CRÉNEAU, isPersonAbsentOnSlot()
+//   -- avant, isPersonAbsentOnDay() excluait à tort les deux moitiés dès qu'une seule était absente) :
+//   absence sur CE créneau précis, Temps Partiel ce créneau précis, ou déjà postée sur CE créneau
+//   précis (Off y compris, une activité comme une autre pour ce check).
 function personMatchesFocusFilter(person) {
   if (!staffFocusFilter) return true;
   const { day, creneauId } = staffFocusFilter;
-  if (isPersonAbsentOnDay(person.id, day)) return false;
-  if (!creneauId) return !isPersonUnavailableAllDay(person.id, day);
+  if (!creneauId) {
+    if (isPersonAbsentOnDay(person.id, day)) return false;
+    return !isPersonUnavailableAllDay(person.id, day);
+  }
+  if (isPersonAbsentOnSlot(person.id, day, creneauId)) return false;
   if (isPersonTPOnSlot(person.id, day, creneauId)) return false;
   return !isPersonPostedOnCreneau(person.id, day, creneauId);
 }
@@ -2458,7 +2530,7 @@ function buildModaliteCell(activity, day, creneau) {
       if (
         !locked &&
         people.some((p) =>
-          (activity.id !== "off" && isPersonAbsentOnDay(p.id, day)) ||
+          (activity.id !== "off" && isPersonAbsentOnSlot(p.id, day, creneau.id)) ||
           hasActivityExclusivityConflict(p.id, day, creneau.id, activity.id)
         )
       ) {
@@ -2957,13 +3029,19 @@ function renderPersonnelRows(tbody) {
 
     DAYS.forEach((day, dayIdx) => {
       const iso = weekDates[dayIdx];
-      // Une personne en congé ou en repos de garde (RG-013) ce jour-là n'est plus assignable --
-      // demandé le 22/07/2026. Congé prioritaire sur repos de garde si (rare) les deux coïncident.
-      // La garde elle-même ne bloque rien : elle signifie que la personne travaille ce jour-là.
-      const onConge = isOnCongeDay(person.id, iso);
-      const onRepos = !onConge && isOnReposGardeDay(person.id, iso);
-      const absenceLabel = onConge ? "Congés" : onRepos ? "Repos de garde" : null;
-      const absenceClass = onConge ? "cell-absence-conge" : onRepos ? "cell-absence-repos" : null;
+      // Congé ou repos de garde (RG-013) rend la personne indisponible sur les créneaux concernés --
+      // granularité PAR CRÉNEAU depuis le 05/08/2026 (congé demi-journée) : un congé "matin" ne
+      // bloque plus que la case matin, l'après-midi reste normalement postable (avant cette date,
+      // congé/repos étaient toujours journée entière -- même statut sur les deux moitiés). Congé
+      // prioritaire sur repos de garde si (rare) les deux coïncident sur le même créneau. La garde
+      // elle-même ne bloque rien : elle signifie que la personne travaille ce jour-là.
+      const absenceForSlot = (creneauId) => {
+        if (congeCoversSlot(person.id, iso, creneauId)) return { label: "Congés", cls: "cell-absence-conge" };
+        if (isOnReposGardeDay(person.id, iso)) return { label: "Repos de garde", cls: "cell-absence-repos" };
+        return null;
+      };
+      const morningAbsence = absenceForSlot("matin");
+      const afternoonAbsence = absenceForSlot("apres-midi");
 
       // Case "postable" normale pour UN créneau précis -- factorisée pour être appelée aussi bien
       // pour une case isolée que pour matin/astreinte quand l'après-midi seul est fusionné plus bas.
@@ -3036,30 +3114,34 @@ function renderPersonnelRows(tbody) {
         return td;
       };
 
-      // RG-014/018/020 (25/07/2026, demande de Samir) : fusionner matin/astreinte/après-midi en une
-      // seule case (au lieu de 3 identiques) si la personne est indisponible TOUTE LA JOURNÉE
-      // (congé/repos -- toujours journée entière -- ou Temps Partiel matin ET après-midi à la fois) ;
-      // fusionner seulement astreinte+après-midi si l'indisponibilité (Temps Partiel) ne couvre que
-      // l'après-midi. Congé/repos étant toujours journée entière, seul Temps Partiel peut produire
-      // le cas "après-midi seul" ou "matin seul" (ce dernier, non prévu par la règle, ne fusionne
-      // rien : la case matin affiche juste son étiquette, astreinte/après-midi restent normales).
-      const morningUnavailable = !!absenceLabel || isPersonTPOnSlot(person.id, day, "matin");
-      const afternoonUnavailable = !!absenceLabel || isPersonTPOnSlot(person.id, day, "apres-midi");
-      const label = absenceLabel || "Temps Partiel";
-      const extraClass = absenceClass || "cell-absence-tp";
+      // RG-014/018/020 (25/07/2026, demande de Samir ; revu le 05/08/2026 pour le congé demi-
+      // journée) : fusionner matin/astreinte/après-midi en une seule case (au lieu de 3 identiques)
+      // si les 2 moitiés sont indisponibles POUR LA MÊME RAISON (même label/classe -- avant le congé
+      // demi-journée, congé/repos étaient toujours journée entière donc les 2 moitiés partageaient
+      // forcément le même statut, cette condition était donc implicitement toujours vraie dès que les
+      // 2 étaient indisponibles) ; fusionner seulement astreinte+après-midi si seule l'après-midi est
+      // indisponible. Si matin et après-midi sont indisponibles pour des raisons DIFFÉRENTES (ex.
+      // congé le matin, Temps Partiel l'après-midi -- rare), les 2 restent des cases séparées plutôt
+      // que d'afficher un label qui ne vaudrait que pour une moitié.
+      const morningUnavailable = !!morningAbsence || isPersonTPOnSlot(person.id, day, "matin");
+      const afternoonUnavailable = !!afternoonAbsence || isPersonTPOnSlot(person.id, day, "apres-midi");
+      const morningLabel = morningAbsence ? morningAbsence.label : "Temps Partiel";
+      const morningClass = morningAbsence ? morningAbsence.cls : "cell-absence-tp";
+      const afternoonLabel = afternoonAbsence ? afternoonAbsence.label : "Temps Partiel";
+      const afternoonClass = afternoonAbsence ? afternoonAbsence.cls : "cell-absence-tp";
 
       // .day-start (25/07/2026) : séparateur de jour plus visible, voir §6.28/style.css -- posé sur
       // la 1re case du jour, qu'elle soit fusionnée (colSpan 3) ou non (matin seul).
-      if (morningUnavailable && afternoonUnavailable) {
-        const cell = buildBlockedCell(label, extraClass, 3);
+      if (morningUnavailable && afternoonUnavailable && morningLabel === afternoonLabel && morningClass === afternoonClass) {
+        const cell = buildBlockedCell(morningLabel, morningClass, 3);
         cell.classList.add("day-start");
         tr.appendChild(cell);
       } else {
-        const morningCell = morningUnavailable ? buildBlockedCell(label, extraClass, 1) : buildNormalCell(CRENEAUX[0]);
+        const morningCell = morningUnavailable ? buildBlockedCell(morningLabel, morningClass, 1) : buildNormalCell(CRENEAUX[0]);
         morningCell.classList.add("day-start");
         tr.appendChild(morningCell);
         if (afternoonUnavailable) {
-          tr.appendChild(buildBlockedCell(label, extraClass, 2));
+          tr.appendChild(buildBlockedCell(afternoonLabel, afternoonClass, 2));
         } else {
           tr.appendChild(buildNormalCell(CRENEAUX[1]));
           tr.appendChild(buildNormalCell(CRENEAUX[2]));
@@ -3089,7 +3171,7 @@ function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
   // est le seul signal de la contradiction, pas un filet de sécurité pour un cas résiduel. RG-021
   // (29/07/2026) généralise l'ancienne RG-018/RG-019 -- Off n'est plus un cas particulier.
   // Verrouillage : prime sur toute violation, aucun conflit n'a de sens à signaler case gelée.
-  const isAbsenceViolation = !locked && activity.id !== "off" && isPersonAbsentOnDay(staffId, tagDay);
+  const isAbsenceViolation = !locked && activity.id !== "off" && isPersonAbsentOnSlot(staffId, tagDay, tagCreneauId);
   const isTPViolation = !locked && !isAbsenceViolation && isPersonTPOnSlot(staffId, tagDay, tagCreneauId);
   const isExclusivityViolation = !locked && !isAbsenceViolation && !isTPViolation && hasActivityExclusivityConflict(staffId, tagDay, tagCreneauId, activity.id);
   const isViolation = isAbsenceViolation || isTPViolation || isExclusivityViolation;
@@ -3104,7 +3186,7 @@ function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
     const person = staffById(staffId);
     if (person) {
       tag.title = isAbsenceViolation
-        ? `${person.prenom} ${person.nom} est absent(e) ce jour-là`
+        ? `${person.prenom} ${person.nom} est absent(e) ce créneau-là`
         : isTPViolation
           ? `${person.prenom} ${person.nom} est à Temps Partiel ce créneau-là`
           : `${person.prenom} ${person.nom} est déjà posté(e) ailleurs ce créneau-là`;
@@ -3562,10 +3644,19 @@ function renderCongePopoverContent(person, monday) {
   gardeRow.appendChild(sundayGardeBtn);
 
   weekDays.forEach(({ iso, label }) => {
+    // Demi-journée (05/08/2026) : la pilule reste un clic gauche = journée entière (inchangé), mais
+    // affiche un " ½" + bordure en tirets si le jour n'est couvert que par une seule moitié -- clic
+    // droit pour choisir (voir openCongeHalfDayMenu()). congeRecord() relit l'enregistrement courant
+    // (pas juste un booléen) pour connaître son demiJournee éventuel.
+    const congeRecord = state.conges.find((c) => congeCoversDay(c, person.id, iso));
+    const half = congeRecord ? congeRecord.demiJournee : null;
     const congeBtn = document.createElement("button");
     congeBtn.type = "button";
-    congeBtn.className = "conge-pill conge-pill-conge" + (isOnCongeDay(person.id, iso) ? " active" : "");
-    congeBtn.textContent = label;
+    congeBtn.className = "conge-pill conge-pill-conge" + (congeRecord ? " active" : "") + (half ? " conge-pill-half" : "");
+    congeBtn.textContent = half ? `${label} ½` : label;
+    congeBtn.title = half
+      ? `Congé ${half === "matin" ? "matin" : "après-midi"} uniquement -- clic droit pour modifier`
+      : "Clic droit pour ne poser qu'une demi-journée";
     // stopPropagation() : sans ça, le clic remonte jusqu'au gestionnaire global document (voir plus
     // bas dans le fichier) APRÈS que renderCongePopoverContent() a déjà remplacé pop.innerHTML --
     // le bouton d'origine se retrouve détaché du DOM, donc `pop.contains(e.target)` renvoie false et
@@ -3578,6 +3669,13 @@ function renderCongePopoverContent(person, monday) {
       saveState();
       render();
       renderCongePopoverContent(person, monday);
+    });
+    // Clic droit (05/08/2026, congé demi-journée -- Samir a choisi ce geste pour ne rien changer au
+    // clic gauche existant ni ajouter d'élément visuel permanent au popover, "rare mais ça arrive").
+    congeBtn.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openCongeHalfDayMenu(person, iso, e.clientX, e.clientY, () => renderCongePopoverContent(person, monday));
     });
     congeRow.appendChild(congeBtn);
 
@@ -3608,6 +3706,58 @@ function renderCongePopoverContent(person, monday) {
   });
 
   document.getElementById("popClose").addEventListener("click", () => pop.classList.add("hidden"));
+}
+
+// Menu contextuel (clic droit) sur une pilule Congé -- 3 choix + Retirer (05/08/2026, congé demi-
+// journée : "rare mais ça arrive", Samir a choisi le clic droit pour ne rien changer au clic gauche
+// existant ni ajouter d'élément visuel permanent au popover). Réutilise le look de .dropdown-menu
+// (#moreMenu) mais en position fixed, positionné aux coordonnées du clic (comme un menu contextuel
+// natif) -- pas ancré à un parent positionné comme #moreMenu. Fermé au choix ou au clic extérieur
+// (voir le gestionnaire global document plus bas).
+function openCongeHalfDayMenu(person, iso, x, y, onChange) {
+  const menu = document.getElementById("congeHalfDayMenu");
+  const current = state.conges.find((c) => congeCoversDay(c, person.id, iso));
+  const currentState = current ? (current.demiJournee || "full") : null;
+
+  menu.innerHTML = "";
+  [
+    { key: "full", label: "Journée entière" },
+    { key: "matin", label: "Matin seul" },
+    { key: "apres-midi", label: "Après-midi seul" },
+  ].forEach(({ key, label }) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = (currentState === key ? "✓ " : "") + label;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setCongeHalfDay(person.id, iso, key === "full" ? null : key);
+      saveState();
+      render();
+      onChange();
+      menu.classList.add("hidden");
+    });
+    menu.appendChild(btn);
+  });
+
+  if (current) {
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.textContent = "Retirer";
+    clearBtn.style.color = "#b91c1c";
+    clearBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setCongeHalfDay(person.id, iso, "clear");
+      saveState();
+      render();
+      onChange();
+      menu.classList.add("hidden");
+    });
+    menu.appendChild(clearBtn);
+  }
+
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+  menu.classList.remove("hidden");
 }
 
 // ---------- Vue Stats (24/07/2026) ----------
@@ -4928,6 +5078,12 @@ document.addEventListener("click", (e) => {
   const moreMenu = document.getElementById("moreMenu");
   if (moreMenu && !moreMenu.classList.contains("hidden") && !e.target.closest(".more-menu-wrap")) {
     moreMenu.classList.add("hidden");
+  }
+  // Menu contextuel de la pilule Congé (clic droit, 05/08/2026) -- se ferme au clic extérieur, même
+  // patron que les autres menus/popovers de l'appli.
+  const congeMenu = document.getElementById("congeHalfDayMenu");
+  if (congeMenu && !congeMenu.classList.contains("hidden") && !e.target.closest("#congeHalfDayMenu")) {
+    congeMenu.classList.add("hidden");
   }
 });
 
