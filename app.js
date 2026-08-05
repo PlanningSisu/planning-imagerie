@@ -327,6 +327,11 @@ let statsMode = "week";
 let statsRangeStart = null;
 let statsRangeEnd = null;
 
+// Affichage des badges "manquant" (05/08/2026, §6.42) -- décoché par défaut ("pour masquer
+// l'affichage des manquants dans un premier temps", demande de Samir, "on verra à l'usage") :
+// transitoire, non persisté, repart décoché à chaque rechargement comme statsMode.
+let statsShowMissing = false;
+
 // Focus jour / demi-journée (24/07/2026) : cliquer sur l'en-tête d'un jour (ou d'un créneau précis
 // sous ce jour) dans le tableau principal filtre le panneau Personnel (#staffList) pour ne montrer
 // que les personnes PRÉSENTES ce jour-là (RG-014 : ni congé ni repos de garde) ET PAS DÉJÀ POSTÉES
@@ -4324,6 +4329,22 @@ function renderStatsView() {
     picker.append(startInput, sep, endInput);
     modeBar.appendChild(picker);
   }
+
+  // Case à cocher "Afficher les manquants" (05/08/2026, à côté du sélecteur Semaine/Période, demande
+  // de Samir) -- décochée par défaut (statsShowMissing), pour ne montrer les badges §6.42 qu'à la
+  // demande le temps de voir à l'usage si Samir les veut affichés en permanence ou pas.
+  const missingToggle = document.createElement("label");
+  missingToggle.className = "stats-missing-toggle";
+  const missingCheckbox = document.createElement("input");
+  missingCheckbox.type = "checkbox";
+  missingCheckbox.checked = statsShowMissing;
+  missingCheckbox.addEventListener("change", () => {
+    statsShowMissing = missingCheckbox.checked;
+    render();
+  });
+  missingToggle.append(missingCheckbox, "Afficher les manquants");
+  modeBar.appendChild(missingToggle);
+
   container.appendChild(modeBar);
 
   if (people.length === 0) {
@@ -4364,11 +4385,13 @@ function renderStatsView() {
         badge.textContent = entry ? entry.total : 0;
         td.appendChild(badge);
 
-        // Compteur de "manquants" (05/08/2026) : silencieux si rien à signaler (choix de Samir,
-        // "j'aime bien" l'option sans bruit visuel quand tout va bien) -- badge rouge uniquement si
-        // au moins un créneau n'est ni excusé (congé/repos) ni couvert (affectation/Bureau/Off/Temps
-        // Partiel). Détail des créneaux précis au survol, voir missingSlotsForDate().
-        const missing = missingDaysList.flatMap((d) => missingSlotsForDate(person.id, d));
+        // Compteur de "manquants" (05/08/2026) : masqué par défaut derrière la case "Afficher les
+        // manquants" (statsShowMissing, décochée par défaut) -- pas de calcul du tout tant qu'elle
+        // n'est pas cochée, ni le badge lui-même sinon (silencieux si rien à signaler, choix de
+        // Samir, "j'aime bien" l'option sans bruit visuel quand tout va bien) -- badge rouge
+        // uniquement si au moins un créneau n'est ni excusé (congé/repos) ni couvert
+        // (affectation/Bureau/Off/Temps Partiel). Détail des créneaux précis au survol.
+        const missing = statsShowMissing ? missingDaysList.flatMap((d) => missingSlotsForDate(person.id, d)) : [];
         if (missing.length > 0) {
           const missingBadge = document.createElement("span");
           missingBadge.className = "stats-missing-badge";

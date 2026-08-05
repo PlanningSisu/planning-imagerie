@@ -1734,6 +1734,17 @@ tr.group-end td {
   font-size: 13px;
   color: #475569;
 }
+/* Case "Afficher les manquants" (05/08/2026, à côté du sélecteur Semaine/Période) -- même style
+   texte que .stats-period-picker, gap réutilisé par .stats-mode-bar (flex, gap:10px) pour l'espacer
+   des autres éléments de la barre. */
+.stats-missing-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #475569;
+  cursor: pointer;
+}
 /* Colonnes réordonnables par glisser-déposer (24/07/2026, demande de Samir) -- "Personnel" (1re
    colonne, .person-name-cell) n'est jamais draggable, n'a donc pas ce curseur. `.drag-over` reprend
    le même traitement visuel que `.slot-cell.drag-over` (voir plus haut) pour rester cohérent avec le
@@ -1772,12 +1783,17 @@ tr.group-end td {
   font-weight: 700;
 }
 /* Compteur de "manquants" (05/08/2026, colonne Total) -- silencieux si 0 (rien n'est ajouté au DOM,
-   voir renderStatsView()), affiché seulement s'il y a au moins un créneau ni excusé ni couvert. */
+   voir renderStatsView()), affiché seulement s'il y a au moins un créneau ni excusé ni couvert.
+   Sur sa propre ligne, sous la pastille Total (pas collé à côté, retour de Samir 05/08/2026) --
+   .stats-total-badge reste inline-flex, mais un span display:flex qui suit redescend
+   automatiquement à la ligne dans une <td> (pas de flex-wrap/flex-direction à poser sur la cellule
+   elle-même, qui doit rester text-align:center pour les autres colonnes qui la partagent). */
 .stats-missing-badge {
-  display: inline-flex;
+  display: flex;
+  width: fit-content;
   align-items: center;
   gap: 3px;
-  margin-left: 6px;
+  margin: 6px auto 0;
   padding: 1px 7px 1px 5px;
   border-radius: 999px;
   background: #fee2e2;
