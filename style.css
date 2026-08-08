@@ -1871,6 +1871,67 @@ tr.group-end td {
   font-weight: 600;
   color: #7f1d1d;
 }
+/* Badges Congés/Repos de garde en mode "badge" (RG-025, 08/08/2026) -- même rouge que
+   .stats-absence-label/.conges-day-mark (couleur "absence" déjà établie ailleurs dans l'appli),
+   pas une nouvelle teinte inventée. */
+.chip.stats-badge-absence {
+  background: #fee2e2;
+  color: #7f1d1d;
+}
+
+/* Bouton "⚙ Colonnes" (RG-025) -- même hauteur/style que les autres contrôles de .stats-mode-bar. */
+.stats-columns-btn {
+  border: 1px solid var(--border);
+  background: white;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.stats-columns-btn:hover { background: #f1f5f9; }
+.stats-columns-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.stats-columns-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.stats-columns-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.stats-columns-mode-toggle {
+  display: flex;
+  gap: 2px;
+  background: #e2e8f0;
+  border-radius: 999px;
+  padding: 2px;
+}
+.stats-columns-mode-btn {
+  border: none;
+  background: transparent;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.stats-columns-mode-btn.active {
+  background: #334155;
+  color: white;
+}
 
 /* Trame Personnel (24/07/2026) : Samir veut voir toute la semaine (5 jours x 3 créneaux) sans
    scroll horizontal sur cette page précise. `table` fixe un `min-width: 900px` global -- neutralisé

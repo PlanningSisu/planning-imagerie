@@ -477,7 +477,7 @@ const STORAGE_KEY = "planningAppState_v3";
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 8;
+const STATE_SCHEMA_VERSION = 9;
 
 // Clé = version de départ, valeur = fonction qui transforme les données de cette version vers la
 // version suivante (N -> N+1, jamais un saut direct). migrateState() les enchaîne jusqu'à
@@ -513,6 +513,16 @@ const STATE_MIGRATIONS = {
   // 08/08/2026) -- un objet vide suffit, aucune vacation n'a d'exception par défaut (retombe sur
   // vacationSpecialites, comme avant).
   7: (data) => ({ ...data, vacationSpecialitesWeekly: data.vacationSpecialitesWeekly || {} }),
+  // 8 -> 9 : ajout de statsColumnVisibility/statsCounterMode (colonnes Stats facultatives + badges
+  // Congés/Repos de garde, 08/08/2026) -- statsColumnVisibility vide = tout visible (comportement
+  // d'origine, voir sa lecture via `!== false`) ; statsCounterMode a besoin d'un défaut EXPLICITE
+  // (pas juste {}) pour que Congés retombe bien sur "colonne" et Repos de garde sur "badge" -- un
+  // objet vide ferait l'inverse pour Congés (voir renderStatsView(), le filtre lit `!== "column"`).
+  8: (data) => ({
+    ...data,
+    statsColumnVisibility: data.statsColumnVisibility || {},
+    statsCounterMode: data.statsCounterMode || { conges: "column", reposGarde: "badge" },
+  }),
 };
 
 function migrateState(rawData) {
@@ -542,7 +552,7 @@ function migrateState(rawData) {
 // pour ne jamais en oublier un dans l'un des trois chemins). Délibérément SANS `activities` (piloté
 // par le code, jamais par des données utilisateur -- voir CLAUDE.md §4) ni `schemaVersion` (ajouté à
 // part par buildPersistedState()).
-const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "customColors", "weekLocks", "weekNotes"];
+const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "statsColumnVisibility", "statsCounterMode", "customColors", "weekLocks", "weekNotes"];
 
 // Personnalisation (25/07/2026, ⚙ → "Personnalisation") : quelques couleurs éditables depuis
 // l'appli sans toucher au code -- une entrée par variable CSS `--custom-xxx` (voir :root dans
@@ -589,7 +599,7 @@ function buildPersistedState() {
 // mémoire, après migration. Ne touche jamais state.activities, quoi que contienne rawData.
 // Ordre par défaut des colonnes de la vue Stats (24/07/2026, colonnes réordonnables à la main) --
 // "Personnel" n'en fait pas partie, elle reste toujours fixe en 1re position (colonne figée).
-const DEFAULT_STATS_COLUMN_ORDER = ["total", "vacations", "astreinte", "bureau", "off"];
+const DEFAULT_STATS_COLUMN_ORDER = ["total", "vacations", "astreinte", "bureau", "off", "conges", "reposGarde"];
 
 // Valide/complète un ordre de colonnes Stats persisté -- un fichier plus ancien (sans ce champ du
 // tout), corrompu, ou une future colonne ajoutée par le code mais absente d'un vieil export ne doit
@@ -670,6 +680,14 @@ let state = {
   // Ordre des colonnes de la vue Stats (24/07/2026, réordonnables par glisser-déposer des en-têtes,
   // voir renderStatsView()) -- "Personnel" n'en fait pas partie, toujours fixe en 1re position.
   statsColumnOrder: DEFAULT_STATS_COLUMN_ORDER.slice(),
+  // Colonnes/badges facultatifs de la vue Stats (08/08/2026, demande de Samir) -- clé absente ou
+  // `true` = visible (voir sa lecture via `!== false`, pour qu'un vieux fichier sans ce champ du
+  // tout affiche tout comme avant, sans rien à migrer explicitement).
+  statsColumnVisibility: {}, // key: colId ("total"|"vacations"|"astreinte"|"bureau"|"off"|"conges"|"reposGarde") -> false pour masquer
+  // Mode d'affichage des compteurs Congés/Repos de garde (08/08/2026) -- "column" = colonne dédiée
+  // comme Bureau/Off, "badge" = badge dans la colonne Vacations. Par défaut : Congés en colonne,
+  // Repos de garde en badge (demande explicite de Samir).
+  statsCounterMode: { conges: "column", reposGarde: "badge" },
   // Personnalisation (25/07/2026, ⚙ → "Personnalisation") : quelques couleurs éditables sans coder
   // -- voir CUSTOM_COLOR_FIELDS/applyCustomColors(). Clé absente = valeur par défaut du CSS.
   customColors: {}, // key: voir CUSTOM_COLOR_FIELDS -> "#rrggbb"
@@ -2993,6 +3011,78 @@ function renderWeekNotePopoverContent() {
   textarea.focus();
 }
 
+// Colonnes/badges facultatifs de la vue Stats (08/08/2026, "toutes les colonnes soient
+// facultatives... choisir colonne ou badge") : liste des métriques réglables -- Personnel n'en fait
+// pas partie (toujours fixe, comme pour columnDefs/DEFAULT_STATS_COLUMN_ORDER). `hasMode` = a le
+// choix Colonne/Badge (seulement Congés/Repos de garde pour l'instant -- les autres sont toujours
+// des colonnes, un mode "badge" n'aurait pas de sens visuel pour un total/cumul unique comme Astreinte).
+const STATS_COLUMN_METRICS = [
+  { id: "total", label: "Total" },
+  { id: "vacations", label: "Vacations" },
+  { id: "astreinte", label: "Astreinte" },
+  { id: "bureau", label: "Bureau" },
+  { id: "off", label: "Off" },
+  { id: "conges", label: "Congés", hasMode: true },
+  { id: "reposGarde", label: "Repos de garde", hasMode: true },
+];
+
+function openStatsColumnsPopover(cellEl) {
+  const pop = document.getElementById("assignPopover");
+  renderStatsColumnsPopoverContent();
+  positionPopover(pop, cellEl);
+}
+
+function renderStatsColumnsPopoverContent() {
+  const pop = document.getElementById("assignPopover");
+  pop.style.minWidth = "230px";
+  pop.innerHTML = `
+    <span class="close-btn" id="popClose">×</span>
+    <strong>Colonnes affichées</strong>
+    <div id="statsColumnsList" class="stats-columns-list"></div>
+  `;
+  const list = document.getElementById("statsColumnsList");
+  STATS_COLUMN_METRICS.forEach(({ id, label, hasMode }) => {
+    const row = document.createElement("div");
+    row.className = "stats-columns-row";
+
+    const checkboxLabel = document.createElement("label");
+    checkboxLabel.className = "stats-columns-checkbox-label";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = state.statsColumnVisibility[id] !== false;
+    checkbox.addEventListener("change", () => {
+      state.statsColumnVisibility[id] = checkbox.checked;
+      saveState();
+      render();
+      renderStatsColumnsPopoverContent();
+    });
+    checkboxLabel.append(checkbox, " " + label);
+    row.appendChild(checkboxLabel);
+
+    if (hasMode) {
+      const modeToggle = document.createElement("div");
+      modeToggle.className = "stats-columns-mode-toggle";
+      [["column", "Colonne"], ["badge", "Badge"]].forEach(([mode, modeLabel]) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "stats-columns-mode-btn" + (state.statsCounterMode[id] === mode ? " active" : "");
+        btn.textContent = modeLabel;
+        btn.addEventListener("click", () => {
+          state.statsCounterMode[id] = mode;
+          saveState();
+          render();
+          renderStatsColumnsPopoverContent();
+        });
+        modeToggle.appendChild(btn);
+      });
+      row.appendChild(modeToggle);
+    }
+
+    list.appendChild(row);
+  });
+  document.getElementById("popClose").addEventListener("click", () => pop.classList.add("hidden"));
+}
+
 function openVacationSpecPopover(specKey, cellEl, activity, day, creneau) {
   const pop = document.getElementById("assignPopover");
   renderVacationSpecPopoverContent(specKey, activity, day, creneau);
@@ -4399,6 +4489,32 @@ function missingSlotsForDate(staffId, { iso, dayName, weekKeyPart }) {
   return missing;
 }
 
+// Colonnes/badges "Congés"/"Repos de garde" de la vue Stats (08/08/2026, demande de Samir). Comptées
+// en JOURS sur une liste de dates ISO -- un congé journée entière vaut 1, une demi-journée (RG-014)
+// vaut 0,5 ; un repos de garde (RG-013, toujours journée entière) vaut toujours 1. `isoList` est la
+// même liste que celle utilisée pour le compteur de "manquants" (missingDaysList.map(d => d.iso)),
+// valable aussi bien en mode Semaine qu'en mode Période.
+function congeDaysCountForRange(staffId, isoList) {
+  let total = 0;
+  isoList.forEach((iso) => {
+    const matin = congeCoversSlot(staffId, iso, "matin");
+    const aprem = congeCoversSlot(staffId, iso, "apres-midi");
+    if (matin && aprem) total += 1;
+    else if (matin || aprem) total += 0.5;
+  });
+  return total;
+}
+
+function reposGardeDaysCountForRange(staffId, isoList) {
+  return isoList.filter((iso) => isOnReposGardeDay(staffId, iso)).length;
+}
+
+// Formate un nombre de jours pour l'affichage -- entier tel quel, décimal en virgule française
+// ("2,5" plutôt que "2.5") pour une demi-journée de congé.
+function formatDaysCount(n) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1).replace(".", ",");
+}
+
 // Équivalent de computeVacationStatsForWeek() pour le mode "Période" (24/07/2026) -- même forme de
 // résultat (avec `astreinte` en plus directement dans l'entrée, voir plus bas). Consulte désormais la
 // trame via effectiveAssignedIdsForWeek() ci-dessus (29/07/2026, voir son commentaire) exactement
@@ -4605,6 +4721,22 @@ function renderStatsView() {
   missingToggle.append(missingCheckbox, "Afficher les manquants");
   modeBar.appendChild(missingToggle);
 
+  // Colonnes/badges facultatifs (08/08/2026, demande de Samir : "toutes les colonnes soient
+  // facultatives... choisir si je veux un compteur de type colonne ou de type badge") -- popover
+  // partagé (comme tous les autres, voir renderStatsColumnsPopoverContent()). stopPropagation() : ce
+  // bouton n'est ni .slot-cell ni .popover-anchor, sans lui le clic qui ouvre le popover remonterait
+  // jusqu'au gestionnaire global et le refermerait aussitôt (même patron que #btnMoreMenu).
+  const columnsBtn = document.createElement("button");
+  columnsBtn.type = "button";
+  columnsBtn.className = "stats-columns-btn";
+  columnsBtn.textContent = "⚙ Colonnes";
+  columnsBtn.title = "Choisir les colonnes/badges affichés";
+  columnsBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openStatsColumnsPopover(columnsBtn);
+  });
+  modeBar.appendChild(columnsBtn);
+
   container.appendChild(modeBar);
 
   if (people.length === 0) {
@@ -4670,36 +4802,62 @@ function renderStatsView() {
       buildCell(person, entry) {
         const td = document.createElement("td");
         td.className = "stats-badges-cell";
-        if (statsMode === "week" && isFullyOnLeaveThisWeek(person)) {
+        const fullyOnLeave = statsMode === "period"
+          ? isFullyOnLeaveForRange(person.id, periodDaysIso)
+          : isFullyOnLeaveThisWeek(person);
+        if (fullyOnLeave) {
           // Ligne gardée visible plutôt que masquée (contrairement au panneau Personnel, voir
           // isFullyOnLeaveThisWeek()) : un total à 0 sans explication laisserait croire à un oubli
           // plutôt qu'à une absence -- voir aussi buildAbsenceBar() pour la même logique ailleurs.
           const absence = document.createElement("span");
           absence.className = "stats-absence-label";
-          absence.textContent = "Congés toute la semaine";
+          absence.textContent = statsMode === "period" ? "Congés toute la période" : "Congés toute la semaine";
           td.appendChild(absence);
-        } else if (statsMode === "period" && isFullyOnLeaveForRange(person.id, periodDaysIso)) {
-          // Équivalent période (29/07/2026) -- voir isFullyOnLeaveForRange()/statsPeriodTier() : avant
-          // ce fix, une personne en congé sur toute la période choisie tombait dans la branche `!entry`
-          // juste en dessous (texte générique "Aucune vacation..."), indiscernable d'une personne
-          // simplement libre -- désormais le même message explicite qu'en mode Semaine, adapté au mot
-          // "période".
-          const absence = document.createElement("span");
-          absence.className = "stats-absence-label";
-          absence.textContent = "Congés toute la période";
-          td.appendChild(absence);
-        } else if (!entry) {
-          const empty = document.createElement("span");
-          empty.className = "empty-hint";
-          empty.textContent = noDataText;
-          td.appendChild(empty);
-        } else {
+          return td;
+        }
+        // Colonnes/badges facultatifs (08/08/2026) : Congés/Repos de garde en mode "badge" s'ajoutent ici, à la suite des
+        // badges de spécialité -- restructuré (par rapport à avant cette RG) pour qu'ils s'affichent
+        // même si `entry` est vide (personne sans aucune vraie vacation cette semaine mais avec un
+        // congé partiel, ex. 2 jours sur 5) : avant, ce cas tombait dans la branche `!entry` et son
+        // texte générique, sans jamais montrer les badges Congés/Repos malgré `statsCounterMode`.
+        let anyBadge = false;
+        if (entry) {
           sortedStatsBadges(entry).forEach((badge) => {
+            anyBadge = true;
             const span = document.createElement("span");
             span.className = statBadgeClass(badge) + " stats-badge";
             span.textContent = `${badge.count} ${badge.label}`;
             td.appendChild(span);
           });
+        }
+        const isoList = missingDaysList.map((d) => d.iso);
+        // Couleur "absence" partagée par congé ET repos de garde (même convention que
+        // buildAbsenceBar(), §4.9 CLAUDE.md -- pas une nouvelle couleur inventée).
+        if (state.statsCounterMode.conges === "badge") {
+          const days = congeDaysCountForRange(person.id, isoList);
+          if (days > 0) {
+            anyBadge = true;
+            const span = document.createElement("span");
+            span.className = "chip stats-badge stats-badge-absence";
+            span.textContent = `${formatDaysCount(days)} Congés`;
+            td.appendChild(span);
+          }
+        }
+        if (state.statsCounterMode.reposGarde === "badge") {
+          const days = reposGardeDaysCountForRange(person.id, isoList);
+          if (days > 0) {
+            anyBadge = true;
+            const span = document.createElement("span");
+            span.className = "chip stats-badge stats-badge-absence";
+            span.textContent = `${days} Repos de garde`;
+            td.appendChild(span);
+          }
+        }
+        if (!anyBadge) {
+          const empty = document.createElement("span");
+          empty.className = "empty-hint";
+          empty.textContent = noDataText;
+          td.appendChild(empty);
         }
         return td;
       },
@@ -4747,9 +4905,49 @@ function renderStatsView() {
         return td;
       },
     },
+    // Colonnes/badges facultatifs (08/08/2026) : Congés/Repos de garde, en colonne uniquement si state.statsCounterMode
+    // les met dans ce mode (voir le filtre de columnOrder juste en dessous) -- sinon comptés en badge
+    // dans la colonne "vacations" ci-dessus. N'a pas besoin de `entry` (computeVacationStatsForWeek()/
+    // ...ForPeriod()) : compté directement depuis state.conges/state.gardes sur la même liste de
+    // jours que le compteur de "manquants" (missingDaysList).
+    conges: {
+      label: "Congés",
+      headerClass: "stats-total-header",
+      headerTitle: "Nombre de jours de congé (0,5 = demi-journée)",
+      buildCell(person) {
+        const td = document.createElement("td");
+        td.className = "stats-total-cell";
+        const badge = document.createElement("span");
+        badge.className = "stats-total-badge";
+        badge.textContent = formatDaysCount(congeDaysCountForRange(person.id, missingDaysList.map((d) => d.iso)));
+        td.appendChild(badge);
+        return td;
+      },
+    },
+    reposGarde: {
+      label: "Repos de garde",
+      headerClass: "stats-total-header",
+      headerTitle: "Nombre de jours de repos de garde (RG-013)",
+      buildCell(person) {
+        const td = document.createElement("td");
+        td.className = "stats-total-cell";
+        const badge = document.createElement("span");
+        badge.className = "stats-total-badge";
+        badge.textContent = reposGardeDaysCountForRange(person.id, missingDaysList.map((d) => d.iso));
+        td.appendChild(badge);
+        return td;
+      },
+    },
   };
 
-  const columnOrder = normalizeStatsColumnOrder(state.statsColumnOrder);
+  // Colonnes facultatives (08/08/2026) : statsColumnVisibility, clé absente/`true` = visible
+  // + Congés/Repos de garde exclus de la liste des COLONNES quand leur mode est "badge" (ils
+  // s'affichent alors dans la cellule "vacations" à la place, voir columnDefs.vacations ci-dessus).
+  const columnOrder = normalizeStatsColumnOrder(state.statsColumnOrder).filter((colId) => {
+    if (state.statsColumnVisibility[colId] === false) return false;
+    if ((colId === "conges" || colId === "reposGarde") && state.statsCounterMode[colId] !== "column") return false;
+    return true;
+  });
 
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
