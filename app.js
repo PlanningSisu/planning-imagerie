@@ -477,7 +477,7 @@ const STORAGE_KEY = "planningAppState_v3";
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 6;
+const STATE_SCHEMA_VERSION = 7;
 
 // Clé = version de départ, valeur = fonction qui transforme les données de cette version vers la
 // version suivante (N -> N+1, jamais un saut direct). migrateState() les enchaîne jusqu'à
@@ -506,6 +506,9 @@ const STATE_MIGRATIONS = {
   // suffit, le comportement automatique (verrouillée si strictement passée) s'applique déjà sans
   // aucune entrée explicite.
   5: (data) => ({ ...data, weekLocks: data.weekLocks || {} }),
+  // 6 -> 7 : ajout de `weekNotes` (annotations libres par semaine, 08/08/2026) -- un objet vide
+  // suffit, aucune semaine n'a d'annotation par défaut.
+  6: (data) => ({ ...data, weekNotes: data.weekNotes || {} }),
 };
 
 function migrateState(rawData) {
@@ -535,7 +538,7 @@ function migrateState(rawData) {
 // pour ne jamais en oublier un dans l'un des trois chemins). Délibérément SANS `activities` (piloté
 // par le code, jamais par des données utilisateur -- voir CLAUDE.md §4) ni `schemaVersion` (ajouté à
 // part par buildPersistedState()).
-const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "customColors", "weekLocks"];
+const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "customColors", "weekLocks", "weekNotes"];
 
 // Personnalisation (25/07/2026, ⚙ → "Personnalisation") : quelques couleurs éditables depuis
 // l'appli sans toucher au code -- une entrée par variable CSS `--custom-xxx` (voir :root dans
@@ -659,6 +662,10 @@ let state = {
   // Clé absente = comportement automatique (verrouillée si strictement passée) ; true/false = override
   // manuel qui gagne toujours sur l'automatique.
   weekLocks: {}, // key: weekKey (Lundi ISO) -> true (verrouillée) | false (déverrouillée explicitement)
+  // Annotations libres par semaine (08/08/2026, clic sur "Semaine du..." dans la topbar) -- structurel
+  // comme weekLocks (clé = weekKey), jamais réinitialisé par "Réinitialiser le planning". Clé absente
+  // ou vide = pas d'annotation pour cette semaine.
+  weekNotes: {}, // key: weekKey (Lundi ISO) -> texte libre
 };
 
 function loadState() {
@@ -817,6 +824,20 @@ function setFileSyncStatus(status) {
   // avec le libellé complet -- pour ne pas perdre le contexte "c'est le statut de synchro GitHub".
   el.title = `Synchro GitHub : ${fileSyncStatusLabel()}`;
   el.className = "file-sync-status file-sync-" + status;
+}
+
+// Annotation de semaine (08/08/2026) : "Semaine du..." change de couleur (`.week-label-annotated`)
+// et porte l'annotation en `title` (survol) dès que `state.weekNotes` a du texte pour la semaine
+// ACTUELLEMENT AFFICHÉE -- mise à jour à chaque rendu (comme renderWeekLockButton()) puisque
+// naviguer d'une semaine à l'autre change ce qu'il faut montrer. Appelée aussi directement (sans
+// passer par tout render()) à chaque frappe dans le popover d'annotation, voir
+// renderWeekNotePopoverContent() -- un render() complet à chaque caractère tapé serait excessif.
+function renderWeekLabel() {
+  const label = document.getElementById("weekLabel");
+  label.textContent = currentWeekLabel();
+  const note = state.weekNotes[weekKey(getMonday(state.weekOffset))];
+  label.classList.toggle("week-label-annotated", !!note);
+  label.title = note || "Cliquer pour ajouter une annotation à cette semaine";
 }
 
 // Verrouillage des semaines (29/07/2026) : icône à côté du statut de synchro -- reflète TOUJOURS la
@@ -2088,7 +2109,7 @@ function handleAssignmentDrop(e, targetKey) {
 }
 
 function render() {
-  document.getElementById("weekLabel").textContent = currentWeekLabel();
+  renderWeekLabel();
   renderWeekLockButton();
 
   // Dérivées du mode Trame (voir déclaration plus haut) -- recalculées en tout premier ici pour que
@@ -2845,6 +2866,45 @@ function togglePopoverSelectList(trigger, list) {
   if (spaceBelow < listRect.height + 8 && spaceAbove > spaceBelow) {
     list.classList.add("popover-select-list-up");
   }
+}
+
+// Annotation de semaine (08/08/2026, clic sur "Semaine du..." dans la topbar) : popover partagé
+// (comme tous les autres, voir positionPopover()) avec une simple zone de texte libre, une par
+// semaine (state.weekNotes, clé weekKey). Sauvegarde en direct à chaque frappe (`input`, pas de
+// bouton "Enregistrer" séparé) -- saveState() est déjà debouncé (scheduleFileSave(), ~400ms), donc
+// pas de coût réel à sauvegarder à chaque caractère. Contrairement aux autres popovers, ne se
+// re-rend JAMAIS lui-même après une frappe (reconstruire le <textarea> via innerHTML ferait perdre
+// le focus/la position du curseur en pleine saisie) -- seul renderWeekLabel() est rappelé
+// directement (pas tout render(), trop coûteux à chaque caractère) pour mettre à jour la
+// couleur/le survol de "Semaine du..." en direct.
+function openWeekNotePopover(cellEl) {
+  const pop = document.getElementById("assignPopover");
+  renderWeekNotePopoverContent();
+  positionPopover(pop, cellEl);
+}
+
+function renderWeekNotePopoverContent() {
+  const pop = document.getElementById("assignPopover");
+  pop.style.minWidth = "240px";
+  const wk = weekKey(getMonday(state.weekOffset));
+  pop.innerHTML = `
+    <span class="close-btn" id="popClose">×</span>
+    <strong>Annotation</strong><br>
+    <span style="font-size:12px;color:#6b7280;">${currentWeekLabel()}</span>
+    <textarea id="weekNoteTextarea" class="week-note-textarea" placeholder="Notes libres pour cette semaine..."></textarea>
+  `;
+  const textarea = document.getElementById("weekNoteTextarea");
+  // .value (jamais interpolé dans le HTML ci-dessus) : évite tout souci d'échappement si
+  // l'annotation contient des caractères spéciaux (<, >, &...).
+  textarea.value = state.weekNotes[wk] || "";
+  textarea.addEventListener("input", () => {
+    if (textarea.value.trim()) state.weekNotes[wk] = textarea.value;
+    else delete state.weekNotes[wk];
+    saveState();
+    renderWeekLabel();
+  });
+  document.getElementById("popClose").addEventListener("click", () => pop.classList.add("hidden"));
+  textarea.focus();
 }
 
 function openVacationSpecPopover(specKey, cellEl, activity, day, creneau) {
@@ -5270,6 +5330,11 @@ document.getElementById("btnCurrentWeek").addEventListener("click", () => {
 
 // Verrouillage des semaines (29/07/2026) : voir toggleCurrentWeekLock()/renderWeekLockButton().
 document.getElementById("btnWeekLock").addEventListener("click", toggleCurrentWeekLock);
+
+// Annotation de semaine (08/08/2026) : voir openWeekNotePopover()/renderWeekLabel().
+document.getElementById("weekLabel").addEventListener("click", (e) => {
+  openWeekNotePopover(e.currentTarget);
+});
 
 // Titre "Planning Imagerie" devenu bouton (24/07/2026, demande de Samir, remplace l'ancien bouton
 // "Retour Planning" séparé -- même comportement, juste porté par le titre) : toujours au même

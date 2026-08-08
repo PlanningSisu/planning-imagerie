@@ -83,6 +83,34 @@ body {
   text-decoration: underline;
 }
 
+/* Annotation de semaine (08/08/2026, clic sur "Semaine du...") -- couleur sobre déjà utilisée
+   ailleurs dans la topbar (.file-sync-status.file-sync-saving) pour un signal "à noter/en attente"
+   sur ce même fond sombre, réutilisée ici pour rester cohérent plutôt que d'inventer une nouvelle
+   teinte. Texte blanc par défaut (hérité de .topbar), ambre dès qu'il y a une annotation. */
+#weekLabel {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+#weekLabel:hover {
+  text-decoration: underline;
+}
+#weekLabel.week-label-annotated {
+  color: #fbbf24;
+}
+.week-note-textarea {
+  display: block;
+  width: 100%;
+  min-height: 90px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
 .week-nav {
   display: flex;
   align-items: center;
