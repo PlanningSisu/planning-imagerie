@@ -1024,6 +1024,23 @@ function weekKey(monday) {
   return monday.toISOString().slice(0, 10);
 }
 
+// RG-023 (05/08/2026) : reconstruit le lundi (Date locale) correspondant à un `weekKeyPart` --
+// weekKey() convertit en UTC avant de tronquer (§2 CLAUDE.md, piège de fuseau horaire déjà connu),
+// ce qui peut décaler la chaîne d'un jour selon le fuseau. Un simple `new Date(weekKeyPart)` ne
+// suffit donc pas à retrouver le VRAI lundi local -- nécessaire ici pour comparer un `weekKeyPart`
+// de state.assignments/state.trame à des dates de congé (state.conges, en heure locale, voir
+// toISODateLocal()), un besoin qui n'existait pas avant (le reste du code ne fait que comparer des
+// weekKeyPart entre eux en chaînes, jamais les reconvertir en Date). Teste le candidat naïf et son
+// lendemain, retient celui dont weekKey() reproduit exactement la chaîne d'origine -- robuste au
+// décalage quel que soit son sens/son ampleur (toujours ≤ 1 jour).
+function mondayFromWeekKey(weekKeyPart) {
+  const candidate = new Date(`${weekKeyPart}T00:00:00`);
+  if (weekKey(candidate) === weekKeyPart) return candidate;
+  const nextDay = new Date(candidate);
+  nextDay.setDate(candidate.getDate() + 1);
+  return nextDay;
+}
+
 function currentWeekLabel() {
   const monday = getMonday(state.weekOffset);
   const friday = new Date(monday);
@@ -1092,14 +1109,31 @@ function trameKeyFromCellKey(key) {
 // affectation "effective" : ne jamais relire state.assignments[key] directement ailleurs, sous
 // peine de désynchroniser l'affichage (qui montrerait la trame) de la validation/des stats (qui ne
 // la compteraient pas), ou l'inverse.
+//
+// RG-023 (05/08/2026, 1re automatisation basée sur les RG) : le repli trame ne poste JAMAIS quelqu'un
+// d'absent (congé -- jour entier ou demi-journée -- ou repos de garde, RG-014) sur une case jamais
+// touchée -- "solutionne directement" le conflit plutôt que de le laisser remonter en violation.
+// Ne s'applique QU'au repli : une case déjà matérialisée (state.assignments explicite, y compris si
+// Samir y a laissé/rajouté la personne à la main) n'est jamais filtrée ici, et continue de remonter
+// la violation RG-014 habituelle -- voir filterAbsentFromTrame() juste en dessous.
 function effectiveAssignedIds(key) {
   if (Object.prototype.hasOwnProperty.call(state.assignments, key)) {
     return state.assignments[key];
   }
   if (state.weekOffset >= 0) {
-    return state.trame[trameKeyFromCellKey(key)] || [];
+    const [, day, creneauId] = trameKeyFromCellKey(key).split("|");
+    const iso = weekIsoDates(getMonday(state.weekOffset))[DAYS.indexOf(day)];
+    return filterAbsentFromTrame(state.trame[trameKeyFromCellKey(key)] || [], iso, creneauId);
   }
   return [];
+}
+
+// RG-023 : retire du tableau `staffIds` (issu de state.trame) toute personne absente (congé/repos
+// de garde, isPersonAbsentOnIsoSlot()) sur le jour+créneau ISO donné -- coeur partagé par
+// effectiveAssignedIds() (semaine affichée) et effectiveAssignedIdsForWeek() (semaine arbitraire,
+// voir plus bas), pour ne jamais désynchroniser les deux.
+function filterAbsentFromTrame(staffIds, iso, creneauId) {
+  return staffIds.filter((staffId) => !isPersonAbsentOnIsoSlot(staffId, iso, creneauId));
 }
 
 // RG-017 : avant toute mutation d'une case pour la semaine affichée (ajout/retrait), on s'assure
@@ -1160,6 +1194,12 @@ function setFermeture(key, closed) {
 // comportement par défaut d'effectiveAssignedIds(), sans code supplémentaire ici.
 // Renvoie le nombre d'ajouts réellement effectués (0 si rien à faire) -- utilisé par
 // resyncTrameToTouchedWeeks() pour afficher un résumé à Samir après une resynchronisation manuelle.
+//
+// RG-023 (05/08/2026) : ne propage JAMAIS vers un créneau où la personne est absente (congé/repos de
+// garde) cette semaine-là -- sans ce garde-fou, un cas réel restait ouvert : une personne déjà en
+// congé sur une semaine future (donc déjà matérialisée-vidée par le dépostage RG-013/014 au moment
+// de la déclaration, voir depostAssignmentsForDay()) qu'on ajoute ENSUITE à sa trame se retrouvait
+// quand même repostée ici, cette fonction ne vérifiant jusque-là jamais l'absence avant de pousser.
 function propagateTrameAdditionToTouchedWeeks(activityId, day, creneauId, staffId) {
   const currentWeekKey = weekKey(getMonday(0)); // semaine réelle actuelle (pas state.weekOffset,
   // qui reflète juste la semaine affichée à l'écran au moment de l'édition, sans rapport ici).
@@ -1171,6 +1211,8 @@ function propagateTrameAdditionToTouchedWeeks(activityId, day, creneauId, staffI
     const assignWeekKey = parts[0];
     if (assignWeekKey < currentWeekKey) return; // jamais les semaines passées, comme RG-017.
     if (isWeekLocked(assignWeekKey)) return; // verrouillage (29/07/2026) : bypass tout le reste, y compris la propagation de trame.
+    const iso = weekIsoDates(mondayFromWeekKey(assignWeekKey))[DAYS.indexOf(day)];
+    if (isPersonAbsentOnIsoSlot(staffId, iso, creneauId)) return; // RG-023 : jamais vers un créneau où la personne est absente.
     if (!state.assignments[assignKey].includes(staffId)) {
       state.assignments[assignKey].push(staffId);
       addedCount++;
@@ -4085,12 +4127,17 @@ function defaultStatsPeriod() {
 // weekKey de la semaine en question à celle de la semaine réelle actuelle (comparaison de chaînes
 // ISO, comme partout ailleurs dans le fichier) -- chaque semaine de la période reçoit donc sa propre
 // décision, correcte même quand la plage mélange passé et futur.
+// RG-023 (05/08/2026) : même filtre d'absence que effectiveAssignedIds() ci-dessus, voir
+// filterAbsentFromTrame() -- iso calculé pour LA semaine `weekKeyPart` (pas state.weekOffset,
+// sans rapport ici) via son propre lundi.
 function effectiveAssignedIdsForWeek(key, weekKeyPart) {
   if (Object.prototype.hasOwnProperty.call(state.assignments, key)) {
     return state.assignments[key];
   }
   if (weekKeyPart >= weekKey(getMonday(0))) {
-    return state.trame[trameKeyFromCellKey(key)] || [];
+    const [, day, creneauId] = trameKeyFromCellKey(key).split("|");
+    const iso = weekIsoDates(mondayFromWeekKey(weekKeyPart))[DAYS.indexOf(day)];
+    return filterAbsentFromTrame(state.trame[trameKeyFromCellKey(key)] || [], iso, creneauId);
   }
   return [];
 }
