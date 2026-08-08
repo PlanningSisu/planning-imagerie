@@ -2819,6 +2819,10 @@ function buildVacationSpecCell(activity, day, creneau) {
   const isWeeklyOverride = isVacationSpecialiteWeeklyOverride(activity.id, day, creneau.id);
   const closureKey = cellKey(activity.id, day, creneau.id);
   const closed = !!state.fermetures[closureKey];
+  // Rappel du geste clic gauche/droit sur la case elle-même (08/08/2026, retour de Samir) -- en plus
+  // du title déjà posé sur l'étiquette par buildVacationSpecTag() (qui explique la valeur AFFICHÉE),
+  // celui-ci couvre aussi la zone vide de la case ("+ ajouter") où l'étiquette n'existe pas encore.
+  td.title = "Clic gauche : spécialité structurelle (toutes les semaines). Clic droit : exception pour cette semaine uniquement.";
 
   if (closed) {
     td.classList.add("cell-closed");
