@@ -1123,6 +1123,17 @@ tr.group-end td {
 .chip.vacation-spec-tag {
   border-radius: 4px;
 }
+/* Exception de spécialité par semaine (RG-024, 08/08/2026) -- bordure en tirets, même convention
+   déjà utilisée pour le congé demi-journée (.conge-pill-half) pour signaler "cas partiel/exception"
+   dans toute l'appli, plutôt qu'une nouvelle couleur. */
+.chip.vacation-spec-tag.vacation-spec-tag-weekly {
+  border: 2px dashed rgba(0, 0, 0, 0.35);
+}
+.vacation-spec-weekly-hint {
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 4px;
+}
 .chip.vacation-spec-tag.fermeture-tag {
   background: #111827;
   border-color: #111827;

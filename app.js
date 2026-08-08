@@ -477,7 +477,7 @@ const STORAGE_KEY = "planningAppState_v3";
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 7;
+const STATE_SCHEMA_VERSION = 8;
 
 // Clé = version de départ, valeur = fonction qui transforme les données de cette version vers la
 // version suivante (N -> N+1, jamais un saut direct). migrateState() les enchaîne jusqu'à
@@ -509,6 +509,10 @@ const STATE_MIGRATIONS = {
   // 6 -> 7 : ajout de `weekNotes` (annotations libres par semaine, 08/08/2026) -- un objet vide
   // suffit, aucune semaine n'a d'annotation par défaut.
   6: (data) => ({ ...data, weekNotes: data.weekNotes || {} }),
+  // 7 -> 8 : ajout de `vacationSpecialitesWeekly` (RG-024, exception de spécialité par semaine,
+  // 08/08/2026) -- un objet vide suffit, aucune vacation n'a d'exception par défaut (retombe sur
+  // vacationSpecialites, comme avant).
+  7: (data) => ({ ...data, vacationSpecialitesWeekly: data.vacationSpecialitesWeekly || {} }),
 };
 
 function migrateState(rawData) {
@@ -538,7 +542,7 @@ function migrateState(rawData) {
 // pour ne jamais en oublier un dans l'un des trois chemins). Délibérément SANS `activities` (piloté
 // par le code, jamais par des données utilisateur -- voir CLAUDE.md §4) ni `schemaVersion` (ajouté à
 // part par buildPersistedState()).
-const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "customColors", "weekLocks", "weekNotes"];
+const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "customColors", "weekLocks", "weekNotes"];
 
 // Personnalisation (25/07/2026, ⚙ → "Personnalisation") : quelques couleurs éditables depuis
 // l'appli sans toucher au code -- une entrée par variable CSS `--custom-xxx` (voir :root dans
@@ -600,21 +604,28 @@ function normalizeStatsColumnOrder(order) {
   return valid;
 }
 
+// ⚠️ Bug réel trouvé le 08/08/2026 en ajoutant vacationSpecialitesWeekly : cette fonction listait
+// CHAQUE champ de PERSISTED_KEYS à la main plutôt que de boucler dessus -- weekLocks (29/07/2026) et
+// weekNotes (08/08/2026, session précédente) avaient bien été ajoutés à PERSISTED_KEYS/buildPersistedState()
+// (donc correctement ÉCRITS dans le fichier/localStorage/export) mais jamais recopiés ICI, donc
+// jamais RELUS au chargement -- un verrou ou une annotation posés ne survivaient probablement pas à
+// un rechargement de page ou une resynchro GitHub, silencieusement. Remplacé par une boucle générique
+// sur PERSISTED_KEYS pour qu'un futur champ ajouté ne puisse plus être oublié de cette façon --
+// SPECIAL_APPLY_KEYS liste les 3 exceptions qui ont besoin d'un traitement différent d'un simple
+// `data[key] || {}` (staff : conditionnel non-vide, weekOffset : nombre, statsColumnOrder : normalisé).
+const ARRAY_PERSISTED_KEYS = new Set(["conges", "gardes"]);
+const SPECIAL_APPLY_KEYS = new Set(["staff", "weekOffset", "statsColumnOrder"]);
 function applyPersistedState(rawData) {
   const data = migrateState(rawData);
-  state.assignments = data.assignments || {};
   state.weekOffset = data.weekOffset || 0;
-  state.vacationSpecialites = data.vacationSpecialites || {};
-  state.fermetures = data.fermetures || {};
-  state.conges = Array.isArray(data.conges) ? data.conges : [];
-  state.gardes = Array.isArray(data.gardes) ? data.gardes : [];
-  state.trame = data.trame || {};
-  state.tempsPartiel = data.tempsPartiel || {};
   state.statsColumnOrder = normalizeStatsColumnOrder(data.statsColumnOrder);
-  state.customColors = data.customColors || {};
   if (Array.isArray(data.staff) && data.staff.length > 0) {
     state.staff = data.staff;
   }
+  PERSISTED_KEYS.forEach((key) => {
+    if (SPECIAL_APPLY_KEYS.has(key)) return;
+    state[key] = ARRAY_PERSISTED_KEYS.has(key) ? (Array.isArray(data[key]) ? data[key] : []) : (data[key] || {});
+  });
   applyCustomColors();
 }
 
@@ -625,6 +636,11 @@ let state = {
   // Spécialité "propriétaire" d'une vacation (ex. Scan B le mardi matin = Gynéco), indépendante de
   // la semaine (structurel, change rarement) -> clé SANS le weekKey, voir vacationSpecKey().
   vacationSpecialites: {}, // key: `${activityId}|${day}|${creneauId}` -> "digestif"|"uro"|"gyneco"|"thorax"|"os"
+  // RG-024 (08/08/2026) : exception à vacationSpecialites PROPRE À UNE SEMAINE -- pour une vacation
+  // qui change de spécialité chaque semaine (ex. Scan B mardi : Thorax une semaine, Gynéco la
+  // suivante), sans quoi changer la valeur structurelle réécrirait aussi les stats des semaines
+  // passées. Clé AVEC weekKey cette fois -- voir effectiveVacationSpecialiteForWeek().
+  vacationSpecialitesWeekly: {}, // key: `${weekKey}|${activityId}|${day}|${creneauId}` -> "digestif"|"uro"|"gyneco"|"thorax"|"os"
   // Fermeture d'une vacation : à l'inverse de vacationSpecialites, c'est HEBDOMADAIRE (clé AVEC
   // weekKey, via cellKey() comme assignments) -- une vacation fermée cette semaine peut rouvrir la
   // semaine suivante sans rien reconfigurer. Bloque l'assignation (voir RG-010 dans regles-gestion.md).
@@ -1102,9 +1118,58 @@ function toggleCurrentWeekLock() {
   render();
 }
 
-// Pas de weekKey ici : une spécialité de vacation est structurelle, la même toutes les semaines.
+// Pas de weekKey ici : une spécialité de vacation est structurelle, la même toutes les semaines
+// PAR DÉFAUT -- voir vacationSpecialitesWeekly juste en dessous pour l'exception par semaine (RG-024).
 function vacationSpecKey(activityId, day, creneauId) {
   return `${activityId}|${day}|${creneauId}`;
+}
+
+// RG-024 (08/08/2026, demande de Samir : une vacation qui change de spécialité chaque semaine --
+// ex. Scan B mardi : Thorax une semaine, Gynéco la suivante -- faussait les stats des semaines
+// passées, puisque vacationSpecialites n'a qu'une seule valeur, écrasée à chaque changement). Même
+// principe de repli qu'effectiveAssignedIds()/state.trame (RG-017) : une exception posée pour LA
+// semaine `weekKeyPart` prime si elle existe, sinon on retombe sur la valeur structurelle. Contrairement
+// à la trame, AUCUNE notion de "case touchée qui se découple" -- une exception, une fois posée, reste
+// simplement une exception pour cette semaine, pour toujours (jamais réécrite par un changement
+// structurel ultérieur), pas besoin de matérialisation.
+function effectiveVacationSpecialiteForWeek(activityId, day, creneauId, weekKeyPart) {
+  const baseKey = vacationSpecKey(activityId, day, creneauId);
+  const weeklyKey = `${weekKeyPart}|${baseKey}`;
+  if (Object.prototype.hasOwnProperty.call(state.vacationSpecialitesWeekly, weeklyKey)) {
+    return state.vacationSpecialitesWeekly[weeklyKey];
+  }
+  return state.vacationSpecialites[baseKey];
+}
+
+// Variante pour la semaine ACTUELLEMENT AFFICHÉE (state.weekOffset) -- la majorité des lectures
+// (teinte de fond, popover clic gauche/droit, fermeture en masse, vue Modalité/Personnel) portent
+// sur cette semaine-là précisément.
+function effectiveVacationSpecialite(activityId, day, creneauId) {
+  return effectiveVacationSpecialiteForWeek(activityId, day, creneauId, weekKey(getMonday(state.weekOffset)));
+}
+
+// La case affichée montre-t-elle une exception de semaine plutôt que la valeur structurelle ? Utilisé
+// pour le repère visuel (.vacation-spec-weekly-override) et pour savoir si le bouton "×" d'une
+// étiquette doit retirer l'exception ou la valeur structurelle (voir buildVacationSpecTag()).
+function isVacationSpecialiteWeeklyOverride(activityId, day, creneauId) {
+  const wk = weekKey(getMonday(state.weekOffset));
+  const weeklyKey = `${wk}|${vacationSpecKey(activityId, day, creneauId)}`;
+  return Object.prototype.hasOwnProperty.call(state.vacationSpecialitesWeekly, weeklyKey);
+}
+
+// Pose/retire une exception de spécialité pour LA SEMAINE AFFICHÉE uniquement -- `specialiteKey`
+// vaut une clé de SPECIALITES, ou la sentinelle "clear" pour retirer l'exception (revient à la
+// valeur structurelle). Jamais appelée pour une modification structurelle -- voir
+// renderVacationSpecPopoverContent() (clic gauche, structurel) vs openVacationSpecWeekMenu() (clic
+// droit, cette fonction).
+function setVacationSpecialiteForCurrentWeek(specKey, specialiteKey) {
+  const wk = weekKey(getMonday(state.weekOffset));
+  const weeklyKey = `${wk}|${specKey}`;
+  if (specialiteKey === "clear") {
+    delete state.vacationSpecialitesWeekly[weeklyKey];
+  } else {
+    state.vacationSpecialitesWeekly[weeklyKey] = specialiteKey;
+  }
 }
 
 // RG-017 (24/07/2026, voir regles-gestion.md) : clé de state.trame -- même forme que
@@ -1730,7 +1795,7 @@ function validateScanU() {
     CRENEAUX.forEach((creneau) => {
       const key = cellKey(activity.id, day, creneau.id);
       if (state.fermetures[key]) return; // RG-010 : vacation fermée cette semaine, aucune composition attendue.
-      if (state.vacationSpecialites[vacationSpecKey(activity.id, day, creneau.id)] === "os") return; // RG-011 : vacation Os, jamais staffée.
+      if (isVacationCellOs(activity, day, creneau)) return; // RG-011 : vacation Os, jamais staffée (RG-024 : exception de semaine incluse).
       const assigned = effectiveAssignedIds(key).map(staffById).filter(Boolean);
       const nbSeniors = assigned.filter((p) => p.grade === "senior").length;
       const internes = assigned.filter((p) => p.grade !== "senior");
@@ -1801,7 +1866,7 @@ function validateScanA() {
       if (!isCreneauApplicable(activity.id, creneau.id)) return; // RG-012 : astreinte non applicable à Scan A.
       const key = cellKey(activity.id, day, creneau.id);
       if (state.fermetures[key]) return; // RG-010 : vacation fermée cette semaine, aucune composition attendue.
-      if (state.vacationSpecialites[vacationSpecKey(activity.id, day, creneau.id)] === "os") return; // RG-011 : vacation Os, jamais staffée.
+      if (isVacationCellOs(activity, day, creneau)) return; // RG-011 : vacation Os, jamais staffée (RG-024 : exception de semaine incluse).
       const assigned = effectiveAssignedIds(key).map(staffById).filter(Boolean);
       const nbSeniors = assigned.filter((p) => p.grade === "senior").length;
       const nbInternes = assigned.filter((p) => p.grade !== "senior").length;
@@ -2560,7 +2625,7 @@ function buildModaliteCell(activity, day, creneau) {
   const locked = isWeekLocked(key.split("|")[0]);
   if (locked) td.classList.add("cell-week-locked");
 
-  const vacSpec = state.vacationSpecialites[vacationSpecKey(activity.id, day, creneau.id)];
+  const vacSpec = effectiveVacationSpecialite(activity.id, day, creneau.id); // RG-024 : exception de la semaine si elle existe.
   if (vacSpec) td.classList.add(`tint-${vacSpec}`);
 
   // RG-011 : une vacation de spécialité "Os" n'est jamais assignable -- même comportement
@@ -2750,7 +2815,8 @@ function buildVacationSpecCell(activity, day, creneau) {
   td.className = "slot-cell";
 
   const specKey = vacationSpecKey(activity.id, day, creneau.id);
-  const spec = state.vacationSpecialites[specKey];
+  const spec = effectiveVacationSpecialite(activity.id, day, creneau.id); // RG-024 : exception de la semaine si elle existe.
+  const isWeeklyOverride = isVacationSpecialiteWeeklyOverride(activity.id, day, creneau.id);
   const closureKey = cellKey(activity.id, day, creneau.id);
   const closed = !!state.fermetures[closureKey];
 
@@ -2760,7 +2826,7 @@ function buildVacationSpecCell(activity, day, creneau) {
   }
   if (spec) {
     td.classList.add(`tint-${spec}`);
-    td.appendChild(buildVacationSpecTag(spec, specKey));
+    td.appendChild(buildVacationSpecTag(spec, specKey, isWeeklyOverride));
   }
   if (!closed && !spec) {
     const hint = document.createElement("span");
@@ -2770,22 +2836,38 @@ function buildVacationSpecCell(activity, day, creneau) {
   }
 
   td.addEventListener("click", () => openVacationSpecPopover(specKey, td, activity, day, creneau));
+  // RG-024 (08/08/2026) : clic droit = exception pour la SEMAINE AFFICHÉE uniquement, sans toucher à
+  // la valeur structurelle (clic gauche, popover normal ci-dessus) -- même distinction gauche/droite
+  // que le congé demi-journée (§6.40), pour un geste déjà connu.
+  td.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    openVacationSpecWeekMenu(specKey, e.clientX, e.clientY);
+  });
   return td;
 }
 
-function buildVacationSpecTag(specKeyName, specKey) {
+function buildVacationSpecTag(specKeyName, specKey, isWeeklyOverride) {
   const spec = SPECIALITES[specKeyName];
   const tag = document.createElement("span");
-  tag.className = "chip vacation-spec-tag";
+  tag.className = "chip vacation-spec-tag" + (isWeeklyOverride ? " vacation-spec-tag-weekly" : "");
   tag.style.cssText = `background-color:${spec.bg};color:${spec.text};`;
   tag.textContent = spec.label;
+  tag.title = isWeeklyOverride
+    ? "Exception pour cette semaine -- clic droit sur la case pour la modifier/retirer"
+    : "Valeur structurelle (toutes les semaines)";
   const remove = document.createElement("span");
   remove.className = "remove";
   remove.textContent = "×";
-  remove.title = "Retirer";
+  remove.title = isWeeklyOverride ? "Retirer l'exception de cette semaine" : "Retirer (structurel, toutes les semaines)";
   remove.addEventListener("click", (e) => {
     e.stopPropagation();
-    delete state.vacationSpecialites[specKey];
+    // RG-024 : le × retire ce qui est RÉELLEMENT affiché -- l'exception de semaine si c'en est une,
+    // sinon la valeur structurelle, jamais les deux à la fois.
+    if (isWeeklyOverride) {
+      setVacationSpecialiteForCurrentWeek(specKey, "clear");
+    } else {
+      delete state.vacationSpecialites[specKey];
+    }
     saveState();
     render();
   });
@@ -2916,7 +2998,14 @@ function openVacationSpecPopover(specKey, cellEl, activity, day, creneau) {
 function renderVacationSpecPopoverContent(specKey, activity, day, creneau) {
   const pop = document.getElementById("assignPopover");
   pop.style.minWidth = "";
+  // RG-024 (08/08/2026) : `current` est la valeur STRUCTURELLE -- ce popover (clic gauche sur la
+  // case) ne modifie et n'affiche jamais que celle-là dans sa liste d'options ; l'exception de
+  // semaine (si elle existe) est affichée à part, modifiable uniquement via le clic droit sur la
+  // case (openVacationSpecWeekMenu()) -- distinction volontaire pour ne jamais confondre les deux.
   const current = state.vacationSpecialites[specKey];
+  const weeklyOverride = isVacationSpecialiteWeeklyOverride(activity.id, day, creneau.id)
+    ? effectiveVacationSpecialite(activity.id, day, creneau.id)
+    : null;
   const closureKey = cellKey(activity.id, day, creneau.id);
   const closed = !!state.fermetures[closureKey];
 
@@ -2925,6 +3014,7 @@ function renderVacationSpecPopoverContent(specKey, activity, day, creneau) {
     <strong>${activity.nom}</strong><br>
     <span style="font-size:12px;color:#6b7280;">${day} — ${creneau.label}</span>
     <div id="popAssigned" class="popover-assigned"></div>
+    ${weeklyOverride ? '<div class="vacation-spec-weekly-hint">Exception pour cette semaine -- clic droit sur la case pour la changer.</div>' : ""}
     <div class="popover-select-list vacation-spec-options"></div>
   `;
 
@@ -2935,13 +3025,21 @@ function renderVacationSpecPopoverContent(specKey, activity, day, creneau) {
       renderVacationSpecPopoverContent(specKey, activity, day, creneau)
     );
   }
-  if (current) {
-    assignedContainer.appendChild(buildVacationSpecTag(current, specKey));
-    assignedContainer.querySelector(".vacation-spec-tag:not(.fermeture-tag) .remove").addEventListener("click", () =>
+  if (weeklyOverride) {
+    const weeklyTag = buildVacationSpecTag(weeklyOverride, specKey, true);
+    assignedContainer.appendChild(weeklyTag);
+    weeklyTag.querySelector(".remove").addEventListener("click", () =>
       renderVacationSpecPopoverContent(specKey, activity, day, creneau)
     );
   }
-  if (!closed && !current) {
+  if (current) {
+    const structuralTag = buildVacationSpecTag(current, specKey, false);
+    assignedContainer.appendChild(structuralTag);
+    structuralTag.querySelector(".remove").addEventListener("click", () =>
+      renderVacationSpecPopoverContent(specKey, activity, day, creneau)
+    );
+  }
+  if (!closed && !current && !weeklyOverride) {
     assignedContainer.innerHTML = '<span class="empty-hint">Aucune spécialité définie pour l\'instant</span>';
   }
 
@@ -2953,6 +3051,8 @@ function renderVacationSpecPopoverContent(specKey, activity, day, creneau) {
     row.style.cssText = `background-color:${spec.bg};color:${spec.text};`;
     row.textContent = spec.label;
     row.addEventListener("click", () => {
+      // Toujours structurel -- l'exception de semaine (si présente) n'est jamais modifiée d'ici,
+      // voir la note en tête de fonction.
       state.vacationSpecialites[specKey] = key;
       saveState();
       render();
@@ -3005,7 +3105,7 @@ function activityApplicableCreneaux(activity) {
 }
 
 function isVacationCellOs(activity, day, creneau) {
-  return state.vacationSpecialites[vacationSpecKey(activity.id, day, creneau.id)] === "os";
+  return effectiveVacationSpecialite(activity.id, day, creneau.id) === "os"; // RG-024
 }
 
 // Cases (jour+créneau) de CE jour réellement fermables pour cette activité -- Os toujours exclue.
@@ -3291,8 +3391,9 @@ function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
   // Uro" même depuis la vue Personnel. `key` est un cellKey() (avec weekKey) -- on retire ce
   // préfixe via trameKeyFromCellKey() pour retomber sur le format de vacationSpecKey().
   const [, tagDay, tagCreneauId] = trameKeyFromCellKey(key).split("|");
-  const vacSpec = state.vacationSpecialites[trameKeyFromCellKey(key)];
-  const locked = isWeekLocked(key.split("|")[0]); // verrouillage (29/07/2026), voir isWeekLocked().
+  const tagWeekKeyPart = key.split("|")[0];
+  const vacSpec = effectiveVacationSpecialiteForWeek(activity.id, tagDay, tagCreneauId, tagWeekKeyPart); // RG-024
+  const locked = isWeekLocked(tagWeekKeyPart); // verrouillage (29/07/2026), voir isWeekLocked().
   // RG-014/RG-020/RG-021 : même logique de contour rouge que buildAssignedChip() côté vue
   // Modalité -- peut désormais arriver aussi bien via le popover que via le glisser-déposer (plus
   // aucun des deux n'est bloqué depuis le 25/07/2026, voir handleModaliteDrop()) : ce contour rouge
@@ -3888,6 +3989,54 @@ function openCongeHalfDayMenu(person, iso, x, y, onChange) {
   menu.classList.remove("hidden");
 }
 
+// RG-024 (08/08/2026) : menu contextuel (clic droit sur une case Trame Vacation) pour poser une
+// exception de spécialité PROPRE À LA SEMAINE AFFICHÉE, sans toucher à la valeur structurelle --
+// même patron que openCongeHalfDayMenu() (même élément partagé #congeHalfDayMenu, générique malgré
+// son nom historique), même distinction gauche/droite que le congé demi-journée. Contrairement à ce
+// dernier, pas de callback onChange() séparé à rappeler : le clic droit agit directement sur la
+// grille (pas depuis un popover déjà ouvert), un simple render() après coup suffit à tout rafraîchir.
+function openVacationSpecWeekMenu(specKey, x, y) {
+  const menu = document.getElementById("congeHalfDayMenu");
+  const wk = weekKey(getMonday(state.weekOffset));
+  const weeklyKey = `${wk}|${specKey}`;
+  const hasOverride = Object.prototype.hasOwnProperty.call(state.vacationSpecialitesWeekly, weeklyKey);
+  const currentOverride = state.vacationSpecialitesWeekly[weeklyKey];
+
+  menu.innerHTML = "";
+  Object.entries(SPECIALITES).forEach(([key, spec]) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = (hasOverride && currentOverride === key ? "✓ " : "") + spec.label + " (cette semaine)";
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setVacationSpecialiteForCurrentWeek(specKey, key);
+      saveState();
+      render();
+      menu.classList.add("hidden");
+    });
+    menu.appendChild(btn);
+  });
+
+  if (hasOverride) {
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.textContent = "Retirer l'exception";
+    clearBtn.style.color = "#b91c1c";
+    clearBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setVacationSpecialiteForCurrentWeek(specKey, "clear");
+      saveState();
+      render();
+      menu.classList.add("hidden");
+    });
+    menu.appendChild(clearBtn);
+  }
+
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+  menu.classList.remove("hidden");
+}
+
 // ---------- Vue Stats (24/07/2026) ----------
 // But : voir en un coup d'œil si la répartition des vacations est équitable sur la semaine
 // affichée. Même structure de lignes que la vue Personnel (personMatchesFilters()/compareStaffOrder()),
@@ -3969,7 +4118,7 @@ function computeVacationStatsForWeek(monday) {
           isUrgence = true;
         } else {
           const family = activityStatsFamily(activity);
-          specialite = state.vacationSpecialites[vacationSpecKey(activity.id, day, creneau.id)] || null;
+          specialite = effectiveVacationSpecialiteForWeek(activity.id, day, creneau.id, weekKey(monday)) || null; // RG-024
           groupKey = `${family}:${specialite || "none"}`;
           label = STATS_FAMILY_LABELS[family] || activity.nom;
           isUrgence = false;
@@ -4297,7 +4446,7 @@ function computeVacationStatsForPeriod(startIso, endIso) {
           isUrgence = true;
         } else {
           const family = activityStatsFamily(activity);
-          specialite = state.vacationSpecialites[vacationSpecKey(activity.id, dayName, creneau.id)] || null;
+          specialite = effectiveVacationSpecialiteForWeek(activity.id, dayName, creneau.id, weekKeyPart) || null; // RG-024
           groupKey = `${family}:${specialite || "none"}`;
           label = STATS_FAMILY_LABELS[family] || activity.nom;
           isUrgence = false;
