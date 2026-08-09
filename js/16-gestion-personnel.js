@@ -157,7 +157,7 @@ function renderStaffAddForm(container, existingPerson = null) {
   const specs = existingPerson ? orderedSpecialites(existingPerson) : [];
   const initialHorsSisu = existingPerson ? !!existingPerson.horsSisu : false;
   const initialGrade = existingPerson ? existingPerson.grade || "" : "senior";
-  const initialType = specs.length === 2 ? "specialise" : "socle";
+  const initialType = specs.length === 2 ? "specialise" : specs.length === 1 ? "mono" : "socle";
 
   container.innerHTML = `
     <div class="staff-form">
@@ -194,6 +194,7 @@ function renderStaffAddForm(container, existingPerson = null) {
         <label for="formInterneType">Statut</label>
         <select id="formInterneType">
           <option value="socle">Socle (pas encore de spécialité)</option>
+          <option value="mono">Mono-spécialisé (1 spécialité)</option>
           <option value="specialise">Spécialisé (2 spécialités)</option>
         </select>
       </div>
@@ -282,9 +283,11 @@ function renderStaffAddForm(container, existingPerson = null) {
 
     const isInterne = gradeSelect.value === "interne";
     document.getElementById("formInterneTypeRow").style.display = isInterne ? "flex" : "none";
-    const isSpecialise = !isInterne || typeSelect.value === "specialise";
-    document.getElementById("formSpec1Row").style.display = isSpecialise ? "flex" : "none";
-    document.getElementById("formSpec2Row").style.display = isInterne && isSpecialise ? "flex" : "none";
+    // Interne "socle" (0 spé) -> aucun select visible. "mono" (1 spé, 09/08/2026) -> spec1 seul.
+    // "specialise" (2 spé) -> les deux. Sénior/hors grade -> toujours spec1 seul (déjà géré au-dessus).
+    const hasAnySpec = !isInterne || typeSelect.value !== "socle";
+    document.getElementById("formSpec1Row").style.display = hasAnySpec ? "flex" : "none";
+    document.getElementById("formSpec2Row").style.display = (isInterne && typeSelect.value === "specialise") ? "flex" : "none";
     document.getElementById("formSpec1Label").textContent = isInterne ? "1ère spécialité" : "Spécialité";
     document.getElementById("formSpec2Label").textContent = "2e spécialité";
   };
@@ -356,6 +359,8 @@ function renderStaffAddForm(container, existingPerson = null) {
           return;
         }
         specialites = [s1, s2];
+      } else if (typeSelect.value === "mono") {
+        specialites = [spec1Select.value];
       }
     }
 
