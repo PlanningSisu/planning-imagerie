@@ -5,7 +5,13 @@
 // modalité, regroupés par COULEUR de spécialité (demande explicite de Samir) plutôt que par type.
 
 const STATS_FAMILY_LABELS = { scan: "Scan", irm: "IRM", ecn: "ECN", mammo: "Mammo" };
-const STATS_TYPE_ORDER = ["Scan", "IRM", "ECN", "Mammo"];
+// "Hors SISU" (09/08/2026) n'a ni `group` ni `urgence` -- retombe naturellement dans la branche
+// générique de computeVacationStatsForWeek()/...ForPeriod() (aucun code dédié nécessaire, comme
+// Scan B/IRM/ECN/Mammo), avec sa propre famille (activityStatsFamily() renvoie son id faute de
+// `group`) et son propre badge, `specialite: null` comme toute vacation sans spécialité propriétaire
+// renseignée. Présent ici uniquement pour départager l'ordre des badges "gris" (specialite null) entre
+// eux -- toujours en dernier.
+const STATS_TYPE_ORDER = ["Scan", "IRM", "ECN", "Mammo", "Hors SISU"];
 
 // Scan A/B, IRM 1.5T/3T et ECN 1/2 doivent être fusionnés ("on s'en fiche de savoir si c'est A ou
 // B") -- réutilise le champ `group` déjà existant sur ACTIVITIES (ex. "scan-start"/"scan-end") en
@@ -660,6 +666,22 @@ function renderStatsView() {
             td.appendChild(span);
           }
         }
+        // Astreinte/Bureau/Off en mode "badge" (09/08/2026, généralisation du choix Colonne/Badge à
+        // tout, demande de Samir) -- même patron que Congés/Repos de garde ci-dessus, mais lues
+        // depuis `entry` (déjà calculées par computeVacationStatsForWeek()/...ForPeriod()) plutôt que
+        // recomptées à part. Gris neutre (.spec-none), pas la couleur "absence" : ni Astreinte ni
+        // Bureau/Off n'en sont une.
+        [["astreinte", "Astreinte"], ["bureau", "Bureau"], ["off", "Off"]].forEach(([id, label]) => {
+          if (state.statsCounterMode[id] !== "badge") return;
+          const count = entry ? entry[id] : 0;
+          if (count > 0) {
+            anyBadge = true;
+            const span = document.createElement("span");
+            span.className = "chip spec-none stats-badge";
+            span.textContent = `${count} ${label}`;
+            td.appendChild(span);
+          }
+        });
         if (!anyBadge) {
           const empty = document.createElement("span");
           empty.className = "empty-hint";
@@ -751,9 +773,10 @@ function renderStatsView() {
   // Colonnes facultatives (08/08/2026) : statsColumnVisibility, clé absente/`true` = visible
   // + Congés/Repos de garde exclus de la liste des COLONNES quand leur mode est "badge" (ils
   // s'affichent alors dans la cellule "vacations" à la place, voir columnDefs.vacations ci-dessus).
+  const STATS_TOGGLABLE_COLUMNS = ["astreinte", "bureau", "off", "conges", "reposGarde"];
   const columnOrder = normalizeStatsColumnOrder(state.statsColumnOrder).filter((colId) => {
     if (state.statsColumnVisibility[colId] === false) return false;
-    if ((colId === "conges" || colId === "reposGarde") && state.statsCounterMode[colId] !== "column") return false;
+    if (STATS_TOGGLABLE_COLUMNS.includes(colId) && state.statsCounterMode[colId] !== "column") return false;
     return true;
   });
 

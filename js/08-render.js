@@ -695,9 +695,11 @@ function buildModaliteCell(activity, day, creneau) {
 const CRENEAU_MATIN = CRENEAUX.find((c) => c.id === "matin");
 const CRENEAU_APRES_MIDI = CRENEAUX.find((c) => c.id === "apres-midi");
 
-// Vue par défaut : une ligne par modalité, on y assigne des personnes.
+// Vue par défaut : une ligne par modalité, on y assigne des personnes. `personnelOnly` (09/08/2026,
+// "Hors SISU") exclut une activité de cette grille -- reste assignable via la vue Personnel/Trame
+// Personnel, voir sa déclaration dans ACTIVITIES.
 function renderModaliteRows(tbody) {
-  state.activities.forEach((activity) => {
+  state.activities.filter((a) => !a.personnelOnly).forEach((activity) => {
     const tr = document.createElement("tr");
     if (activity.group && activity.group.endsWith("-start")) tr.classList.add("group-start");
     if (activity.group && activity.group.endsWith("-end")) tr.classList.add("group-end");
@@ -736,7 +738,7 @@ function renderModaliteRows(tbody) {
 // d'une liste de personnes. Alimente le fond teinté de la vue classique (voir tint-xxx en CSS)
 // et servira de base aux futures RG de compétences.
 function renderVacationSpecRows(tbody) {
-  state.activities.forEach((activity) => {
+  state.activities.filter((a) => !a.personnelOnly).forEach((activity) => {
     const tr = document.createElement("tr");
     if (activity.group && activity.group.endsWith("-start")) tr.classList.add("group-start");
     if (activity.group && activity.group.endsWith("-end")) tr.classList.add("group-end");
@@ -963,14 +965,17 @@ function renderWeekNotePopoverContent() {
 // Colonnes/badges facultatifs de la vue Stats (08/08/2026, "toutes les colonnes soient
 // facultatives... choisir colonne ou badge") : liste des métriques réglables -- Personnel n'en fait
 // pas partie (toujours fixe, comme pour columnDefs/DEFAULT_STATS_COLUMN_ORDER). `hasMode` = a le
-// choix Colonne/Badge (seulement Congés/Repos de garde pour l'instant -- les autres sont toujours
-// des colonnes, un mode "badge" n'aurait pas de sens visuel pour un total/cumul unique comme Astreinte).
+// choix Colonne/Badge. **Étendu à Astreinte/Bureau/Off le 09/08/2026** (demande de Samir : "donner ce
+// choix pour tout") -- initialement réservé à Congés/Repos de garde, l'idée que "badge" n'aurait pas
+// de sens pour un total/cumul comme Astreinte ne tenait pas : mêmes badges gris que Congés/Repos,
+// juste sans la couleur "absence" (voir columnDefs.vacations dans 11-vue-stats.js). Seuls Total et
+// Vacations restent sans `hasMode` : Total EST la colonne, Vacations EST déjà la cellule de badges.
 const STATS_COLUMN_METRICS = [
   { id: "total", label: "Total" },
   { id: "vacations", label: "Vacations" },
-  { id: "astreinte", label: "Astreinte" },
-  { id: "bureau", label: "Bureau" },
-  { id: "off", label: "Off" },
+  { id: "astreinte", label: "Astreinte", hasMode: true },
+  { id: "bureau", label: "Bureau", hasMode: true },
+  { id: "off", label: "Off", hasMode: true },
   { id: "conges", label: "Congés", hasMode: true },
   { id: "reposGarde", label: "Repos de garde", hasMode: true },
 ];

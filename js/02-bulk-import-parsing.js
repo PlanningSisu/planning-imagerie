@@ -431,6 +431,17 @@ const ACTIVITIES = [
   { id: "mammo", nom: "Mammo" },
   { id: "bureau", nom: "Bureau", group: "bureau-start" },
   { id: "off", nom: "Off", group: "bureau-end" },
+  // "Hors SISU" (09/08/2026, demande de Samir) : une vacation qui se fait hors du service, jamais
+  // affichée comme ligne dans la vue Modalité/Trame Vacation (`personnelOnly: true`, voir son filtre
+  // dans renderModaliteRows()/renderVacationSpecRows()) -- seulement assignable depuis la vue
+  // Personnel réelle et la Trame Personnel, exactement comme toute autre modalité par ailleurs (pas
+  // un nouveau mécanisme comme Temps Partiel, juste une activité invisible dans la grille par
+  // activité). ⚠️ Ne pas confondre avec `person.horsSisu` (RG-016, §6.15) : ce booléen marque une
+  // PERSONNE externe jamais postable sur rien ; ceci est une VACATION que n'importe qui peut faire.
+  // Aucun `group` (pas groupée avec Bureau/Off) : conceptuellement une vraie vacation de travail, pas
+  // une absence -- compte donc normalement dans le total/les badges de la vue Stats (voir §6.16), à
+  // l'inverse de Bureau/Off qui en sont exclus.
+  { id: "hors-sisu", nom: "Hors SISU", personnelOnly: true },
 ];
 
 const DAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"];

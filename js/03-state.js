@@ -6,7 +6,7 @@
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 9;
+const STATE_SCHEMA_VERSION = 10;
 
 // Clé = version de départ, valeur = fonction qui transforme les données de cette version vers la
 // version suivante (N -> N+1, jamais un saut direct). migrateState() les enchaîne jusqu'à
@@ -51,6 +51,16 @@ const STATE_MIGRATIONS = {
     ...data,
     statsColumnVisibility: data.statsColumnVisibility || {},
     statsCounterMode: data.statsCounterMode || { conges: "column", reposGarde: "badge" },
+  }),
+  // 9 -> 10 : choix Colonne/Badge étendu à Astreinte/Bureau/Off (09/08/2026, demande de Samir :
+  // "donner ce choix pour tout") -- un fichier plus ancien a déjà conges/reposGarde dans
+  // statsCounterMode (via la migration 8->9) mais jamais ces 3 nouvelles clés ; défaut "column" pour
+  // les 3 (comportement visuel inchangé pour tout fichier existant -- elles restaient déjà toujours
+  // des colonnes jusqu'ici). Merge (pas d'écrasement) pour ne jamais perdre un choix conges/reposGarde
+  // déjà fait par Samir.
+  9: (data) => ({
+    ...data,
+    statsCounterMode: { astreinte: "column", bureau: "column", off: "column", ...data.statsCounterMode },
   }),
 };
 
@@ -213,10 +223,11 @@ let state = {
   // `true` = visible (voir sa lecture via `!== false`, pour qu'un vieux fichier sans ce champ du
   // tout affiche tout comme avant, sans rien à migrer explicitement).
   statsColumnVisibility: {}, // key: colId ("total"|"vacations"|"astreinte"|"bureau"|"off"|"conges"|"reposGarde") -> false pour masquer
-  // Mode d'affichage des compteurs Congés/Repos de garde (08/08/2026) -- "column" = colonne dédiée
-  // comme Bureau/Off, "badge" = badge dans la colonne Vacations. Par défaut : Congés en colonne,
-  // Repos de garde en badge (demande explicite de Samir).
-  statsCounterMode: { conges: "column", reposGarde: "badge" },
+  // Mode d'affichage de chaque compteur facultatif -- "column" = colonne dédiée, "badge" = badge dans
+  // la colonne Vacations. Par défaut : tout en colonne (comportement d'origine) sauf Repos de garde
+  // en badge (demande explicite de Samir, 08/08/2026). Étendu à Astreinte/Bureau/Off le 09/08/2026
+  // ("donner ce choix pour tout") -- Congés/Repos de garde restaient les deux seuls réglables jusque-là.
+  statsCounterMode: { astreinte: "column", bureau: "column", off: "column", conges: "column", reposGarde: "badge" },
   // Personnalisation (25/07/2026, ⚙ → "Personnalisation") : quelques couleurs éditables sans coder
   // -- voir CUSTOM_COLOR_FIELDS/applyCustomColors(). Clé absente = valeur par défaut du CSS.
   customColors: {}, // key: voir CUSTOM_COLOR_FIELDS -> "#rrggbb"
