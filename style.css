@@ -1530,8 +1530,8 @@ tr.group-end td {
   vertical-align: middle;
 }
 /* Semaine en cours (getMonday(0), indépendant de state.weekOffset) -- repère "on est ici",
-   demandé le 21/07/2026, en violet (pas vert, pour ne pas se confondre avec .conges-full qui
-   est une case personne, pas une ligne -- ambiguïté remontée par Samir le 21/07/2026). */
+   demandé le 21/07/2026, en violet pour rester distinct du rouge d'absence (.conges-day-mark,
+   voir buildAbsenceBar()) qui teinte une case personne, pas une ligne entière. */
 .conges-week-label.conges-current-week {
   background: #ede9fe;
   border-left: 3px solid #7c3aed;

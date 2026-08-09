@@ -5,7 +5,7 @@
 planning-imagerie.json
 
 # Extracts ARI (absences) -- contiennent de vraies donnees, jamais publiees ici (voir import ARI
-# dans app.js, 23/07/2026). Meme regle que les .json : uniquement du CODE dans ce depot.
+# dans js/18-import-ari.js, 23/07/2026). Meme regle que les .json : uniquement du CODE dans ce depot.
 *.xlsx
 
 # Config locale de l'environnement de dev (Claude Code) -- pas necessaire a l'hebergement.

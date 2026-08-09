@@ -128,6 +128,29 @@
        chose de raisonnable à re-coder à la main). Version figée (pas de "@latest") pour ne jamais
        changer de comportement sans qu'on s'en rende compte. Voir CLAUDE.md pour la justification. -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js"></script>
+  <!-- app.js (20/07/2026-08/08/2026) a été découpé le 09/08/2026 en fichiers par section dans js/,
+       chargés ici dans le même ordre exact que l'ancien fichier unique -- portée globale partagée
+       entre tous (pas de modules ES), comportement strictement identique. Voir CLAUDE.md §3. -->
+  <script src="js/01-demo-data.js"></script>
+  <script src="js/02-bulk-import-parsing.js"></script>
+  <script src="js/03-state.js"></script>
+  <script src="js/04-github-sync.js"></script>
+  <script src="js/05-week.js"></script>
+  <script src="js/06-conges-model.js"></script>
+  <script src="js/07-validation-rg.js"></script>
+  <script src="js/08-render.js"></script>
+  <script src="js/09-fermeture-masse.js"></script>
+  <script src="js/10-vue-conges.js"></script>
+  <script src="js/11-vue-stats.js"></script>
+  <script src="js/12-trame-personnel.js"></script>
+  <script src="js/13-assignation.js"></script>
+  <script src="js/14-navigation-semaine.js"></script>
+  <script src="js/15-export-import-reset.js"></script>
+  <script src="js/16-gestion-personnel.js"></script>
+  <script src="js/17-wiring-file-sync-btn.js"></script>
+  <script src="js/18-import-ari.js"></script>
+  <script src="js/19-import-trame-personnel.js"></script>
+  <script src="js/20-personnalisation.js"></script>
+  <script src="js/21-demarrage.js"></script>
 </body>
 </html>
