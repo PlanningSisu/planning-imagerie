@@ -296,6 +296,11 @@ function refreshAfterFilterChange() {
   if (editingStats) renderStatsView();
   if (editingTramePersonnel) renderTramePersonnelView(); // même piège que Stats -- voir commentaire ci-dessus.
   if (!editingConges && !editingVacationSpecs && !editingStats && !editingTramePersonnel && currentView === "personnel") renderTable();
+  // Bandeau congés (09/08/2026, filtré par staffFilters) : visible dans les mêmes vues que dans
+  // render() (ni Congés, ni Stats, ni Trame Personnel, ni Règles) -- même piège que Stats/Trame
+  // Personnel ci-dessus, sinon un filtre changé pendant que le bandeau est déjà affiché ne le
+  // recalculait jamais.
+  if (!editingConges && !editingStats && !editingTramePersonnel && !editingRules) renderWeekCongesBar();
   sizeTableWrapMaxHeight();
   stackStickyHeaderRows();
 }

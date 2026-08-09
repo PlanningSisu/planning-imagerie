@@ -330,11 +330,17 @@ function generateId() {
 // le 22/07/2026 : "de la même manière que sur le calendrier des congés"). Cliquer une case ouvre le
 // même popover que la vue Congés (openCongePopover()), sur la semaine actuellement affichée
 // (state.weekOffset).
+// Filtré par staffFilters (09/08/2026, demande de Samir : "si je filtre sur bleu, ne m'afficher que
+// les bleus qui ont des congés") -- même fonction `personMatchesFilters()` que le panneau Personnel/
+// la vue Congés, pour un comportement cohérent partout où on filtre par grade/spécialité. Rappelé
+// depuis refreshAfterFilterChange() (js/08-render.js) à chaque clic sur une puce, comme les autres
+// vues qui dépendent de staffFilters.
 function renderWeekCongesBar() {
   const container = document.getElementById("weekCongesBar");
   const monday = getMonday(state.weekOffset);
 
   const concerned = state.staff
+    .filter(personMatchesFilters)
     .map((p) => ({ p, bar: buildAbsenceBar(p, monday) }))
     .filter((x) => x.bar !== null)
     .sort((a, b) => compareStaffOrder(a.p, b.p));
