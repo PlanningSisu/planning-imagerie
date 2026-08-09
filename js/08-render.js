@@ -65,9 +65,12 @@ function buildAssignedChip(person, key, day) {
   } else if (isPersonTPOnSlot(person.id, day, creneauId)) {
     chip.classList.add("chip-absence-violation");
     chip.title = `${person.prenom} ${person.nom} est à Temps Partiel ce créneau-là`;
-  } else if (hasActivityExclusivityConflict(person.id, day, creneauId, activityId)) {
+  } else if (findActivityExclusivityConflict(person.id, day, creneauId, activityId)) {
+    // Nomme la vacation en conflit (09/08/2026, demande de Samir) -- plus utile que "ailleurs" pour
+    // savoir laquelle des deux affectations retirer sans devoir chercher soi-même sur le planning.
+    const conflictActivity = findActivityExclusivityConflict(person.id, day, creneauId, activityId);
     chip.classList.add("chip-absence-violation");
-    chip.title = `${person.prenom} ${person.nom} est déjà posté(e) ailleurs ce créneau-là`;
+    chip.title = `${person.prenom} ${person.nom} est déjà posté(e) sur ${conflictActivity.nom} (${creneauLabel(creneauId)}) ce créneau-là`;
   } else if (hasSpecialiteMismatch(person, activityId, day, creneauId, weekKeyPart)) {
     // RG-001 (09/08/2026) : même contour rouge que RG-014/020/021, priorité la plus basse (les 3
     // autres conflits sont plus "graves" -- une case fermée/absente n'a pas non plus de spécialité
@@ -522,9 +525,14 @@ function isPersonTPOnSlot(staffId, day, creneauId) {
 // Ne concerne QUE Matin/Après-midi -- l'astreinte (créneau à part, propre à Scan U, RG-012) reste
 // hors-sujet ("l'astreinte c'est autre chose", confirmé par Samir le 24/07/2026) : elle ne peut de
 // toute façon accueillir que Scan U (isCreneauApplicable()), aucun double-positionnement possible.
-function hasActivityExclusivityConflict(staffId, day, creneauId, activityId) {
-  if (creneauId === "astreinte") return false;
-  return state.activities.some((activity) => {
+// Renvoie l'AUTRE activité en conflit (voir la règle ci-dessus), ou `null` s'il n'y en a pas --
+// utilisée pour nommer la vacation en cause dans les tooltips (09/08/2026, demande de Samir : "tu
+// peux indiquer la vacation en question et le créneau ?"). `hasActivityExclusivityConflict()` reste
+// le simple booléen, utilisé là où le nom de l'activité en conflit ne compte pas (moteur de
+// validation, exclusion de RG-020/RG-001).
+function findActivityExclusivityConflict(staffId, day, creneauId, activityId) {
+  if (creneauId === "astreinte") return null;
+  return state.activities.find((activity) => {
     if (activity.id === activityId) return false;
     const key = cellKey(activity.id, day, creneauId);
     // RG-010 : une case fermée n'a plus de composition attendue, jamais un conflit -- notamment pour
@@ -534,7 +542,11 @@ function hasActivityExclusivityConflict(staffId, day, creneauId, activityId) {
     // invisible à l'écran puisque la case n'affiche qu'une croix.
     if (state.fermetures[key]) return false;
     return effectiveAssignedIds(key).includes(staffId);
-  });
+  }) || null;
+}
+
+function hasActivityExclusivityConflict(staffId, day, creneauId, activityId) {
+  return !!findActivityExclusivityConflict(staffId, day, creneauId, activityId);
 }
 
 // Bascule le focus jour/demi-journée (voir déclaration de staffFocusFilter) : un clic sur exactement
