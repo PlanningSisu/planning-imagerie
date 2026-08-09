@@ -4164,10 +4164,10 @@ function activityStatsFamily(activity) {
 // jamais de créneau astreinte (RG-012/isCreneauApplicable), donc ce compte est déjà "à la demi-
 // journée près" par construction (1 point = 1 créneau = une demi-journée), sans calcul supplémentaire.
 function computeVacationStatsForWeek(monday) {
-  const stats = new Map(); // staffId -> { total, badges: Map(groupKey -> {count, label, specialite, isUrgence, activityId}), days: Set, bureau, off }
+  const stats = new Map(); // staffId -> { total, badges: Map(groupKey -> {count, label, specialite, isUrgence, activityId}), days: Set, bureau, off, astreinte }
 
   const ensureEntry = (staffId) => {
-    if (!stats.has(staffId)) stats.set(staffId, { total: 0, badges: new Map(), days: new Set(), bureau: 0, off: 0 });
+    if (!stats.has(staffId)) stats.set(staffId, { total: 0, badges: new Map(), days: new Set(), bureau: 0, off: 0, astreinte: 0 });
     return stats.get(staffId);
   };
 
@@ -4175,19 +4175,24 @@ function computeVacationStatsForWeek(monday) {
     DAYS.forEach((day) => {
       CRENEAUX.forEach((creneau) => {
         if (!isCreneauApplicable(activity.id, creneau.id)) return;
-        // 24/07/2026 (demande de Samir) : l'astreinte est traitée à part dans cette vue -- elle a
-        // sa propre colonne dédiée (voir computePastAstreinteCounts()/renderStatsView()), un cumul
-        // sur plusieurs semaines (avant + affichée + suivante, voir computePastAstreinteCounts()),
-        // pas juste la semaine affichée comme le reste de cette fonction. Elle ne doit donc jamais compter
-        // comme "1 Scan U" dans le total/les badges de cette fonction, aussi contre-intuitif que ça
-        // paraisse (Samir l'a dit lui-même) -- sinon elle serait comptée deux fois (ici ET dans sa
-        // colonne dédiée), et fausserait aussi statsAvailabilityTier() (qui ne doit jamais tenir
-        // compte de l'astreinte, voir sa déclaration).
-        if (creneau.id === "astreinte") return;
         const key = cellKey(activity.id, day, creneau.id);
         if (state.fermetures[key]) return;
         const assigned = effectiveAssignedIds(key).filter(Boolean);
         if (assigned.length === 0) return;
+
+        // Harmonisé le 08/08/2026 (retour de Samir, "le mode Période couvre déjà le besoin de cumul,
+        // simplifie et harmonise") : l'astreinte comptait auparavant un CUMUL multi-semaines calculé
+        // à part (computePastAstreinteCounts(), retirée) -- elle compte désormais juste la semaine
+        // affichée, exactement comme Bureau/Off, exactement comme en mode Période (entry.astreinte,
+        // voir computeVacationStatsForPeriod()). Toujours exclue du total/des badges/de
+        // statsAvailabilityTier() (qui ne doit jamais en tenir compte, voir sa déclaration).
+        if (creneau.id === "astreinte") {
+          assigned.forEach((staffId) => {
+            if (!staffById(staffId)) return;
+            ensureEntry(staffId).astreinte++;
+          });
+          return;
+        }
 
         if (activity.id === "bureau") {
           assigned.forEach((staffId) => {
@@ -4235,75 +4240,14 @@ function computeVacationStatsForWeek(monday) {
   return stats;
 }
 
-// Colonne "Astreinte" dédiée de la vue Stats (24/07/2026, demande de Samir) : contrairement à
-// toutes les autres colonnes de cette vue, ce n'est PAS un décompte de la seule semaine affichée --
-// c'est un CUMUL. **Borne revue une 2e fois le 24/07/2026 (retour de Samir, "revenir en arrière") :
-// ne compte plus la semaine SUIVANTE (N+1)** -- le comptage jusqu'à N+1 inclus (tenté le même jour)
-// est retiré ; compte désormais les semaines jusqu'à N (semaine affichée) incluse, N+1 et au-delà
-// exclues.
-//
-// Repli sur la trame ajouté le 24/07/2026 (bug remonté par Samir : "je ne vois pas le compteur
-// s'incrémenter") -- une astreinte posée uniquement via la Trame Personnel (RG-017) n'est JAMAIS
-// matérialisée dans state.assignments pour une semaine précise tant que personne n'y touche à la
-// main. Deux cas distincts :
-// - **Semaines strictement avant N** (`trackedWeeks`) : repli trame borné aux semaines ayant une
-//   AUTRE preuve d'usage réel (au moins une affectation posée, n'importe quelle activité) -- pour ne
-//   jamais inventer une astreinte sur une semaine d'avant que l'outil ne soit réellement utilisé.
-// - **N** : repli trame SANS cette condition -- une semaine courante suit toujours la trame par
-//   défaut (RG-017, `effectiveAssignedIds()`), pas besoin d'une preuve d'usage supplémentaire.
-// Une vraie entrée dans state.assignments (même un tableau vide, ex. astreinte explicitement retirée)
-// reste toujours prioritaire sur le repli trame, quelle que soit la semaine. Astreinte n'est possible
-// que sur Scan U (RG-012), donc seules les clés "<semaine>|scan-u|<jour>|astreinte" sont concernées ;
-// comparaison de `weekKeyPart` en chaîne ISO (comme partout ailleurs, l'ordre lexicographique suffit
-// pour des dates "YYYY-MM-DD").
-function computePastAstreinteCounts(monday) {
-  const counts = new Map(); // staffId -> nombre d'astreintes sur des semaines jusqu'à N incluse.
-  const currentWeekKey = weekKey(monday);
-
-  const addCount = (staffId) => {
-    if (!staffById(staffId)) return;
-    counts.set(staffId, (counts.get(staffId) || 0) + 1);
-  };
-
-  // Semaines pour lesquelles l'outil a une preuve d'usage réel (au moins une affectation posée,
-  // n'importe quelle activité) -- sert de borne au repli trame des semaines STRICTEMENT avant N,
-  // pour ne jamais inventer une semaine antérieure à l'usage réel de l'outil.
-  const trackedWeeks = new Set();
-  Object.keys(state.assignments).forEach((key) => trackedWeeks.add(key.split("|")[0]));
-
-  trackedWeeks.forEach((wk) => {
-    if (wk >= currentWeekKey) return; // N traitée séparément juste en dessous.
-    DAYS.forEach((day) => {
-      const key = `${wk}|scan-u|${day}|astreinte`;
-      if (Object.prototype.hasOwnProperty.call(state.assignments, key)) return; // vraie valeur déjà là, traitée juste en dessous, prioritaire sur la trame.
-      if (state.fermetures[key]) return; // RG-010 : case fermée cette semaine-là, rien de réel dessus.
-      (state.trame[`scan-u|${day}|astreinte`] || []).forEach(addCount);
-    });
-  });
-
-  // N : repli trame inconditionnel (comme effectiveAssignedIds() pour une semaine courante), aucune
-  // condition de semaine "suivie" nécessaire.
-  DAYS.forEach((day) => {
-    const key = `${currentWeekKey}|scan-u|${day}|astreinte`;
-    if (state.fermetures[key]) return; // RG-010 : case fermée cette semaine-là, rien de réel dessus.
-    const assigned = Object.prototype.hasOwnProperty.call(state.assignments, key)
-      ? state.assignments[key]
-      : state.trame[`scan-u|${day}|astreinte`] || [];
-    assigned.forEach(addCount);
-  });
-
-  // Semaines strictement avant N, matérialisées directement dans state.assignments (prioritaire sur
-  // le repli trame ci-dessus, voir le `hasOwnProperty` check).
-  Object.keys(state.assignments).forEach((key) => {
-    const [weekKeyPart, activityId, , creneauId] = key.split("|");
-    if (activityId !== "scan-u" || creneauId !== "astreinte") return;
-    if (weekKeyPart >= currentWeekKey) return; // N déjà traitée juste au-dessus.
-    if (state.fermetures[key]) return; // RG-010 : case fermée cette semaine-là, rien de réel dessus.
-    (state.assignments[key] || []).forEach(addCount);
-  });
-
-  return counts;
-}
+// Colonne "Astreinte" de la vue Stats -- jusqu'au 08/08/2026, ce n'était PAS un décompte de la seule
+// semaine affichée en mode Semaine mais un CUMUL multi-semaines calculé à part
+// (computePastAstreinteCounts(), avec repli trame dédié) -- retiré (retour de Samir : "le mode
+// Période couvre déjà le besoin de cumul, simplifie et harmonise"). L'astreinte compte désormais la
+// semaine affichée comme n'importe quelle autre colonne, exactement comme Bureau/Off -- voir
+// `entry.astreinte` dans computeVacationStatsForWeek()/computeVacationStatsForPeriod(), les deux
+// désormais symétriques. Pour un cumul sur plusieurs semaines, utiliser le mode Période avec une
+// plage large.
 
 // Regroupement par disponibilité (24/07/2026, demande de Samir) : au-delà du tri habituel
 // (compareStaffOrder -- grade/spécialité/alphabétique), les lignes de la vue Stats sont d'abord
@@ -4634,10 +4578,6 @@ function renderStatsView() {
   const stats = statsMode === "period"
     ? computeVacationStatsForPeriod(statsRangeStart, statsRangeEnd)
     : computeVacationStatsForWeek(monday);
-  // En mode Semaine uniquement -- voir computePastAstreinteCounts() (cumul sur plusieurs semaines).
-  // En mode Période, l'astreinte est directement dans `stats` (entry.astreinte), voir
-  // computeVacationStatsForPeriod().
-  const pastAstreintes = statsMode === "week" ? computePastAstreinteCounts(monday) : null;
   // Jours ouvrés de la période choisie, calculés une seule fois par rendu (29/07/2026) -- réutilisé
   // par statsPeriodTier() ci-dessous ET par la colonne Vacations plus bas (isFullyOnLeaveForRange()),
   // pour ne jamais recalculer isoWeekdaysInRange() par personne.
@@ -4754,9 +4694,9 @@ function renderStatsView() {
   const periodLabel = statsMode === "period"
     ? `du ${formatShort(new Date(`${statsRangeStart}T00:00:00`))} au ${formatShort(new Date(`${statsRangeEnd}T00:00:00`))}`
     : currentWeekLabel();
-  const astreinteTitle = statsMode === "period"
-    ? "Cumul des astreintes sur la période choisie"
-    : "Cumul des astreintes jusqu'à la semaine affichée incluse (semaines d'avant + semaine affichée)";
+  // Harmonisé le 08/08/2026 : un seul libellé, l'astreinte compte la semaine affichée (ou la période
+  // choisie) exactement comme les autres colonnes -- plus de distinction cumul/semaine seule.
+  const astreinteTitle = statsMode === "period" ? "Nombre d'astreintes sur la période choisie" : "Nombre d'astreintes cette semaine";
   const noDataText = statsMode === "period" ? "Aucune vacation sur cette période." : "Aucune vacation cette semaine.";
 
   // Colonnes réordonnables à la main par glisser-déposer des en-têtes (24/07/2026, demande de Samir)
@@ -4866,14 +4806,15 @@ function renderStatsView() {
       label: "Astreinte",
       headerClass: "stats-total-header",
       headerTitle: astreinteTitle,
-      // Cumul multi-semaines en mode Semaine (computePastAstreinteCounts()), décompte direct de la
-      // période choisie en mode Période (entry.astreinte, voir computeVacationStatsForPeriod()).
+      // Harmonisé le 08/08/2026 : décompte de la semaine affichée (ou de la période choisie),
+      // exactement comme Bureau/Off -- entry.astreinte est calculée de façon symétrique par
+      // computeVacationStatsForWeek()/computeVacationStatsForPeriod() depuis cette date.
       buildCell(person, entry) {
         const td = document.createElement("td");
         td.className = "stats-total-cell";
         const badge = document.createElement("span");
         badge.className = "stats-total-badge";
-        badge.textContent = statsMode === "period" ? (entry ? entry.astreinte : 0) : (pastAstreintes.get(person.id) || 0);
+        badge.textContent = entry ? entry.astreinte : 0;
         td.appendChild(badge);
         return td;
       },
