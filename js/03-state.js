@@ -6,7 +6,52 @@
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 10;
+const STATE_SCHEMA_VERSION = 11;
+
+// Moteur de règles paramétrable (09/08/2026, voir moteur-regles-brouillon.md) : remplace les
+// anciennes RG-002/003/007/009/012 codées en dur par des données éditables depuis l'écran "Règles"
+// (js/21-vue-regles.js). Définie ICI (pas dans js/07-validation-rg.js, qui charge après ce fichier)
+// parce qu'elle sert de valeur par défaut au premier chargement de `state` juste en dessous --
+// référencer un `const` d'un fichier chargé plus tard casserait au chargement (piège de hoisting
+// entre <script> séparés, voir CLAUDE.md §2 point 4). `validateCompositionRules()`/
+// `resolveCompositionRule()` (js/07-validation-rg.js) lisent `state.rules` à l'exécution, jamais
+// cette constante directement -- elle ne sert qu'à amorcer un fichier neuf ou migrer un ancien
+// (STATE_MIGRATIONS[10] juste en dessous). Reproduit EXACTEMENT RG-002/003/007/009/012 telles
+// qu'elles étaient codées en dur avant le 09/08/2026 (vérifié par comparaison automatisée avant/
+// après le refactor) -- `requireSpecialite: false` partout par défaut, personne n'a encore activé
+// cette vérification.
+// `id` identifie la règle de façon unique (édition/suppression depuis l'écran) -- DISTINCT de `rg`,
+// qui n'est qu'un LABEL affiché (le badge coloré devant chaque violation/recommandation) : deux
+// règles de la même modalité pourraient un jour partager le même `rg` (ex. "Scan B" pour deux règles
+// différentes de la même activité), jamais le même `id`. Pour ces 5 règles historiques, `id` reprend
+// simplement le code RG-XXX (déjà unique) ; une règle créée depuis l'écran génère un id via
+// generateRuleId() (js/21-vue-regles.js) et utilise le nom de la modalité comme `rg` (label).
+const DEFAULT_COMPOSITION_RULES = [
+  {
+    id: "RG-002", rg: "RG-002", activityId: "scan-u", labelPrefix: "Scan U", creneaux: ["matin"],
+    days: ["Lundi", "Mardi", "Mercredi", "Vendredi"],
+    seniorMin: 1, seniorMax: 1, interneMin: 2, interneMax: 2, requireSpecialite: false,
+  },
+  {
+    id: "RG-007", rg: "RG-007", activityId: "scan-u", labelPrefix: "Scan U", creneaux: ["matin"], days: ["Jeudi"],
+    seniorMin: 2, seniorMax: 2, interneMin: null, interneMax: null, requireSpecialite: false,
+  },
+  {
+    id: "RG-003", rg: "RG-003", activityId: "scan-u", labelPrefix: "Scan U", creneaux: ["apres-midi"], days: DAYS,
+    seniorMin: 2, seniorMax: 2, interneMin: 1, interneMax: 2, encourageInterneGrowth: true, requireSpecialite: false,
+  },
+  {
+    id: "RG-012", rg: "RG-012", activityId: "scan-u", labelPrefix: "Scan U", creneaux: ["astreinte"], days: DAYS,
+    seniorMin: 0, seniorMax: 0, interneMin: 1, interneMax: null, requireSpecialite: false,
+    mentionSeniorInText: false, allowSubstitution: false,
+    seniorExcessMessage: "l'astreinte n'accueille que des internes",
+    socleReinforcementIfSingleInterne: true,
+  },
+  {
+    id: "RG-009", rg: "RG-009", activityId: "scan-a", labelPrefix: "Scan A", creneaux: ["matin", "apres-midi"], days: DAYS,
+    seniorMin: 1, seniorMax: 1, interneMin: 1, interneMax: 2, encourageInterneGrowth: true, requireSpecialite: false,
+  },
+];
 
 // Clé = version de départ, valeur = fonction qui transforme les données de cette version vers la
 // version suivante (N -> N+1, jamais un saut direct). migrateState() les enchaîne jusqu'à
@@ -62,6 +107,15 @@ const STATE_MIGRATIONS = {
     ...data,
     statsCounterMode: { astreinte: "column", bureau: "column", off: "column", ...data.statsCounterMode },
   }),
+  // 10 -> 11 : ajout de `rules` (moteur de règles paramétrable, 09/08/2026) -- un fichier plus ancien
+  // n'a jamais eu ce champ, on l'amorce avec DEFAULT_COMPOSITION_RULES (clone superficiel, jamais la
+  // même référence que la constante) pour reproduire EXACTEMENT RG-002/003/007/009/012 telles
+  // qu'elles étaient codées en dur -- pas un tableau vide, qui ferait disparaître ces 5 règles au
+  // premier chargement après mise à jour.
+  10: (data) => ({
+    ...data,
+    rules: Array.isArray(data.rules) ? data.rules : DEFAULT_COMPOSITION_RULES.map((r) => ({ ...r })),
+  }),
 };
 
 function migrateState(rawData) {
@@ -91,7 +145,7 @@ function migrateState(rawData) {
 // pour ne jamais en oublier un dans l'un des trois chemins). Délibérément SANS `activities` (piloté
 // par le code, jamais par des données utilisateur -- voir CLAUDE.md §4) ni `schemaVersion` (ajouté à
 // part par buildPersistedState()).
-const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "statsColumnVisibility", "statsCounterMode", "customColors", "weekLocks", "weekNotes"];
+const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "statsColumnVisibility", "statsCounterMode", "customColors", "weekLocks", "weekNotes", "rules"];
 
 // Personnalisation (25/07/2026, ⚙ → "Personnalisation") : quelques couleurs éditables depuis
 // l'appli sans toucher au code -- une entrée par variable CSS `--custom-xxx` (voir :root dans
@@ -162,7 +216,7 @@ function normalizeStatsColumnOrder(order) {
 // sur PERSISTED_KEYS pour qu'un futur champ ajouté ne puisse plus être oublié de cette façon --
 // SPECIAL_APPLY_KEYS liste les 3 exceptions qui ont besoin d'un traitement différent d'un simple
 // `data[key] || {}` (staff : conditionnel non-vide, weekOffset : nombre, statsColumnOrder : normalisé).
-const ARRAY_PERSISTED_KEYS = new Set(["conges", "gardes"]);
+const ARRAY_PERSISTED_KEYS = new Set(["conges", "gardes", "rules"]);
 const SPECIAL_APPLY_KEYS = new Set(["staff", "weekOffset", "statsColumnOrder"]);
 function applyPersistedState(rawData) {
   const data = migrateState(rawData);
@@ -215,6 +269,10 @@ let state = {
   // planning réel (semaines), ne bloque plus rien depuis le 25/07/2026 (juste une violation
   // signalée, voir isPersonTPOnSlot()) -- et reste totalement exclu des Stats.
   tempsPartiel: {}, // key: `${staffId}|${day}|${creneauId}` -> true
+  // Moteur de règles paramétrable (09/08/2026) : composition attendue par vacation, éditable depuis
+  // l'écran "Règles" -- voir DEFAULT_COMPOSITION_RULES juste au-dessus pour la forme d'une règle et
+  // js/07-validation-rg.js pour l'interpréteur générique (validateCompositionRules()).
+  rules: DEFAULT_COMPOSITION_RULES.map((r) => ({ ...r })),
   weekOffset: 0,
   // Ordre des colonnes de la vue Stats (24/07/2026, réordonnables par glisser-déposer des en-têtes,
   // voir renderStatsView()) -- "Personnel" n'en fait pas partie, toujours fixe en 1re position.

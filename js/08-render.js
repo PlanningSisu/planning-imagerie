@@ -56,6 +56,7 @@ function buildAssignedChip(person, key, day) {
   // Off n'est plus un cas particulier, voir hasActivityExclusivityConflict(). Verrouillage : prime
   // sur tout le reste, aucune violation n'a de sens à signaler sur une case gelée.
   const [activityId, , creneauId] = trameKeyFromCellKey(key).split("|");
+  const weekKeyPart = key.split("|")[0];
   if (locked) {
     chip.title = "Semaine verrouillée";
   } else if (activityId !== "off" && isPersonAbsentOnSlot(person.id, day, creneauId)) {
@@ -67,6 +68,12 @@ function buildAssignedChip(person, key, day) {
   } else if (hasActivityExclusivityConflict(person.id, day, creneauId, activityId)) {
     chip.classList.add("chip-absence-violation");
     chip.title = `${person.prenom} ${person.nom} est déjà posté(e) ailleurs ce créneau-là`;
+  } else if (hasSpecialiteMismatch(person, activityId, day, creneauId, weekKeyPart)) {
+    // RG-001 (09/08/2026) : même contour rouge que RG-014/020/021, priorité la plus basse (les 3
+    // autres conflits sont plus "graves" -- une case fermée/absente n'a pas non plus de spécialité
+    // propriétaire à vérifier de toute façon, voir hasSpecialiteMismatch()).
+    chip.classList.add("chip-absence-violation");
+    chip.title = `${person.prenom} ${person.nom} n'a pas la spécialité de cette vacation`;
   }
   chip.textContent = `${person.prenom[0]}. ${person.nom}`;
   if (locked) {
@@ -154,17 +161,18 @@ function render() {
     btn.classList.toggle("active", editingTrame && trameView === btn.dataset.trameView);
   });
 
-  document.getElementById("weekCongesBar").classList.toggle("hidden", editingConges || editingStats || editingTramePersonnel);
-  document.getElementById("tableWrap").classList.toggle("hidden", editingConges || editingStats || editingTramePersonnel);
-  document.getElementById("validationZone").classList.toggle("hidden", editingConges || editingStats || editingTramePersonnel);
+  document.getElementById("weekCongesBar").classList.toggle("hidden", editingConges || editingStats || editingTramePersonnel || editingRules);
+  document.getElementById("tableWrap").classList.toggle("hidden", editingConges || editingStats || editingTramePersonnel || editingRules);
+  document.getElementById("validationZone").classList.toggle("hidden", editingConges || editingStats || editingTramePersonnel || editingRules);
   document.getElementById("congesView").classList.toggle("hidden", !editingConges);
   document.getElementById("statsView").classList.toggle("hidden", !editingStats);
   document.getElementById("tramePersonnelView").classList.toggle("hidden", !editingTramePersonnel);
-  // La liste du personnel n'a aucune utilité en vue Congés/Stats/Trame Personnel et peut être très
-  // haute (une ligne par personne) : la masquer y libère la hauteur d'écran nécessaire (trouvé le
-  // 21/07/2026 en testant en vrai pour la vue Congés -- même raisonnement appliqué depuis à Stats
-  // puis à Trame Personnel).
-  document.getElementById("staffList").classList.toggle("hidden", editingConges || editingStats || editingTramePersonnel);
+  document.getElementById("rulesView").classList.toggle("hidden", !editingRules);
+  // La liste du personnel n'a aucune utilité en vue Congés/Stats/Trame Personnel/Règles et peut être
+  // très haute (une ligne par personne) : la masquer y libère la hauteur d'écran nécessaire (trouvé
+  // le 21/07/2026 en testant en vrai pour la vue Congés -- même raisonnement appliqué depuis à
+  // Stats/Trame Personnel/Règles).
+  document.getElementById("staffList").classList.toggle("hidden", editingConges || editingStats || editingTramePersonnel || editingRules);
 
   // Panneau de droite entier masqué UNIQUEMENT en vue Personnel du planning principal (22/07/2026) :
   // ses lignes y dupliquent exactement celles du tableau (une par personne), donc plus aucune
@@ -184,7 +192,7 @@ function render() {
   // fait remonter la légende ici pour la vraie vue Personnel (voir juste en dessous).
   const inPersonnelView =
     editingTramePersonnel ||
-    (currentView === "personnel" && !editingConges && !editingVacationSpecs && !editingStats);
+    (currentView === "personnel" && !editingConges && !editingVacationSpecs && !editingStats && !editingRules);
 
   if (inPersonnelView) {
     // Remontée au-dessus du tableau (avant `#weekCongesBar`), pour rester accessible pendant que
@@ -199,7 +207,7 @@ function render() {
     staffPanel.insertBefore(legend, document.getElementById("staffList"));
   }
 
-  staffPanel.classList.toggle("hidden", inPersonnelView);
+  staffPanel.classList.toggle("hidden", inPersonnelView || editingRules);
 
   if (editingConges) {
     renderCongesView();
@@ -207,6 +215,8 @@ function render() {
     renderStatsView();
   } else if (editingTramePersonnel) {
     renderTramePersonnelView();
+  } else if (editingRules) {
+    renderRulesView();
   } else {
     renderTable();
     renderValidationZone();

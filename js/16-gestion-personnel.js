@@ -518,6 +518,7 @@ function resetFullScreenModeButtons(exceptId) {
     { id: "btnTrame", label: "Trame" },
     { id: "btnConges", label: "Congés" },
     { id: "btnStats", label: "Stats" },
+    { id: "btnRules", label: "Règles" },
   ].forEach(({ id, label }) => {
     if (id === exceptId) return;
     const btn = document.getElementById(id);
@@ -532,7 +533,7 @@ function resetFullScreenModeButtons(exceptId) {
 // Samir le 24/07/2026) -- pas de mémorisation du dernier onglet utilisé, contrairement au 1er jet.
 document.getElementById("btnTrame").addEventListener("click", () => {
   editingTrame = !editingTrame;
-  if (editingTrame) { editingConges = false; editingStats = false; trameView = "personnel"; }
+  if (editingTrame) { editingConges = false; editingStats = false; editingRules = false; trameView = "personnel"; }
   const btn = document.getElementById("btnTrame");
   btn.textContent = editingTrame ? "← Retour au planning" : "Trame";
   btn.classList.toggle("btn-active", editingTrame);
@@ -549,7 +550,7 @@ document.querySelectorAll(".trame-tab").forEach((tabBtn) => {
 
 document.getElementById("btnConges").addEventListener("click", () => {
   editingConges = !editingConges;
-  if (editingConges) { editingTrame = false; editingStats = false; }
+  if (editingConges) { editingTrame = false; editingStats = false; editingRules = false; }
   const btn = document.getElementById("btnConges");
   btn.textContent = editingConges ? "← Retour au planning" : "Congés";
   btn.classList.toggle("btn-active", editingConges);
@@ -559,11 +560,22 @@ document.getElementById("btnConges").addEventListener("click", () => {
 
 document.getElementById("btnStats").addEventListener("click", () => {
   editingStats = !editingStats;
-  if (editingStats) { editingTrame = false; editingConges = false; }
+  if (editingStats) { editingTrame = false; editingConges = false; editingRules = false; }
   const btn = document.getElementById("btnStats");
   btn.textContent = editingStats ? "← Retour au planning" : "Stats";
   btn.classList.toggle("btn-active", editingStats);
   resetFullScreenModeButtons("btnStats");
+  render();
+});
+
+// Moteur de règles paramétrable (09/08/2026) : 4e mode plein-écran, même patron que Trame/Congés/Stats.
+document.getElementById("btnRules").addEventListener("click", () => {
+  editingRules = !editingRules;
+  if (editingRules) { editingTrame = false; editingConges = false; editingStats = false; }
+  const btn = document.getElementById("btnRules");
+  btn.textContent = editingRules ? "← Retour au planning" : "Règles";
+  btn.classList.toggle("btn-active", editingRules);
+  resetFullScreenModeButtons("btnRules");
   render();
 });
 

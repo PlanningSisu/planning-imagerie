@@ -305,6 +305,10 @@ let congesQuarter = currentQuarter(new Date());
 // directement la semaine déjà sélectionnée (state.weekOffset) comme le reste de l'appli.
 let editingStats = false;
 
+// Vue "Règles" (moteur de règles paramétrable, 09/08/2026) : 4e mode plein-écran, mutuellement
+// exclusif avec editingTrame/editingConges/editingStats (voir render()).
+let editingRules = false;
+
 // Bascule Semaine/Période de la vue Stats (24/07/2026, demande de Samir) : "week" utilise la semaine
 // affichée (state.weekOffset, comportement d'origine) ; "period" calcule sur une plage de dates
 // choisie via 2 <input type="date"> ("un mois par exemple", mais une plage arbitraire). Transitoire,

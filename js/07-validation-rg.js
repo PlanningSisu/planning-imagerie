@@ -15,22 +15,37 @@ function plural(count, word) {
 // de recommandation par case — plutôt que 2 lignes séparées (une par rôle), qui prêtaient à
 // confusion pour une RG qui est en réalité une seule règle de composition (retour Samir 20/07/2026).
 // interneMin/interneMax à null = cette RG ne réglemente pas du tout les internes (ex. RG-007).
+// Prend `assigned` (tableau de personnes, pas juste des comptes) depuis le 09/08/2026 -- nécessaire
+// pour `socleReinforcementIfSingleInterne` (RG-012, regarde le profil de spécialité des internes) et
+// pour la future correction des absences (Étape 2 du moteur paramétrable, filtrera `assigned` en
+// amont plutôt que de changer cette fonction).
 //
 // Règle transverse (20/07/2026, rétroactive et applicable à toute RG de composition, pas propre à
 // une seule RG) : un sénior au-delà du minimum requis peut couvrir un manque d'interne sans que ça
 // remonte en violation — mais on le signale en recommandation ("X pourrait être remplacé par un
 // interne") plutôt que de le compter comme un simple excédent, car le remplacement inverse (interne
-// -> sénior) n'est jamais imposé nulle part, c'est bien à sens unique.
-function checkComposition(nbSeniors, nbInternes, comp, rg, label, violations, recommendations) {
+// -> sénior) n'est jamais imposé nulle part, c'est bien à sens unique. `comp.allowSubstitution: false`
+// (nouveau, 09/08/2026) désactive ce mécanisme pour une règle donnée -- seule RG-012 (astreinte) s'en
+// sert : un sénior n'y "compense" jamais un manque d'interne, sa présence est simplement indésirable.
+function checkComposition(assigned, comp, rg, label, violations, recommendations) {
+  const nbSeniors = assigned.filter((p) => p.grade === "senior").length;
+  const internes = assigned.filter((p) => p.grade !== "senior");
+  const nbInternes = internes.length;
+  const allowSubstitution = comp.allowSubstitution !== false; // défaut true (RG-008)
+  const mentionSenior = comp.mentionSeniorInText !== false; // défaut true
+
   const extraSeniors = Math.max(0, nbSeniors - comp.seniorMin);
   const interneShortfall = comp.interneMin !== null ? Math.max(0, comp.interneMin - nbInternes) : 0;
-  const substitutable = Math.min(extraSeniors, interneShortfall); // séniors en trop utilisés pour couvrir le manque d'interne
+  const substitutable = allowSubstitution ? Math.min(extraSeniors, interneShortfall) : 0;
   const seniorsAfterSubstitution = nbSeniors - substitutable; // ce qu'il reste de séniors une fois la substitution "appliquée"
 
   const seniorShort = nbSeniors < comp.seniorMin;
   const interneShort = comp.interneMin !== null && nbInternes + substitutable < comp.interneMin;
 
   if (seniorShort || interneShort) {
+    // mentionSenior: false (RG-012 uniquement) -- l'astreinte n'attend "0 sénior" que dans un sens
+    // négatif (voir l'excédent plus bas), ça n'a jamais de sens de l'écrire dans "X attendus, trouvé
+    // Y" ("0 sénior + 1 interne attendus" serait confus) -- seul l'interne compte dans ce message-là.
     let interneText = null;
     if (comp.interneMin !== null) {
       interneText =
@@ -38,9 +53,12 @@ function checkComposition(nbSeniors, nbInternes, comp, rg, label, violations, re
           ? `${comp.interneMin} à ${plural(comp.interneMax, "interne")}`
           : plural(comp.interneMin, "interne");
     }
-    const expected = interneText ? `${plural(comp.seniorMin, "sénior")} + ${interneText}` : plural(comp.seniorMin, "sénior");
-    const found = comp.interneMin !== null ? `${plural(nbSeniors, "sénior")} + ${plural(nbInternes, "interne")}` : plural(nbSeniors, "sénior");
-    const totalMin = comp.seniorMin + (comp.interneMin || 0);
+    const seniorPart = mentionSenior ? plural(comp.seniorMin, "sénior") : null;
+    const expected = seniorPart && interneText ? `${seniorPart} + ${interneText}` : seniorPart || interneText;
+    const foundSeniorPart = mentionSenior ? plural(nbSeniors, "sénior") : null;
+    const foundInternePart = comp.interneMin !== null ? plural(nbInternes, "interne") : null;
+    const found = foundSeniorPart && foundInternePart ? `${foundSeniorPart} + ${foundInternePart}` : foundSeniorPart || foundInternePart;
+    const totalMin = (mentionSenior ? comp.seniorMin : 0) + (comp.interneMin || 0);
     const attendu = totalMin > 1 ? "attendus" : "attendu";
     violations.push({ rg, message: `${label} : ${expected} ${attendu}, trouvé ${found}.` });
   }
@@ -62,7 +80,17 @@ function checkComposition(nbSeniors, nbInternes, comp, rg, label, violations, re
 
   const excessParts = [];
   if (comp.seniorMax !== null && seniorsAfterSubstitution > comp.seniorMax) {
-    excessParts.push(plural(seniorsAfterSubstitution - comp.seniorMax, "sénior"));
+    // comp.seniorExcessMessage (RG-012 uniquement) : phrase dédiée ("l'astreinte n'accueille que des
+    // internes") au lieu du "X en trop" générique -- toujours seule sur sa ligne (jamais combinée
+    // avec un excédent d'interne, ça ne peut pas arriver pour RG-012 qui n'a pas d'interneMax).
+    if (comp.seniorExcessMessage) {
+      recommendations.push({
+        rg,
+        message: `${label} : ${plural(seniorsAfterSubstitution - comp.seniorMax, "sénior")} en trop (${comp.seniorExcessMessage}).`,
+      });
+    } else {
+      excessParts.push(plural(seniorsAfterSubstitution - comp.seniorMax, "sénior"));
+    }
   }
   if (comp.interneMax !== null && nbInternes > comp.interneMax) {
     excessParts.push(plural(nbInternes - comp.interneMax, "interne"));
@@ -70,103 +98,105 @@ function checkComposition(nbSeniors, nbInternes, comp, rg, label, violations, re
   if (excessParts.length > 0) {
     recommendations.push({ rg, message: `${label} : ${excessParts.join(" et ")} en trop.` });
   }
+
+  // comp.socleReinforcementIfSingleInterne (RG-012 uniquement) : si un seul interne est présent et
+  // qu'aucun n'est "socle" (0 spécialité), suggère d'en ajouter un en renfort -- le helper générique
+  // ne connaissait pas le profil de spécialité avant le 09/08/2026 (assigned ne portait que des
+  // comptes), cette règle vivait donc à part dans validateScanU(). Généralisée ici en gardant le
+  // comportement identique, pas encore un vrai axe "profil d'interne requis" réutilisable ailleurs
+  // (voir moteur-regles-brouillon.md §4.2, Étape 4).
+  if (comp.socleReinforcementIfSingleInterne && nbInternes >= 1 && nbInternes < 2) {
+    const nbSocle = internes.filter((p) => (p.specialites || []).length === 0).length;
+    if (nbSocle === 0) {
+      recommendations.push({ rg, message: `${label} : un interne socle pourrait être ajouté en renfort de l'interne déjà présent.` });
+    }
+  }
 }
 
-// RG-002 / RG-003 / RG-007 / RG-012 : composition attendue de Scan U selon jour/créneau.
-function validateScanU() {
-  const violations = [];
-  const recommendations = [];
-  const activity = state.activities.find((a) => a.id === "scan-u");
-  if (!activity) return { violations, recommendations };
+// ---------- Moteur générique de composition (moteur de règles paramétrable, 09/08/2026) ----------
+// Remplace les anciennes validateScanU()/validateScanA() (une fonction par modalité, if/else par
+// jour/créneau codés en dur) par un interpréteur générique qui lit `state.rules` -- éditable depuis
+// l'écran "Règles" (js/21-vue-regles.js). La forme d'une règle et les valeurs de départ vivent dans
+// DEFAULT_COMPOSITION_RULES (js/03-state.js, voir pourquoi c'est là-bas et pas ici). RG-015
+// (composition de la garde) N'EST PAS ici : une garde n'a pas de modalité/activité, elle reste dans
+// validateGardes() -- voir moteur-regles-brouillon.md §3 pour ce choix de périmètre.
 
-  DAYS.forEach((day) => {
-    CRENEAUX.forEach((creneau) => {
-      const key = cellKey(activity.id, day, creneau.id);
-      if (state.fermetures[key]) return; // RG-010 : vacation fermée cette semaine, aucune composition attendue.
-      if (isVacationCellOs(activity, day, creneau)) return; // RG-011 : vacation Os, jamais staffée (RG-024 : exception de semaine incluse).
-      const assigned = effectiveAssignedIds(key).map(staffById).filter(Boolean);
-      const nbSeniors = assigned.filter((p) => p.grade === "senior").length;
-      const internes = assigned.filter((p) => p.grade !== "senior");
-      const nbInternes = internes.length;
-      const label = `Scan U, ${day} ${creneau.label}`;
-
-      if (creneau.id === "astreinte") {
-        // RG-012 : composition dédiée à l'astreinte, pas via checkComposition() -- distinction
-        // interne "socle" (0 spécialité) vs interne spécialisé, que le helper générique ne connaît pas.
-        const nbSocle = internes.filter((p) => (p.specialites || []).length === 0).length;
-        if (nbInternes === 0) {
-          violations.push({ rg: "RG-012", message: `${label} : ${plural(1, "interne")} attendu, trouvé 0.` });
-        }
-        if (nbSeniors > 0) {
-          recommendations.push({
-            rg: "RG-012",
-            message: `${label} : ${plural(nbSeniors, "sénior")} en trop (l'astreinte n'accueille que des internes).`,
-          });
-        }
-        if (nbInternes >= 1 && nbInternes < 2 && nbSocle === 0) {
-          recommendations.push({
-            rg: "RG-012",
-            message: `${label} : un interne socle pourrait être ajouté en renfort de l'interne déjà présent.`,
-          });
-        }
-        return;
-      }
-
-      if (creneau.id === "matin" && day === "Jeudi") {
-        // RG-007 : exception du jeudi matin — 2 séniors minimum, remplace RG-002 ce jour précis.
-        // Les internes ne sont pas réglementés par cette RG (ni exigés, ni interdits).
-        checkComposition(
-          nbSeniors, nbInternes,
-          { seniorMin: 2, seniorMax: 2, interneMin: null, interneMax: null },
-          "RG-007", label, violations, recommendations
-        );
-      } else if (creneau.id === "matin") {
-        // RG-002 : Scan U le matin (hors jeudi) — 1 sénior + 2 internes minimum.
-        checkComposition(
-          nbSeniors, nbInternes,
-          { seniorMin: 1, seniorMax: 1, interneMin: 2, interneMax: 2 },
-          "RG-002", label, violations, recommendations
-        );
-      } else {
-        // RG-003 : Scan U l'après-midi — 2 séniors minimum + 1 interne minimum. Monter à 2 internes
-        // est recommandé mais pas obligatoire (encourageInterneGrowth, même logique que RG-009).
-        checkComposition(
-          nbSeniors, nbInternes,
-          { seniorMin: 2, seniorMax: 2, interneMin: 1, interneMax: 2, encourageInterneGrowth: true },
-          "RG-003", label, violations, recommendations
-        );
-      }
-    });
-  });
-
-  return { violations, recommendations };
+// Résout, pour une case précise (modalité/jour/créneau), quelle règle de state.rules s'y applique.
+// "La règle la plus spécifique gagne" : entre deux règles qui couvriraient le même jour, la portée
+// avec le MOINS de jours l'emporte (ex. RG-007 sur "Jeudi" seul face à une règle "tous les jours" qui
+// le couvrirait aussi). Réutilisée aussi hors du moteur de validation par hasSpecialiteMismatch()
+// (contour rouge par personne, voir buildAssignedChip()/buildModaliteTag()).
+function resolveCompositionRule(activityId, day, creneauId) {
+  const matches = state.rules.filter(
+    (r) => r.activityId === activityId && r.creneaux.includes(creneauId) && r.days.includes(day)
+  );
+  if (matches.length === 0) return null;
+  return matches.reduce((best, r) => (r.days.length < best.days.length ? r : best));
 }
 
-// RG-009 : composition attendue de Scan A — même règle tous les jours, matin et après-midi.
-function validateScanA() {
+// RG-001 (spécialité, tranché le 09/08/2026 : dans le périmètre bêta) : la règle peut exiger que
+// chaque personne PRÉSENTE sur cette vacation ait la spécialité propriétaire de la case parmi les
+// siennes (1 pour un sénior, 1 ou 2 pour un interne) -- pas juste une personne du groupe. Rien à
+// vérifier si la case n'a pas de spécialité propriétaire renseignée (`vacationSpecialites`), quel que
+// soit le réglage de la règle : il n'y a rien à comparer. Réutilisée par validateCompositionRules()
+// (violation, texte) ET par buildAssignedChip()/buildModaliteTag() (contour rouge sur la pastille en
+// cause, même traitement visuel que RG-014/020/021) -- `weekKeyPart` toujours celle de la case rendue
+// (RG-024 : une exception de semaine change la spécialité effective), jamais supposée = semaine
+// affichée, une pastille pouvant être rendue pour une semaine différente de state.weekOffset.
+function hasSpecialiteMismatch(person, activityId, day, creneauId, weekKeyPart) {
+  const rule = resolveCompositionRule(activityId, day, creneauId);
+  if (!rule || !rule.requireSpecialite) return false;
+  const vacSpec = effectiveVacationSpecialiteForWeek(activityId, day, creneauId, weekKeyPart);
+  if (!vacSpec) return false;
+  return !orderedSpecialites(person).includes(vacSpec);
+}
+
+// Point d'entrée du moteur générique -- une seule fonction pour toutes les modalités couvertes par
+// state.rules (Scan U, Scan A aujourd'hui), remplace validateScanU()+validateScanA().
+function validateCompositionRules() {
   const violations = [];
   const recommendations = [];
-  const activity = state.activities.find((a) => a.id === "scan-a");
-  if (!activity) return { violations, recommendations };
 
-  DAYS.forEach((day) => {
-    CRENEAUX.forEach((creneau) => {
-      if (!isCreneauApplicable(activity.id, creneau.id)) return; // RG-012 : astreinte non applicable à Scan A.
-      const key = cellKey(activity.id, day, creneau.id);
-      if (state.fermetures[key]) return; // RG-010 : vacation fermée cette semaine, aucune composition attendue.
-      if (isVacationCellOs(activity, day, creneau)) return; // RG-011 : vacation Os, jamais staffée (RG-024 : exception de semaine incluse).
-      const assigned = effectiveAssignedIds(key).map(staffById).filter(Boolean);
-      const nbSeniors = assigned.filter((p) => p.grade === "senior").length;
-      const nbInternes = assigned.filter((p) => p.grade !== "senior").length;
-      const label = `Scan A, ${day} ${creneau.label}`;
+  const activityIds = [...new Set(state.rules.map((r) => r.activityId))];
+  activityIds.forEach((activityId) => {
+    const activity = state.activities.find((a) => a.id === activityId);
+    if (!activity) return;
+    DAYS.forEach((day) => {
+      CRENEAUX.forEach((creneau) => {
+        if (!isCreneauApplicable(activityId, creneau.id)) return; // RG-012 : astreinte réservée à Scan U.
+        const rule = resolveCompositionRule(activityId, day, creneau.id);
+        if (!rule) return; // aucune règle définie pour cette case -- rien à vérifier.
+        const key = cellKey(activityId, day, creneau.id);
+        if (state.fermetures[key]) return; // RG-010 : vacation fermée cette semaine, aucune composition attendue.
+        if (isVacationCellOs(activity, day, creneau)) return; // RG-011 : vacation Os, jamais staffée.
+        const allAssigned = effectiveAssignedIds(key).map(staffById).filter(Boolean);
+        const label = `${rule.labelPrefix}, ${day} ${creneau.label}`;
 
-      // RG-009 : 1 sénior + 1 interne minimum. Monter à 2 internes est recommandé mais pas exigé
-      // (encourageInterneGrowth) : 1 interne -> "encore 1 pourrait être ajouté", 2 internes -> rien.
-      checkComposition(
-        nbSeniors, nbInternes,
-        { seniorMin: 1, seniorMax: 1, interneMin: 1, interneMax: 2, encourageInterneGrowth: true },
-        "RG-009", label, violations, recommendations
-      );
+        // Absences (09/08/2026, "on corrige les absences dans leur aspect bancal") : une personne
+        // absente (congé/repos de garde) ce créneau-là ne compte plus dans le calcul de composition
+        // -- comme un trou de plus à combler. Elle reste affichée normalement dans la case, avec son
+        // contour rouge RG-014 habituel (mécanisme séparé, inchangé) -- les deux signaux coexistent :
+        // "il manque quelqu'un" (ici) et "cette personne ne devrait pas être là" (RG-014), jamais
+        // fusionnés en un seul message.
+        const present = allAssigned.filter((p) => !isPersonAbsentOnSlot(p.id, day, creneau.id));
+        checkComposition(present, rule, rule.rg, label, violations, recommendations);
+
+        // Spécialité (RG-001) : une violation par personne présente qui ne correspond pas, jamais une
+        // seule ligne pour toute la case (voir hasSpecialiteMismatch()).
+        if (rule.requireSpecialite) {
+          const vacSpec = effectiveVacationSpecialite(activityId, day, creneau.id);
+          if (vacSpec) {
+            present.forEach((person) => {
+              if (!orderedSpecialites(person).includes(vacSpec)) {
+                violations.push({
+                  rg: rule.rg,
+                  message: `${label} : ${person.prenom} ${person.nom} n'a pas la spécialité de cette vacation (${SPECIALITES[vacSpec].label}).`,
+                });
+              }
+            });
+          }
+        }
+      });
     });
   });
 
@@ -269,10 +299,8 @@ function validateGardes() {
 
   weekIsoDates(monday).forEach((iso, i) => {
     const onGarde = gardeStaffForDate(iso);
-    const nbSeniors = onGarde.filter((p) => p.grade === "senior").length;
-    const nbInternes = onGarde.filter((p) => p.grade !== "senior").length;
     checkComposition(
-      nbSeniors, nbInternes,
+      onGarde,
       { seniorMin: 1, seniorMax: 1, interneMin: 2, interneMax: 2 },
       "RG-015", `Garde, ${DAYS[i]}`, violations, recommendations
     );
@@ -283,7 +311,7 @@ function validateGardes() {
 
 // Point d'entrée unique du moteur : ajouter ici l'appel de toute nouvelle fonction validateXxx().
 function runValidation() {
-  const results = [validateScanU(), validateScanA(), validateAbsences(), validateGardes(), validateActivityExclusivity()];
+  const results = [validateCompositionRules(), validateAbsences(), validateGardes(), validateActivityExclusivity()];
   return {
     violations: results.flatMap((r) => r.violations),
     recommendations: results.flatMap((r) => r.recommendations),

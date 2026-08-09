@@ -316,7 +316,11 @@ function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
   const isAbsenceViolation = !locked && activity.id !== "off" && isPersonAbsentOnSlot(staffId, tagDay, tagCreneauId);
   const isTPViolation = !locked && !isAbsenceViolation && isPersonTPOnSlot(staffId, tagDay, tagCreneauId);
   const isExclusivityViolation = !locked && !isAbsenceViolation && !isTPViolation && hasActivityExclusivityConflict(staffId, tagDay, tagCreneauId, activity.id);
-  const isViolation = isAbsenceViolation || isTPViolation || isExclusivityViolation;
+  // RG-001 (09/08/2026) : priorité la plus basse des 4, même esprit que buildAssignedChip().
+  const person = staffById(staffId);
+  const isSpecialiteViolation = !locked && !isAbsenceViolation && !isTPViolation && !isExclusivityViolation &&
+    person && hasSpecialiteMismatch(person, activity.id, tagDay, tagCreneauId, tagWeekKeyPart);
+  const isViolation = isAbsenceViolation || isTPViolation || isExclusivityViolation || isSpecialiteViolation;
   tag.className = "chip modalite-tag" +
     (activity.urgence ? " urgence-tag" : "") +
     (vacSpec ? ` spec-${vacSpec}` : "") +
@@ -324,15 +328,14 @@ function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
     (locked ? " chip-week-locked" : "");
   if (locked) {
     tag.title = "Semaine verrouillée";
-  } else if (isViolation) {
-    const person = staffById(staffId);
-    if (person) {
-      tag.title = isAbsenceViolation
-        ? `${person.prenom} ${person.nom} est absent(e) ce créneau-là`
-        : isTPViolation
-          ? `${person.prenom} ${person.nom} est à Temps Partiel ce créneau-là`
-          : `${person.prenom} ${person.nom} est déjà posté(e) ailleurs ce créneau-là`;
-    }
+  } else if (isViolation && person) {
+    tag.title = isAbsenceViolation
+      ? `${person.prenom} ${person.nom} est absent(e) ce créneau-là`
+      : isTPViolation
+        ? `${person.prenom} ${person.nom} est à Temps Partiel ce créneau-là`
+        : isExclusivityViolation
+          ? `${person.prenom} ${person.nom} est déjà posté(e) ailleurs ce créneau-là`
+          : `${person.prenom} ${person.nom} n'a pas la spécialité de cette vacation`;
   }
   tag.textContent = activity.nom;
   if (locked) return tag; // ni glisser, ni bouton de retrait -- "rien d'actif" sur une semaine verrouillée.

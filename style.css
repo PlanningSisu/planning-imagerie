@@ -214,6 +214,12 @@ body {
 .actions button.btn-accent4:hover { background: #3730a3; }
 .actions button.btn-accent4.btn-active { background: #334155; }
 .actions button.btn-accent4.btn-active:hover { background: #1e293b; }
+/* Bouton "Règles" (moteur de règles paramétrable, 09/08/2026) -- 5e couleur d'accent, même patron
+   que Congés/Stats (btn-accent3/4). */
+.actions button.btn-accent5 { background: #be123c; }
+.actions button.btn-accent5:hover { background: #9f1239; }
+.actions button.btn-accent5.btn-active { background: #334155; }
+.actions button.btn-accent5.btn-active:hover { background: #1e293b; }
 
 /* Menu "⚙" (23/07/2026) -- regroupe Synchro GitHub / Export / Import / Réinitialiser, des actions
    ponctuelles/techniques qui n'ont pas besoin d'être en permanence visibles comme les 3 boutons de
@@ -1981,6 +1987,86 @@ tr.group-end td {
   background: #ede9fe !important;
   border-bottom: 3px solid #7c3aed;
 }
+
+/* Vue "Règles" (moteur de règles paramétrable, 09/08/2026) -- réutilise .staff-form/.form-row/
+   .form-actions/.form-error/.staff-modal-edit/.staff-modal-delete/.staff-modal-empty (déjà en place
+   pour Gestion Personnel), seuls les éléments propres à cet écran sont définis ici. */
+.rules-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.rules-header h2 { margin: 0; font-size: 18px; }
+.rules-header .btn-primary { margin-bottom: 0; }
+.rules-activity-group { margin-bottom: 18px; }
+.rules-activity-group h3 {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #64748b;
+  margin: 0 0 6px;
+}
+.rules-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: white;
+}
+.rules-row-desc { font-size: 13px; line-height: 1.5; }
+.rules-row-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.rules-badge-spec {
+  display: inline-block;
+  background: #ede9fe;
+  color: #6d28d9;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: 6px;
+}
+.rule-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.rule-checkbox-group label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 400;
+  color: #1f2937;
+  cursor: pointer;
+}
+.rule-link-btn {
+  background: none;
+  border: none;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+.rule-preview {
+  background: #f1f5f9;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #334155;
+  margin: 10px 0;
+}
+#ruleFormSubmit { background: #16a34a; color: white; }
+#ruleFormSubmit:hover { background: #15803d; }
+#ruleFormCancel { background: #e5e7eb; color: #1f2937; }
+#ruleFormCancel:hover { background: #d1d5db; }
 
 /* Utilitaire générique -- volontairement tout en bas du fichier : à spécificité égale (une seule
    classe), la règle déclarée en dernier gagne. Placé plus haut, il perdait contre .validation-zone

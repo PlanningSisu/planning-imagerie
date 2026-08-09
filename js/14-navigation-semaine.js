@@ -37,7 +37,8 @@ document.getElementById("btnPlanningHome").addEventListener("click", () => {
   editingTrame = false;
   editingConges = false;
   editingStats = false;
-  resetFullScreenModeButtons(); // aucun exceptId -- remet les 3 boutons à leur libellé/état normal.
+  editingRules = false;
+  resetFullScreenModeButtons(); // aucun exceptId -- remet les 4 boutons à leur libellé/état normal.
   render();
 });
 
