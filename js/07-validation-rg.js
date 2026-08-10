@@ -333,6 +333,49 @@ function validateActivityExclusivity() {
   return { violations, recommendations: [] };
 }
 
+// RG-027 (10/08/2026, "donnée tacite" remontée par Samir) : on évite de poser en astreinte (Scan U)
+// quelqu'un déjà posté sur Scan U OU Echo U (matin OU après-midi) ce même jour calendaire --
+// distinct de RG-021 (exclusivité), qui exclut explicitement l'astreinte de son propre calcul
+// (`hasActivityExclusivityConflict()`, "hors-sujet"). Réglage par règle de composition (le champ
+// `astreinteExclusivityMode` vit sur la règle qui couvre le créneau "astreinte" de Scan U, aujourd'hui
+// RG-012) plutôt qu'un mécanisme paramétrable générique : Samir a confirmé préférer coder ce cas très
+// spécifique en dur et n'exposer qu'un réglage Désactivée/Facultative/Obligatoire dans l'écran
+// "Règles", plutôt que de généraliser la notion d'"incompatibilité entre deux activités sur des
+// créneaux différents le même jour" dans state.rules pour un seul cas d'usage aujourd'hui.
+// `"off"` (valeur par défaut, y compris pour une règle existante sans ce champ -- undefined) ne
+// vérifie rien ; `"recommendation"`/`"violation"` pilotent uniquement la SÉVÉRITÉ d'affichage --
+// jamais bloquant, jamais auto-corrigé (comme RG-021), confirmé par Samir ("avertissement") : c'est
+// un signal préparatoire pour une future automatisation d'assignation, pas encore cette automatisation
+// elle-même.
+function validateAstreinteExclusivity() {
+  const violations = [];
+  const recommendations = [];
+
+  DAYS.forEach((day) => {
+    const rule = resolveCompositionRule("scan-u", day, "astreinte");
+    const mode = rule && rule.astreinteExclusivityMode;
+    if (mode !== "recommendation" && mode !== "violation") return;
+
+    const onAstreinte = effectiveAssignedIds(cellKey("scan-u", day, "astreinte"));
+    onAstreinte.forEach((staffId) => {
+      const conflictActivityId = ["scan-u", "echo-u"].find((activityId) =>
+        ["matin", "apres-midi"].some((creneauId) => effectiveAssignedIds(cellKey(activityId, day, creneauId)).includes(staffId))
+      );
+      if (!conflictActivityId) return;
+      const person = staffById(staffId);
+      if (!person) return;
+      const conflictActivity = state.activities.find((a) => a.id === conflictActivityId);
+      const target = mode === "violation" ? violations : recommendations;
+      target.push({
+        rg: "RG-027",
+        message: `Astreinte, ${day} : ${person.prenom} ${person.nom} est aussi posté(e) sur ${conflictActivity.nom} ce jour-là.`,
+      });
+    });
+  });
+
+  return { violations, recommendations };
+}
+
 // RG-015 : composition de la garde, éditable depuis l'écran "Règles" (10/08/2026, `state.gardeRule`
 // -- voir DEFAULT_GARDE_RULE dans js/03-state.js et renderGardeRuleSection() dans js/21-vue-regles.js,
 // avant ça codée en dur ici même). Contrairement aux RG de composition de vacation
@@ -355,7 +398,7 @@ function validateGardes() {
 
 // Point d'entrée unique du moteur : ajouter ici l'appel de toute nouvelle fonction validateXxx().
 function runValidation() {
-  const results = [validateCompositionRules(), validateAbsences(), validateGardes(), validateActivityExclusivity()];
+  const results = [validateCompositionRules(), validateAbsences(), validateGardes(), validateActivityExclusivity(), validateAstreinteExclusivity()];
   return {
     violations: results.flatMap((r) => r.violations),
     recommendations: results.flatMap((r) => r.recommendations),

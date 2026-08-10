@@ -638,6 +638,15 @@ function renderRuleForm(container, existingRule, prefillFrom) {
         <label><input type="checkbox" id="ruleRequireSpecialite"> Respecter la spécialité de la vacation</label>
         <span class="form-hint">Chaque personne assignée devra avoir la spécialité propriétaire de la case parmi les siennes -- sans effet si la case n'a pas de spécialité renseignée.</span>
       </div>
+      <div class="form-row" id="ruleAstreinteExclusivityRow">
+        <label for="ruleAstreinteExclusivityMode">Éviter Scan U / Echo U le même jour</label>
+        <select id="ruleAstreinteExclusivityMode">
+          <option value="off">Désactivée</option>
+          <option value="recommendation">Facultative (recommandation)</option>
+          <option value="violation">Obligatoire (violation)</option>
+        </select>
+        <span class="form-hint">Signale (sans jamais bloquer) une personne postée en astreinte ET sur Scan U/Echo U le matin ou l'après-midi, ce même jour.</span>
+      </div>
       <div class="rule-preview" id="rulePreview"></div>
       <div class="form-actions">
         <button type="button" id="ruleFormSubmit">${existingRule ? "Enregistrer" : "Ajouter"}</button>
@@ -658,6 +667,7 @@ function renderRuleForm(container, existingRule, prefillFrom) {
   const encourageGrowthCheckbox = document.getElementById("ruleEncourageGrowth");
   const substitutionCheckbox = document.getElementById("ruleSubstitution");
   const requireSpecialiteCheckbox = document.getElementById("ruleRequireSpecialite");
+  const astreinteExclusivitySelect = document.getElementById("ruleAstreinteExclusivityMode");
 
   if (source) {
     activitySelect.value = source.activityId;
@@ -674,6 +684,7 @@ function renderRuleForm(container, existingRule, prefillFrom) {
     encourageGrowthCheckbox.checked = !!source.encourageInterneGrowth;
     substitutionCheckbox.checked = source.allowSubstitution !== false;
     requireSpecialiteCheckbox.checked = !!source.requireSpecialite;
+    astreinteExclusivitySelect.value = source.astreinteExclusivityMode || "off";
   }
 
   // Astreinte : réservée à Scan U (RG-012/isCreneauApplicable) -- masquée pour toute autre modalité,
@@ -682,7 +693,17 @@ function renderRuleForm(container, existingRule, prefillFrom) {
     const isScanU = activitySelect.value === "scan-u";
     document.getElementById("ruleCreneauAstreinteLabel").style.display = isScanU ? "inline-flex" : "none";
     if (!isScanU) document.getElementById("ruleCreneauAstreinte").checked = false;
+    updateAstreinteExclusivityVisibility();
   };
+  // RG-027 (10/08/2026) : le réglage "Éviter Scan U/Echo U le même jour" n'a de sens QUE pour la
+  // règle qui couvre le créneau astreinte lui-même -- masqué sinon (même logique que le créneau
+  // Astreinte, réservée à Scan U). Revérifié à chaque changement de modalité (via updateAstreinteVisibility()
+  // ci-dessus) ET à chaque coche/décoche du créneau Astreinte directement.
+  const updateAstreinteExclusivityVisibility = () => {
+    document.getElementById("ruleAstreinteExclusivityRow").style.display =
+      document.getElementById("ruleCreneauAstreinte").checked ? "block" : "none";
+  };
+  document.getElementById("ruleCreneauAstreinte").addEventListener("change", updateAstreinteExclusivityVisibility);
   const updateInterneFieldsVisibility = () => {
     document.getElementById("ruleInterneFields").style.display = interneRegulatedCheckbox.checked ? "block" : "none";
   };
@@ -757,6 +778,7 @@ function renderRuleForm(container, existingRule, prefillFrom) {
       encourageInterneGrowth: encourageGrowthCheckbox.checked,
       allowSubstitution: substitutionCheckbox.checked,
       requireSpecialite: requireSpecialiteCheckbox.checked,
+      astreinteExclusivityMode: astreinteExclusivitySelect.value,
     };
 
     if (existingRule) {

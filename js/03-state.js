@@ -46,6 +46,9 @@ const DEFAULT_COMPOSITION_RULES = [
     mentionSeniorInText: false, allowSubstitution: false,
     seniorExcessMessage: "l'astreinte n'accueille que des internes",
     socleReinforcementIfSingleInterne: true,
+    // RG-027 (10/08/2026) : "off" par défaut -- ne change rien tant que Samir ne l'active pas
+    // explicitement depuis l'écran "Règles" (même prudence que requireSpecialite: false partout).
+    astreinteExclusivityMode: "off",
   },
   {
     id: "RG-009", rg: "RG-009", activityId: "scan-a", labelPrefix: "Scan A", creneaux: ["matin", "apres-midi"], days: DAYS,
