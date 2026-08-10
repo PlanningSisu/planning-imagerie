@@ -2009,6 +2009,7 @@ tr.group-end td {
   margin: 0 0 6px;
   padding: 4px 6px;
   border-radius: 6px;
+  user-select: none;
 }
 /* Bloc de modalité réordonnable par glisser-déposer du <h3> (09/08/2026, demande de Samir : "le
    bloc 'Scan A' etc") -- même traitement visuel que .rules-row[draggable] ci-dessous, juste posé
@@ -2020,6 +2021,17 @@ tr.group-end td {
   outline: 2px dashed #3b82f6;
   outline-offset: -2px;
 }
+/* Plier/déplier (10/08/2026, "aider à la visibilité") -- un clic sur le <h3> (pas un glissé) toggle
+   .collapsed sur le conteneur .rules-activity-group, masquant ses .rules-row. Chevron pivote pour
+   indiquer l'état, comptage de règles toujours visible (utile justement quand c'est plié). */
+.rules-group-chevron {
+  display: inline-block;
+  transition: transform 0.15s ease;
+  font-size: 11px;
+}
+.rules-activity-group.collapsed .rules-group-chevron { transform: rotate(-90deg); }
+.rules-group-count { font-weight: 400; text-transform: none; letter-spacing: normal; color: #94a3b8; }
+.rules-activity-group.collapsed .rules-row { display: none; }
 .rules-row {
   display: flex;
   align-items: center;
@@ -2040,6 +2052,25 @@ tr.group-end td {
   outline: 2px dashed #3b82f6;
   outline-offset: -2px;
 }
+
+/* Règles globales (10/08/2026) -- zone en haut de l'écran, transverse à toutes les modalités
+   (voir js/21-vue-regles.js). .global-rules-header réutilise .rules-header (flex space-between)
+   avec un h3 au lieu du h2 principal. */
+.global-rules-section {
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px dashed var(--border);
+}
+.global-rules-header h3 { margin: 0; font-size: 15px; }
+.global-rule-staff-picker {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 12px;
+}
+.global-rule-staff-row { cursor: pointer; }
+.global-rule-staff-row input { flex-shrink: 0; }
 .rules-row-desc { font-size: 13px; line-height: 1.5; }
 .rules-row-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .rules-badge-spec {

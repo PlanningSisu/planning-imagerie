@@ -134,6 +134,44 @@ function resolveCompositionRule(activityId, day, creneauId) {
   return matches.reduce((best, r) => (r.days.length < best.days.length ? r : best));
 }
 
+// ---------- Règles globales (10/08/2026) ----------
+// Transverses à toutes les modalités, distinctes de state.rules (composition PAR modalité) -- voir
+// state.globalRules (js/03-state.js) et l'écran (js/21-vue-regles.js). 1er type : "ignoreSpecialite"
+// (RG-001, désactive le contrôle de spécialité pour des personnes/statuts ciblés, sur des modalités
+// choisies). Conçu pour accueillir d'autres types plus tard sans changer cette forme.
+
+// Catalogue des "statuts" ciblables par une règle globale, en plus de personnes nommées
+// individuellement -- couvre grade ET profil de spécialité (clarifié par Samir : "cadre = grade +
+// statut (interne, mono spé, double spé etc)"). `test(person)` est la seule chose consommée par
+// personMatchesAnyGlobalRuleStatus() ci-dessous ; `label` sert à l'écran (js/21-vue-regles.js).
+const GLOBAL_RULE_STATUS_OPTIONS = [
+  { id: "senior", label: "Sénior", test: (p) => p.grade === "senior" },
+  { id: "interne", label: "Interne (tous profils)", test: (p) => p.grade === "interne" },
+  { id: "interne-socle", label: "Interne socle", test: (p) => p.grade === "interne" && orderedSpecialites(p).length === 0 },
+  { id: "interne-mono", label: "Interne mono-spécialisé", test: (p) => p.grade === "interne" && orderedSpecialites(p).length === 1 },
+  { id: "interne-specialise", label: "Interne spécialisé (2 spé)", test: (p) => p.grade === "interne" && orderedSpecialites(p).length === 2 },
+  { id: "cca", label: "CCA", test: (p) => !!p.cca },
+];
+
+function personMatchesAnyGlobalRuleStatus(person, statusIds) {
+  return (statusIds || []).some((id) => {
+    const option = GLOBAL_RULE_STATUS_OPTIONS.find((o) => o.id === id);
+    return option && option.test(person);
+  });
+}
+
+// RG-001 : la spécialité n'est jamais vérifiée pour une personne/un statut couvert par une règle
+// globale "ignoreSpecialite" active sur cette modalité précise (portée "Par modalité", demande
+// explicite de Samir plutôt qu'un blanket "partout"). `staffIds` et `statuses` se combinent en OR
+// (une personne nommée directement ignore la spé même si aucun statut ne la couvre, et vice-versa).
+function isSpecialiteIgnoredForPerson(person, activityId) {
+  return state.globalRules.some((gr) =>
+    gr.type === "ignoreSpecialite" &&
+    gr.activityIds.includes(activityId) &&
+    ((gr.staffIds || []).includes(person.id) || personMatchesAnyGlobalRuleStatus(person, gr.statuses))
+  );
+}
+
 // RG-001 (spécialité, tranché le 09/08/2026 : dans le périmètre bêta) : la règle peut exiger que
 // chaque personne PRÉSENTE sur cette vacation ait la spécialité propriétaire de la case parmi les
 // siennes (1 pour un sénior, 1 ou 2 pour un interne) -- pas juste une personne du groupe. Rien à
@@ -146,6 +184,7 @@ function resolveCompositionRule(activityId, day, creneauId) {
 function hasSpecialiteMismatch(person, activityId, day, creneauId, weekKeyPart) {
   const rule = resolveCompositionRule(activityId, day, creneauId);
   if (!rule || !rule.requireSpecialite) return false;
+  if (isSpecialiteIgnoredForPerson(person, activityId)) return false; // règle globale (10/08/2026)
   const vacSpec = effectiveVacationSpecialiteForWeek(activityId, day, creneauId, weekKeyPart);
   if (!vacSpec) return false;
   return !orderedSpecialites(person).includes(vacSpec);
@@ -187,6 +226,7 @@ function validateCompositionRules() {
           const vacSpec = effectiveVacationSpecialite(activityId, day, creneau.id);
           if (vacSpec) {
             present.forEach((person) => {
+              if (isSpecialiteIgnoredForPerson(person, activityId)) return; // règle globale (10/08/2026)
               if (!orderedSpecialites(person).includes(vacSpec)) {
                 violations.push({
                   rg: rule.rg,

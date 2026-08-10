@@ -8,6 +8,12 @@ function generateRuleId() {
   return "rule" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
+// Plier/déplier les blocs de modalité (10/08/2026, demande de Samir : "aider à la visibilité") --
+// transitoire, jamais persisté (repart tout déplié à chaque rechargement, comme staffModalSearchQuery
+// et les autres petits états de vue de ce genre) : un Set d'`activityId` actuellement PLIÉS, vide par
+// défaut = tout déplié (comportement d'origine, inchangé si Samir n'a jamais cliqué un en-tête).
+const collapsedRuleGroups = new Set();
+
 // Même logique de construction de texte que checkComposition() (js/07-validation-rg.js) pour la
 // partie "attendu" d'un message -- dupliquée volontairement plutôt que d'exposer un helper partagé :
 // ici c'est un simple texte d'aperçu/résumé, pas la validation elle-même (aucun risque à ce que les
@@ -33,6 +39,14 @@ function renderRulesView() {
       <h2>Règles de composition</h2>
       <button type="button" id="btnAddRule" class="btn-primary">+ Ajouter une règle</button>
     </div>
+    <div class="global-rules-section">
+      <div class="rules-header global-rules-header">
+        <h3>Règles globales</h3>
+        <button type="button" id="btnAddGlobalRule" class="btn-primary btn-outline">+ Ajouter une règle globale</button>
+      </div>
+      <div id="globalRuleFormContainer"></div>
+      <div id="globalRulesList" class="rules-list"></div>
+    </div>
     <div id="ruleFormContainer"></div>
     <div id="rulesList" class="rules-list"></div>
   `;
@@ -40,6 +54,11 @@ function renderRulesView() {
     document.getElementById("btnAddRule").blur();
     renderRuleForm(document.getElementById("ruleFormContainer"), null);
   });
+  document.getElementById("btnAddGlobalRule").addEventListener("click", () => {
+    document.getElementById("btnAddGlobalRule").blur();
+    renderGlobalRuleForm(document.getElementById("globalRuleFormContainer"), null);
+  });
+  renderGlobalRulesList(document.getElementById("globalRulesList"));
   renderRulesList(document.getElementById("rulesList"));
 }
 
@@ -60,11 +79,20 @@ function renderRulesList(container) {
     if (rulesForActivity.length === 0) return;
     anyRule = true;
 
+    const isCollapsed = collapsedRuleGroups.has(activity.id);
     const section = document.createElement("div");
-    section.className = "rules-activity-group";
+    section.className = "rules-activity-group" + (isCollapsed ? " collapsed" : "");
     const h3 = document.createElement("h3");
-    h3.textContent = activity.nom;
-    h3.title = "Glisser pour réordonner ce bloc";
+    h3.innerHTML = `<span class="rules-group-chevron">▾</span> ${activity.nom} <span class="rules-group-count">${plural(rulesForActivity.length, "règle")}</span>`;
+    h3.title = "Cliquer pour plier/déplier -- glisser pour réordonner ce bloc";
+    // Plier/déplier (10/08/2026) : un simple clic (mousedown+mouseup sans déplacement) ne déclenche
+    // jamais dragstart -- les deux gestes cohabitent sans conflit, testé en vrai. Ne touche qu'à
+    // `collapsedRuleGroups` (transitoire) + re-render de la liste, jamais state.rules ni saveState().
+    h3.addEventListener("click", () => {
+      if (isCollapsed) collapsedRuleGroups.delete(activity.id);
+      else collapsedRuleGroups.add(activity.id);
+      renderRulesList(container);
+    });
     // Glisser-déposer du BLOC entier (pas juste ses règles) -- réordonne state.rulesGroupOrder.
     // `dataset.activityId` identifie le bloc ; le drop insère le bloc déplacé juste avant/après le
     // bloc cible selon le sens du glissé, même logique que le réordonnancement des `.rules-row`
@@ -194,6 +222,177 @@ function renderRulesList(container) {
   if (!anyRule) {
     container.innerHTML = '<div class="staff-modal-empty">Aucune règle définie -- aucune composition n\'est vérifiée tant qu\'aucune règle n\'existe pour une modalité.</div>';
   }
+}
+
+// ---------- Règles globales (10/08/2026) ----------
+// Zone tout en haut de l'écran, transverse à toutes les modalités -- distincte de state.rules
+// (composition PAR modalité, ci-dessus). 1er type : "ignoreSpecialite" (RG-001 desactivée pour des
+// personnes/statuts ciblés, sur des modalités choisies -- voir isSpecialiteIgnoredForPerson() et
+// GLOBAL_RULE_STATUS_OPTIONS, js/07-validation-rg.js). Conçu pour accueillir d'autres types plus
+// tard : GLOBAL_RULE_TYPE_LABELS/le <select> Type ci-dessous sont déjà génériques même si un seul
+// type existe aujourd'hui.
+const GLOBAL_RULE_TYPE_LABELS = { ignoreSpecialite: "Ignorer la spécialité (RG-001)" };
+
+function generateGlobalRuleId() {
+  return "grule" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+// Texte résumé affiché dans la liste -- réutilisé aussi comme aperçu en direct dans le formulaire.
+function describeGlobalRule(rule) {
+  const staffNames = (rule.staffIds || [])
+    .map((id) => staffById(id))
+    .filter(Boolean)
+    .sort(compareStaffOrder)
+    .map((p) => `${p.prenom} ${p.nom}`);
+  const statusLabels = (rule.statuses || [])
+    .map((id) => GLOBAL_RULE_STATUS_OPTIONS.find((o) => o.id === id))
+    .filter(Boolean)
+    .map((o) => o.label);
+  const targets = [...staffNames, ...statusLabels];
+  const targetsText = targets.length > 0 ? targets.join(", ") : "personne (aucune cible choisie)";
+  const activityNames = (rule.activityIds || [])
+    .map((id) => state.activities.find((a) => a.id === id))
+    .filter(Boolean)
+    .map((a) => a.nom);
+  const activitiesText = activityNames.length > 0 ? activityNames.join(", ") : "aucune modalité choisie";
+  return `${GLOBAL_RULE_TYPE_LABELS[rule.type] || rule.type} pour ${targetsText} — sur ${activitiesText}`;
+}
+
+function renderGlobalRulesList(container) {
+  container.innerHTML = "";
+  if (state.globalRules.length === 0) {
+    container.innerHTML = '<div class="staff-modal-empty">Aucune règle globale -- toutes les vérifications s\'appliquent normalement à tout le monde.</div>';
+    return;
+  }
+  state.globalRules.forEach((rule) => {
+    const row = document.createElement("div");
+    row.className = "rules-row";
+    const desc = document.createElement("div");
+    desc.className = "rules-row-desc";
+    desc.textContent = describeGlobalRule(rule);
+    row.appendChild(desc);
+
+    const actions = document.createElement("div");
+    actions.className = "rules-row-actions";
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "staff-modal-edit";
+    editBtn.textContent = "Modifier";
+    editBtn.addEventListener("click", () => renderGlobalRuleForm(document.getElementById("globalRuleFormContainer"), rule));
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "staff-modal-delete";
+    delBtn.textContent = "Supprimer";
+    delBtn.addEventListener("click", () => {
+      if (!confirm(`Supprimer cette règle globale (${describeGlobalRule(rule)}) ?`)) return;
+      state.globalRules = state.globalRules.filter((r) => r.id !== rule.id);
+      saveState();
+      render();
+    });
+    actions.append(editBtn, delBtn);
+    row.appendChild(actions);
+
+    container.appendChild(row);
+  });
+}
+
+function renderGlobalRuleForm(container, existingRule) {
+  const staffCheckboxesHtml = (people) => people.map((p) => `
+    <label class="staff-modal-row global-rule-staff-row">
+      <input type="checkbox" class="globalRuleStaff" value="${p.id}">
+      <span>${p.prenom} ${p.nom}</span>
+    </label>
+  `).join("");
+  const normalStaff = state.staff.filter((p) => !p.horsSisu);
+  const seniors = normalStaff.filter((p) => p.grade === "senior").sort(compareSpecialiteKeys);
+  const internes = normalStaff.filter((p) => p.grade !== "senior").sort(compareSpecialiteKeys);
+
+  container.innerHTML = `
+    <div class="staff-form rule-form">
+      <h3>${existingRule ? "Modifier une règle globale" : "Ajouter une règle globale"}</h3>
+      <div class="form-row">
+        <label for="globalRuleType">Type</label>
+        <select id="globalRuleType">
+          <option value="ignoreSpecialite">${GLOBAL_RULE_TYPE_LABELS.ignoreSpecialite}</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Modalité(s) concernée(s)</label>
+        <div class="rule-checkbox-group">
+          ${state.activities.map((a) => `<label><input type="checkbox" class="globalRuleActivity" value="${a.id}"> ${a.nom}</label>`).join("")}
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Statut(s) concerné(s)</label>
+        <div class="rule-checkbox-group">
+          ${GLOBAL_RULE_STATUS_OPTIONS.map((o) => `<label><input type="checkbox" class="globalRuleStatus" value="${o.id}"> ${o.label}</label>`).join("")}
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Personne(s) concernée(s)</label>
+        <div class="global-rule-staff-picker">
+          <div class="staff-modal-section">Séniors</div>
+          ${staffCheckboxesHtml(seniors)}
+          <div class="staff-modal-section">Internes</div>
+          ${staffCheckboxesHtml(internes)}
+        </div>
+      </div>
+      <div class="rule-preview" id="globalRulePreview"></div>
+      <div class="form-actions">
+        <button type="button" id="globalRuleFormSubmit">${existingRule ? "Enregistrer" : "Ajouter"}</button>
+        <button type="button" id="globalRuleFormCancel">Annuler</button>
+      </div>
+      <div class="form-error" id="globalRuleFormError"></div>
+    </div>
+  `;
+
+  const activityCheckboxes = [...container.querySelectorAll(".globalRuleActivity")];
+  const statusCheckboxes = [...container.querySelectorAll(".globalRuleStatus")];
+  const staffCheckboxes = [...container.querySelectorAll(".globalRuleStaff")];
+
+  if (existingRule) {
+    activityCheckboxes.forEach((cb) => { cb.checked = (existingRule.activityIds || []).includes(cb.value); });
+    statusCheckboxes.forEach((cb) => { cb.checked = (existingRule.statuses || []).includes(cb.value); });
+    staffCheckboxes.forEach((cb) => { cb.checked = (existingRule.staffIds || []).includes(cb.value); });
+  }
+
+  const updatePreview = () => {
+    const preview = document.getElementById("globalRulePreview");
+    const draft = {
+      type: "ignoreSpecialite",
+      activityIds: activityCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value),
+      statuses: statusCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value),
+      staffIds: staffCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value),
+    };
+    preview.textContent = `Aperçu : ${describeGlobalRule(draft)}.`;
+  };
+  [...activityCheckboxes, ...statusCheckboxes, ...staffCheckboxes].forEach((cb) => cb.addEventListener("change", updatePreview));
+  updatePreview();
+
+  document.getElementById("globalRuleFormCancel").addEventListener("click", () => { container.innerHTML = ""; });
+
+  document.getElementById("globalRuleFormSubmit").addEventListener("click", () => {
+    const errorEl = document.getElementById("globalRuleFormError");
+    errorEl.textContent = "";
+
+    const activityIds = activityCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
+    const statuses = statusCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
+    const staffIds = staffCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
+
+    if (activityIds.length === 0) { errorEl.textContent = "Choisis au moins une modalité."; return; }
+    if (statuses.length === 0 && staffIds.length === 0) { errorEl.textContent = "Choisis au moins une personne ou un statut."; return; }
+
+    const payload = { type: "ignoreSpecialite", activityIds, statuses, staffIds };
+
+    if (existingRule) {
+      Object.assign(existingRule, payload);
+    } else {
+      state.globalRules.push({ id: generateGlobalRuleId(), ...payload });
+    }
+    saveState();
+    container.innerHTML = "";
+    render();
+  });
 }
 
 // `prefillFrom` (09/08/2026, "Copier") : ignoré si `existingRule` est fourni (une modification a

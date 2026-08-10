@@ -6,7 +6,7 @@
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 13;
+const STATE_SCHEMA_VERSION = 14;
 
 // Moteur de règles paramétrable (09/08/2026, voir moteur-regles-brouillon.md) : remplace les
 // anciennes RG-002/003/007/009/012 codées en dur par des données éditables depuis l'écran "Règles"
@@ -163,6 +163,12 @@ const STATE_MIGRATIONS = {
   // l'ordre naturel de `state.activities` (celui déjà affiché avant l'introduction de ce réglage),
   // donc aucun changement visuel pour un fichier existant tant que personne ne glisse un bloc.
   12: (data) => ({ ...data, rulesGroupOrder: normalizeRulesGroupOrder(data.rulesGroupOrder) }),
+  // 13 -> 14 : ajout de `globalRules` (10/08/2026, règles globales transverses à toutes les
+  // modalités -- 1er type : "Ignorer la Spé", voir js/21-vue-regles.js et hasSpecialiteMismatch()
+  // dans js/07-validation-rg.js). Un fichier plus ancien n'a jamais eu ce champ -- tableau vide =
+  // aucune règle globale active, comportement inchangé (RG-001 continue de s'appliquer normalement
+  // à tout le monde).
+  13: (data) => ({ ...data, globalRules: Array.isArray(data.globalRules) ? data.globalRules : [] }),
 };
 
 function migrateState(rawData) {
@@ -192,7 +198,7 @@ function migrateState(rawData) {
 // pour ne jamais en oublier un dans l'un des trois chemins). Délibérément SANS `activities` (piloté
 // par le code, jamais par des données utilisateur -- voir CLAUDE.md §4) ni `schemaVersion` (ajouté à
 // part par buildPersistedState()).
-const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "statsColumnVisibility", "statsCounterMode", "customColors", "weekLocks", "weekNotes", "rules", "rulesGroupOrder"];
+const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "statsColumnVisibility", "statsCounterMode", "customColors", "weekLocks", "weekNotes", "rules", "rulesGroupOrder", "globalRules"];
 
 // Personnalisation (25/07/2026, ⚙ → "Personnalisation") : quelques couleurs éditables depuis
 // l'appli sans toucher au code -- une entrée par variable CSS `--custom-xxx` (voir :root dans
@@ -278,7 +284,7 @@ function normalizeRulesGroupOrder(order) {
 // sur PERSISTED_KEYS pour qu'un futur champ ajouté ne puisse plus être oublié de cette façon --
 // SPECIAL_APPLY_KEYS liste les 3 exceptions qui ont besoin d'un traitement différent d'un simple
 // `data[key] || {}` (staff : conditionnel non-vide, weekOffset : nombre, statsColumnOrder : normalisé).
-const ARRAY_PERSISTED_KEYS = new Set(["conges", "gardes", "rules"]);
+const ARRAY_PERSISTED_KEYS = new Set(["conges", "gardes", "rules", "globalRules"]);
 const SPECIAL_APPLY_KEYS = new Set(["staff", "weekOffset", "statsColumnOrder", "rulesGroupOrder"]);
 function applyPersistedState(rawData) {
   const data = migrateState(rawData);
@@ -341,6 +347,11 @@ let state = {
   // L'INTÉRIEUR d'un bloc (déjà géré par l'ordre naturel de `state.rules`). Valeur par défaut =
   // ordre naturel de `state.activities` -- voir normalizeRulesGroupOrder().
   rulesGroupOrder: ACTIVITIES.map((a) => a.id),
+  // Règles globales (10/08/2026) : transverses à toutes les modalités, distinctes de state.rules
+  // (composition PAR modalité) -- 1er type : "ignoreSpecialite" (voir GLOBAL_RULE_STATUS_OPTIONS et
+  // isSpecialiteIgnoredForPerson() dans js/07-validation-rg.js, écran dans js/21-vue-regles.js).
+  // { id, type: "ignoreSpecialite", staffIds: [...], statuses: [...], activityIds: [...] }
+  globalRules: [],
   weekOffset: 0,
   // Ordre des colonnes de la vue Stats (24/07/2026, réordonnables par glisser-déposer des en-têtes,
   // voir renderStatsView()) -- "Personnel" n'en fait pas partie, toujours fixe en 1re position.
