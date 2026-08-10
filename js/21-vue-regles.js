@@ -80,6 +80,15 @@ function renderRulesList(container) {
       editBtn.className = "staff-modal-edit";
       editBtn.textContent = "Modifier";
       editBtn.addEventListener("click", () => renderRuleForm(document.getElementById("ruleFormContainer"), rule));
+      // Copier (09/08/2026, demande de Samir) : ouvre le formulaire d'AJOUT (pas de modification --
+      // `existingRule` reste null, donc la sauvegarde crée une nouvelle règle) mais pré-rempli avec
+      // toutes les valeurs de la règle source via le 3e paramètre `prefillFrom`, pour ne devoir
+      // changer que ce qui diffère (modalité, jours...) plutôt que ressaisir toute la composition.
+      const copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.className = "staff-modal-edit";
+      copyBtn.textContent = "Copier";
+      copyBtn.addEventListener("click", () => renderRuleForm(document.getElementById("ruleFormContainer"), null, rule));
       const delBtn = document.createElement("button");
       delBtn.type = "button";
       delBtn.className = "staff-modal-delete";
@@ -90,7 +99,7 @@ function renderRulesList(container) {
         saveState();
         render();
       });
-      actions.append(editBtn, delBtn);
+      actions.append(editBtn, copyBtn, delBtn);
       row.appendChild(actions);
 
       section.appendChild(row);
@@ -104,11 +113,16 @@ function renderRulesList(container) {
   }
 }
 
-function renderRuleForm(container, existingRule) {
+// `prefillFrom` (09/08/2026, "Copier") : ignoré si `existingRule` est fourni (une modification a
+// toujours la priorité) -- ne sert que pour l'ajout, pré-remplit les champs depuis une AUTRE règle
+// sans jamais la modifier elle-même (la sauvegarde crée toujours une règle neuve dans ce cas,
+// `existingRule` reste null jusqu'au bout).
+function renderRuleForm(container, existingRule, prefillFrom) {
+  const source = existingRule || prefillFrom || null;
   const activityOptions = state.activities.map((a) => `<option value="${a.id}">${a.nom}</option>`).join("");
   container.innerHTML = `
     <div class="staff-form rule-form">
-      <h3>${existingRule ? "Modifier une règle" : "Ajouter une règle"}</h3>
+      <h3>${existingRule ? "Modifier une règle" : prefillFrom ? "Copier une règle" : "Ajouter une règle"}</h3>
       <div class="form-row">
         <label for="ruleActivity">Modalité</label>
         <select id="ruleActivity">${activityOptions}</select>
@@ -179,21 +193,21 @@ function renderRuleForm(container, existingRule) {
   const substitutionCheckbox = document.getElementById("ruleSubstitution");
   const requireSpecialiteCheckbox = document.getElementById("ruleRequireSpecialite");
 
-  if (existingRule) {
-    activitySelect.value = existingRule.activityId;
-    creneauCheckboxes.forEach((cb) => { cb.checked = existingRule.creneaux.includes(cb.value); });
-    dayCheckboxes.forEach((cb) => { cb.checked = existingRule.days.includes(cb.value); });
-    seniorMinInput.value = existingRule.seniorMin;
-    seniorMaxInput.value = existingRule.seniorMax !== existingRule.seniorMin ? existingRule.seniorMax : "";
-    const interneRegulated = existingRule.interneMin !== null;
+  if (source) {
+    activitySelect.value = source.activityId;
+    creneauCheckboxes.forEach((cb) => { cb.checked = source.creneaux.includes(cb.value); });
+    dayCheckboxes.forEach((cb) => { cb.checked = source.days.includes(cb.value); });
+    seniorMinInput.value = source.seniorMin;
+    seniorMaxInput.value = source.seniorMax !== source.seniorMin ? source.seniorMax : "";
+    const interneRegulated = source.interneMin !== null;
     interneRegulatedCheckbox.checked = interneRegulated;
     if (interneRegulated) {
-      interneMinInput.value = existingRule.interneMin;
-      interneMaxInput.value = existingRule.interneMax !== existingRule.interneMin ? existingRule.interneMax : "";
+      interneMinInput.value = source.interneMin;
+      interneMaxInput.value = source.interneMax !== source.interneMin ? source.interneMax : "";
     }
-    encourageGrowthCheckbox.checked = !!existingRule.encourageInterneGrowth;
-    substitutionCheckbox.checked = existingRule.allowSubstitution !== false;
-    requireSpecialiteCheckbox.checked = !!existingRule.requireSpecialite;
+    encourageGrowthCheckbox.checked = !!source.encourageInterneGrowth;
+    substitutionCheckbox.checked = source.allowSubstitution !== false;
+    requireSpecialiteCheckbox.checked = !!source.requireSpecialite;
   }
 
   // Astreinte : réservée à Scan U (RG-012/isCreneauApplicable) -- masquée pour toute autre modalité,
