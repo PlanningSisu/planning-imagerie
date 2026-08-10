@@ -209,9 +209,9 @@ function renderStaffAddForm(container, existingPerson = null) {
       <div class="form-row form-row-competences">
         <label>Compétences</label>
         <div class="form-competences-list">
-          ${SPECIALITE_ORDER.map((k) => `<label class="form-competence-option"><input type="checkbox" class="formCompetence" value="${k}"> ${SPECIALITES[k].label}</label>`).join("")}
+          ${COMPETENCE_ORDER.map((k) => `<label class="form-competence-option"><input type="checkbox" class="formCompetence" value="${k}"> ${competenceLabel(k)}</label>`).join("")}
         </div>
-        <span class="form-hint">Indépendant de la spécialité ci-dessus -- sert au futur moteur de règles, affiché seulement au survol (jamais de couleur).</span>
+        <span class="form-hint">Indépendant de la spécialité ci-dessus -- une compétence compte aussi comme la spécialité correspondante pour le moteur de règles (RG-001), en plus de la spécialité "officielle" -- affiché seulement au survol (jamais de couleur).</span>
       </div>
       <div class="form-actions">
         <button type="button" id="formSubmit">${existingPerson ? "Enregistrer" : "Ajouter"}</button>

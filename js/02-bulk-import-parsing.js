@@ -183,12 +183,14 @@ function orderedSpecialites(person) {
 }
 
 // Compétences (26/07/2026, demande de Samir) : cases à cocher indépendantes de `person.specialites`
-// -- 0 à 5 parmi les mêmes clés (`SPECIALITE_ORDER`), sans contrainte liée au grade. Aucune
-// représentation visuelle (pas de couleur/dégradé, contrairement à specialites) -- affichées
-// uniquement au survol (voir personTooltip()) et destinées au futur moteur de règles.
+// -- 0 à N parmi `COMPETENCE_ORDER` (les 5 spécialités officielles + "Mammo", 10/08/2026 -- voir
+// js/01-demo-data.js), sans contrainte liée au grade. Aucune représentation visuelle (pas de
+// couleur/dégradé, contrairement à specialites) -- affichées uniquement au survol (voir
+// personTooltip()) et exploitées par le moteur de règles depuis le 10/08/2026 (RG-001, "cheat code"
+// -- voir personSatisfiesSpecialite() dans js/07-validation-rg.js).
 function orderedCompetences(person) {
   const set = new Set(person.competences || []);
-  return SPECIALITE_ORDER.filter((k) => set.has(k));
+  return COMPETENCE_ORDER.filter((k) => set.has(k));
 }
 
 // Texte de survol standard pour une personne -- nom complet, plus la liste de ses compétences si
@@ -198,7 +200,7 @@ function personTooltip(person) {
   const base = `${person.prenom} ${person.nom}`;
   const competences = orderedCompetences(person);
   if (competences.length === 0) return base;
-  return `${base} — Compétences : ${competences.map((k) => SPECIALITES[k].label).join(", ")}`;
+  return `${base} — Compétences : ${competences.map((k) => competenceLabel(k)).join(", ")}`;
 }
 
 // Clé de regroupement : "socle" pour les internes sans spécialité, sinon "digestif-uro" etc.

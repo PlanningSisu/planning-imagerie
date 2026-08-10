@@ -241,22 +241,35 @@ function validateGlobalPostingExclusions() {
   return { violations, recommendations };
 }
 
+// RG-001 "cheat code" (10/08/2026, mots de Samir) : une compétence (person.competences, jusque-là
+// purement informative -- voir §6.31 CLAUDE.md) compte désormais AUSSI comme une spécialité valide
+// pour le calcul de RG-001 -- EN PLUS de la "vraie" spécialité (orderedSpecialites), jamais à sa
+// place (une personne satisfait la règle si l'une OU l'autre couvre la spécialité propriétaire de la
+// case). Centralisé ici, appelé à la fois par hasSpecialiteMismatch() (contour rouge) et la boucle
+// RG-001 de validateCompositionRules() (violation dans la zone de validation), pour ne jamais
+// désynchroniser les deux.
+function personSatisfiesSpecialite(person, vacSpec) {
+  return orderedSpecialites(person).includes(vacSpec) || orderedCompetences(person).includes(vacSpec);
+}
+
 // RG-001 (spécialité, tranché le 09/08/2026 : dans le périmètre bêta) : la règle peut exiger que
 // chaque personne PRÉSENTE sur cette vacation ait la spécialité propriétaire de la case parmi les
-// siennes (1 pour un sénior, 1 ou 2 pour un interne) -- pas juste une personne du groupe. Rien à
-// vérifier si la case n'a pas de spécialité propriétaire renseignée (`vacationSpecialites`), quel que
-// soit le réglage de la règle : il n'y a rien à comparer. Réutilisée par validateCompositionRules()
-// (violation, texte) ET par buildAssignedChip()/buildModaliteTag() (contour rouge sur la pastille en
-// cause, même traitement visuel que RG-014/020/021) -- `weekKeyPart` toujours celle de la case rendue
-// (RG-024 : une exception de semaine change la spécialité effective), jamais supposée = semaine
-// affichée, une pastille pouvant être rendue pour une semaine différente de state.weekOffset.
+// siennes (1 pour un sénior, 1 ou 2 pour un interne) -- pas juste une personne du groupe -- OU une
+// compétence correspondante (voir personSatisfiesSpecialite() ci-dessus, "cheat code" 10/08/2026).
+// Rien à vérifier si la case n'a pas de spécialité propriétaire renseignée (`vacationSpecialites`),
+// quel que soit le réglage de la règle : il n'y a rien à comparer. Réutilisée par
+// validateCompositionRules() (violation, texte) ET par buildAssignedChip()/buildModaliteTag()
+// (contour rouge sur la pastille en cause, même traitement visuel que RG-014/020/021) --
+// `weekKeyPart` toujours celle de la case rendue (RG-024 : une exception de semaine change la
+// spécialité effective), jamais supposée = semaine affichée, une pastille pouvant être rendue pour
+// une semaine différente de state.weekOffset.
 function hasSpecialiteMismatch(person, activityId, day, creneauId, weekKeyPart) {
   const rule = resolveCompositionRule(activityId, day, creneauId);
   if (!rule || !rule.requireSpecialite) return false;
   if (isSpecialiteIgnoredForPerson(person, activityId)) return false; // règle globale (10/08/2026)
   const vacSpec = effectiveVacationSpecialiteForWeek(activityId, day, creneauId, weekKeyPart);
   if (!vacSpec) return false;
-  return !orderedSpecialites(person).includes(vacSpec);
+  return !personSatisfiesSpecialite(person, vacSpec);
 }
 
 // Point d'entrée du moteur générique -- une seule fonction pour toutes les modalités couvertes par
@@ -296,7 +309,7 @@ function validateCompositionRules() {
           if (vacSpec) {
             present.forEach((person) => {
               if (isSpecialiteIgnoredForPerson(person, activityId)) return; // règle globale (10/08/2026)
-              if (!orderedSpecialites(person).includes(vacSpec)) {
+              if (!personSatisfiesSpecialite(person, vacSpec)) { // "cheat code" compétence (10/08/2026)
                 violations.push({
                   rg: rule.rg,
                   message: `${label} : ${person.prenom} ${person.nom} n'a pas la spécialité de cette vacation (${SPECIALITES[vacSpec].label}).`,

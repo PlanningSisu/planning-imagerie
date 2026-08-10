@@ -17,3 +17,16 @@ const SPECIALITES = {
 // quel que soit l'ordre de saisie (ex. "Gynéco + Thorax", jamais "Thorax + Gynéco").
 const SPECIALITE_ORDER = ["digestif", "uro", "gyneco", "thorax", "os"];
 
+// Compétences (js/16-gestion-personnel.js, person.competences) : catalogue PLUS LARGE que les 5
+// spécialités officielles ci-dessus -- une compétence peut exister sans être une spécialité
+// assignable à une vacation (ex. "Mammo", 10/08/2026 : aucune case n'a jamais "Mammo" comme
+// spécialité propriétaire au sens de vacationSpecialites/SPECIALITE_ORDER, contrairement à Digestif/
+// Uro/Gynéco/Thorax/Os). `COMPETENCE_EXTRA_LABELS` ne porte QUE le label -- une compétence n'a
+// jamais de couleur/dégradé (voir orderedCompetences()/personTooltip()), donc pas besoin des champs
+// bg/border/text de SPECIALITES pour ces clés-là.
+const COMPETENCE_EXTRA_LABELS = { mammo: "Mammo" };
+const COMPETENCE_ORDER = [...SPECIALITE_ORDER, "mammo"];
+function competenceLabel(key) {
+  return (SPECIALITES[key] && SPECIALITES[key].label) || COMPETENCE_EXTRA_LABELS[key] || key;
+}
+
