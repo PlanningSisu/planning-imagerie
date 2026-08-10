@@ -150,7 +150,47 @@ function handleAssignmentDrop(e, targetKey) {
   return true;
 }
 
+// Dépostage automatique CONTINU des absences (09/08/2026, demande de Samir : "je veux pas avoir à
+// cliquer") -- généralise le dépostage ponctuel de RG-013/014, qui ne se déclenchait jusqu'ici qu'au
+// moment précis où une garde/un congé est déclaré (voir depostAssignmentsForDay()) : réappliqué
+// désormais à CHAQUE affichage de la semaine (appelé en tête de render(), avant tout le reste), pas
+// seulement à la déclaration. Couvre le cas d'une case déjà remplie AVANT que le congé n'existe, ou
+// remplie/importée par un chemin qui ne passe jamais par le dépostage interactif (import JSON brut
+// notamment, qui fait un simple merge sans repasser par aucune règle métier) -- trouvé en vrai le
+// 09/08/2026 sur un export réel de Samir (21 cas sur une seule semaine).
+// - Respecte le verrouillage de semaine (RG-022) : une semaine verrouillée n'est jamais modifiée,
+//   comme partout ailleurs -- seul le contour rouge RG-014 y reste comme signal.
+// - Exception "Off" conservée (RG-014, 29/07/2026) : une personne absente postée sur Off n'est
+//   jamais retirée, les deux disent la même chose ("cette personne ne travaille pas").
+// - Ne touche que state.assignments MATÉRIALISÉ pour la semaine affichée -- le repli trame (RG-023)
+//   filtre déjà les absents de son côté à la lecture, rien à déposter pour lui.
+// - `changed` évite un saveState() (et donc une écriture GitHub) à chaque rendu s'il n'y a rien à
+//   corriger -- la grande majorité des rendus n'ont aucune absence à déposter.
+function autoDepostAbsentAssignmentsForDisplayedWeek() {
+  const monday = getMonday(state.weekOffset);
+  if (isWeekLocked(weekKey(monday))) return;
+  let changed = false;
+  DAYS.forEach((day) => {
+    CRENEAUX.forEach((creneau) => {
+      state.activities.forEach((activity) => {
+        if (activity.id === "off") return;
+        if (!isCreneauApplicable(activity.id, creneau.id)) return;
+        const key = cellKey(activity.id, day, creneau.id);
+        const list = state.assignments[key];
+        if (!list || list.length === 0) return;
+        const filtered = list.filter((staffId) => !isPersonAbsentOnSlot(staffId, day, creneau.id));
+        if (filtered.length !== list.length) {
+          state.assignments[key] = filtered;
+          changed = true;
+        }
+      });
+    });
+  });
+  if (changed) saveState();
+}
+
 function render() {
+  autoDepostAbsentAssignmentsForDisplayedWeek();
   renderWeekLabel();
   renderWeekLockButton();
 
