@@ -1997,7 +1997,7 @@ tr.group-end td {
   justify-content: space-between;
   margin-bottom: 12px;
 }
-.rules-header h2 { margin: 0; font-size: 18px; }
+.rules-header h3 { margin: 0; font-size: 15px; }
 .rules-header .btn-primary { margin-bottom: 0; }
 .rules-activity-group { margin-bottom: 18px; }
 .rules-activity-group h3 {
@@ -2061,7 +2061,6 @@ tr.group-end td {
   padding-bottom: 20px;
   border-bottom: 1px dashed var(--border);
 }
-.global-rules-header h3 { margin: 0; font-size: 15px; }
 .global-rule-staff-picker {
   max-height: 220px;
   overflow-y: auto;
@@ -2097,6 +2096,16 @@ tr.group-end td {
   color: #1f2937;
   cursor: pointer;
 }
+/* "Toutes les modalités"/"Tous les statuts" (10/08/2026, règles globales) : en tête de son groupe,
+   séparée visuellement par une bordure -- désactive (grise) les cases individuelles du même groupe
+   pendant qu'elle est cochée, voir renderGlobalRuleForm(). */
+.rule-checkbox-all {
+  width: 100%;
+  padding-bottom: 8px;
+  margin-bottom: 2px;
+  border-bottom: 1px dashed var(--border);
+}
+.rule-checkbox-group label:has(input:disabled) { color: #94a3b8; cursor: not-allowed; }
 .rule-link-btn {
   background: none;
   border: none;

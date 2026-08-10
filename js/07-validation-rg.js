@@ -164,11 +164,16 @@ function personMatchesAnyGlobalRuleStatus(person, statusIds) {
 // globale "ignoreSpecialite" active sur cette modalité précise (portée "Par modalité", demande
 // explicite de Samir plutôt qu'un blanket "partout"). `staffIds` et `statuses` se combinent en OR
 // (une personne nommée directement ignore la spé même si aucun statut ne la couvre, et vice-versa).
+// `allActivities`/`allStatuses` (10/08/2026) : cases "Toutes les modalités"/"Tous les statuts" dans
+// le formulaire -- des sentinelles qui court-circuitent la comparaison plutôt que d'énumérer chaque
+// id, pour qu'une modalité ajoutée plus tard soit automatiquement couverte sans revenir éditer la
+// règle. Champs optionnels sur un item d'un tableau déjà persisté (comme person.cca en son temps) --
+// absents sur une règle existante = `undefined`, falsy, donc aucun comportement changé pour elles.
 function isSpecialiteIgnoredForPerson(person, activityId) {
   return state.globalRules.some((gr) =>
     gr.type === "ignoreSpecialite" &&
-    gr.activityIds.includes(activityId) &&
-    ((gr.staffIds || []).includes(person.id) || personMatchesAnyGlobalRuleStatus(person, gr.statuses))
+    (gr.allActivities || gr.activityIds.includes(activityId)) &&
+    (gr.allStatuses || (gr.staffIds || []).includes(person.id) || personMatchesAnyGlobalRuleStatus(person, gr.statuses))
   );
 }
 

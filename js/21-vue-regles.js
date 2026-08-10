@@ -35,10 +35,6 @@ function describeRuleComposition(rule) {
 function renderRulesView() {
   const container = document.getElementById("rulesView");
   container.innerHTML = `
-    <div class="rules-header">
-      <h2>Règles de composition</h2>
-      <button type="button" id="btnAddRule" class="btn-primary">+ Ajouter une règle</button>
-    </div>
     <div class="global-rules-section">
       <div class="rules-header global-rules-header">
         <h3>Règles globales</h3>
@@ -46,6 +42,10 @@ function renderRulesView() {
       </div>
       <div id="globalRuleFormContainer"></div>
       <div id="globalRulesList" class="rules-list"></div>
+    </div>
+    <div class="rules-header">
+      <h3>Règle des Vacations</h3>
+      <button type="button" id="btnAddRule" class="btn-primary">+ Ajouter une règle</button>
     </div>
     <div id="ruleFormContainer"></div>
     <div id="rulesList" class="rules-list"></div>
@@ -238,23 +238,35 @@ function generateGlobalRuleId() {
 }
 
 // Texte résumé affiché dans la liste -- réutilisé aussi comme aperçu en direct dans le formulaire.
+// `allActivities`/`allStatuses` (10/08/2026) court-circuitent leur partie du texte respective --
+// "tout le monde" masque staffIds/statuses (redondants dès que allStatuses est coché).
 function describeGlobalRule(rule) {
-  const staffNames = (rule.staffIds || [])
-    .map((id) => staffById(id))
-    .filter(Boolean)
-    .sort(compareStaffOrder)
-    .map((p) => `${p.prenom} ${p.nom}`);
-  const statusLabels = (rule.statuses || [])
-    .map((id) => GLOBAL_RULE_STATUS_OPTIONS.find((o) => o.id === id))
-    .filter(Boolean)
-    .map((o) => o.label);
-  const targets = [...staffNames, ...statusLabels];
-  const targetsText = targets.length > 0 ? targets.join(", ") : "personne (aucune cible choisie)";
-  const activityNames = (rule.activityIds || [])
-    .map((id) => state.activities.find((a) => a.id === id))
-    .filter(Boolean)
-    .map((a) => a.nom);
-  const activitiesText = activityNames.length > 0 ? activityNames.join(", ") : "aucune modalité choisie";
+  let targetsText;
+  if (rule.allStatuses) {
+    targetsText = "tout le monde";
+  } else {
+    const staffNames = (rule.staffIds || [])
+      .map((id) => staffById(id))
+      .filter(Boolean)
+      .sort(compareStaffOrder)
+      .map((p) => `${p.prenom} ${p.nom}`);
+    const statusLabels = (rule.statuses || [])
+      .map((id) => GLOBAL_RULE_STATUS_OPTIONS.find((o) => o.id === id))
+      .filter(Boolean)
+      .map((o) => o.label);
+    const targets = [...staffNames, ...statusLabels];
+    targetsText = targets.length > 0 ? targets.join(", ") : "personne (aucune cible choisie)";
+  }
+  let activitiesText;
+  if (rule.allActivities) {
+    activitiesText = "toutes les modalités";
+  } else {
+    const activityNames = (rule.activityIds || [])
+      .map((id) => state.activities.find((a) => a.id === id))
+      .filter(Boolean)
+      .map((a) => a.nom);
+    activitiesText = activityNames.length > 0 ? activityNames.join(", ") : "aucune modalité choisie";
+  }
   return `${GLOBAL_RULE_TYPE_LABELS[rule.type] || rule.type} pour ${targetsText} — sur ${activitiesText}`;
 }
 
@@ -319,12 +331,14 @@ function renderGlobalRuleForm(container, existingRule) {
       <div class="form-row">
         <label>Modalité(s) concernée(s)</label>
         <div class="rule-checkbox-group">
+          <label class="rule-checkbox-all"><input type="checkbox" id="globalRuleAllActivities"> <strong>Toutes les modalités</strong></label>
           ${state.activities.map((a) => `<label><input type="checkbox" class="globalRuleActivity" value="${a.id}"> ${a.nom}</label>`).join("")}
         </div>
       </div>
       <div class="form-row">
         <label>Statut(s) concerné(s)</label>
         <div class="rule-checkbox-group">
+          <label class="rule-checkbox-all"><input type="checkbox" id="globalRuleAllStatuses"> <strong>Tous les statuts</strong></label>
           ${GLOBAL_RULE_STATUS_OPTIONS.map((o) => `<label><input type="checkbox" class="globalRuleStatus" value="${o.id}"> ${o.label}</label>`).join("")}
         </div>
       </div>
@@ -346,6 +360,8 @@ function renderGlobalRuleForm(container, existingRule) {
     </div>
   `;
 
+  const allActivitiesCheckbox = document.getElementById("globalRuleAllActivities");
+  const allStatusesCheckbox = document.getElementById("globalRuleAllStatuses");
   const activityCheckboxes = [...container.querySelectorAll(".globalRuleActivity")];
   const statusCheckboxes = [...container.querySelectorAll(".globalRuleStatus")];
   const staffCheckboxes = [...container.querySelectorAll(".globalRuleStaff")];
@@ -354,18 +370,44 @@ function renderGlobalRuleForm(container, existingRule) {
     activityCheckboxes.forEach((cb) => { cb.checked = (existingRule.activityIds || []).includes(cb.value); });
     statusCheckboxes.forEach((cb) => { cb.checked = (existingRule.statuses || []).includes(cb.value); });
     staffCheckboxes.forEach((cb) => { cb.checked = (existingRule.staffIds || []).includes(cb.value); });
+    allActivitiesCheckbox.checked = !!existingRule.allActivities;
+    allStatusesCheckbox.checked = !!existingRule.allStatuses;
   }
+
+  // "Toutes les modalités"/"Tous les statuts" (10/08/2026) : désactive (et décoche) les cases
+  // individuelles de leur groupe pendant que la case globale est cochée -- évite de laisser croire
+  // qu'une sélection individuelle compte encore une fois qu'elle est redondante. "Tous les statuts"
+  // désactive aussi le sélecteur de personnes, déjà redondant (tout le monde est ciblé de toute
+  // façon) -- pas de couplage symétrique côté "Toutes les modalités", qui n'a pas d'équivalent.
+  const updateActivityCheckboxesDisabled = () => {
+    activityCheckboxes.forEach((cb) => {
+      cb.disabled = allActivitiesCheckbox.checked;
+      if (allActivitiesCheckbox.checked) cb.checked = false;
+    });
+  };
+  const updateStatusCheckboxesDisabled = () => {
+    [...statusCheckboxes, ...staffCheckboxes].forEach((cb) => {
+      cb.disabled = allStatusesCheckbox.checked;
+      if (allStatusesCheckbox.checked) cb.checked = false;
+    });
+  };
+  updateActivityCheckboxesDisabled();
+  updateStatusCheckboxesDisabled();
 
   const updatePreview = () => {
     const preview = document.getElementById("globalRulePreview");
     const draft = {
       type: "ignoreSpecialite",
+      allActivities: allActivitiesCheckbox.checked,
       activityIds: activityCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value),
+      allStatuses: allStatusesCheckbox.checked,
       statuses: statusCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value),
       staffIds: staffCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value),
     };
     preview.textContent = `Aperçu : ${describeGlobalRule(draft)}.`;
   };
+  allActivitiesCheckbox.addEventListener("change", () => { updateActivityCheckboxesDisabled(); updatePreview(); });
+  allStatusesCheckbox.addEventListener("change", () => { updateStatusCheckboxesDisabled(); updatePreview(); });
   [...activityCheckboxes, ...statusCheckboxes, ...staffCheckboxes].forEach((cb) => cb.addEventListener("change", updatePreview));
   updatePreview();
 
@@ -375,14 +417,16 @@ function renderGlobalRuleForm(container, existingRule) {
     const errorEl = document.getElementById("globalRuleFormError");
     errorEl.textContent = "";
 
-    const activityIds = activityCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
-    const statuses = statusCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
-    const staffIds = staffCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
+    const allActivities = allActivitiesCheckbox.checked;
+    const activityIds = allActivities ? [] : activityCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
+    const allStatuses = allStatusesCheckbox.checked;
+    const statuses = allStatuses ? [] : statusCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
+    const staffIds = allStatuses ? [] : staffCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
 
-    if (activityIds.length === 0) { errorEl.textContent = "Choisis au moins une modalité."; return; }
-    if (statuses.length === 0 && staffIds.length === 0) { errorEl.textContent = "Choisis au moins une personne ou un statut."; return; }
+    if (!allActivities && activityIds.length === 0) { errorEl.textContent = "Choisis au moins une modalité, ou coche \"Toutes les modalités\"."; return; }
+    if (!allStatuses && statuses.length === 0 && staffIds.length === 0) { errorEl.textContent = "Choisis au moins une personne ou un statut, ou coche \"Tous les statuts\"."; return; }
 
-    const payload = { type: "ignoreSpecialite", activityIds, statuses, staffIds };
+    const payload = { type: "ignoreSpecialite", allActivities, activityIds, allStatuses, statuses, staffIds };
 
     if (existingRule) {
       Object.assign(existingRule, payload);
