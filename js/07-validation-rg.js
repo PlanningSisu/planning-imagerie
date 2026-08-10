@@ -177,6 +177,70 @@ function isSpecialiteIgnoredForPerson(person, activityId) {
   );
 }
 
+// RG-028 (10/08/2026, 2e type de règle globale) : "Interdire de poster" -- pour des personnes/
+// statuts choisis, sur des modalités/jours/créneaux choisis, être posté(e) est signalé comme une
+// contradiction. Contrairement à "ignoreSpecialite" (qui court-circuite une vérification existante),
+// celle-ci EST la vérification -- jamais bloquant, jamais auto-corrigé (confirmé par Samir, même
+// famille que RG-021/RG-027), sévérité réglable PAR RÈGLE (`severity`: "recommendation"|"violation")
+// plutôt qu'un simple on/off comme RG-027 : une règle globale qu'on ne veut plus vérifier se
+// supprime directement (pas de 3e état "désactivée" ici, contrairement à `astreinteExclusivityMode`
+// qui vit sur une règle structurelle qu'on ne supprime jamais).
+// `days`/`creneaux`/`allDays`/`allCreneaux` : même patron que `activityIds`/`allActivities` --
+// sentinelles "tous" plutôt qu'une énumération, pour qu'un jour/créneau ne soit jamais oublié.
+function isPostingExcludedAsViolation(person, activityId, day, creneauId) {
+  return state.globalRules.some((gr) =>
+    gr.type === "excludePosting" &&
+    gr.severity === "violation" &&
+    (gr.allActivities || gr.activityIds.includes(activityId)) &&
+    (gr.allDays || gr.days.includes(day)) &&
+    (gr.allCreneaux || gr.creneaux.includes(creneauId)) &&
+    (gr.allStatuses || (gr.staffIds || []).includes(person.id) || personMatchesAnyGlobalRuleStatus(person, gr.statuses))
+  );
+}
+
+// Point d'entrée du moteur pour RG-028 -- parcourt CHAQUE règle globale "excludePosting" (pas
+// chaque case, contrairement aux autres validateXxx()) : deux règles qui se chevauchent sur la
+// même case produisent chacune leur propre ligne, jamais dédupliquées entre elles (chaque règle
+// est une contrainte distincte, même principe que RG-014/RG-020 qui peuvent flaguer la même case
+// sans se fusionner).
+function validateGlobalPostingExclusions() {
+  const violations = [];
+  const recommendations = [];
+
+  state.globalRules.forEach((gr) => {
+    if (gr.type !== "excludePosting") return;
+    const activityIds = gr.allActivities ? state.activities.map((a) => a.id) : gr.activityIds;
+    const days = gr.allDays ? DAYS : gr.days;
+    const creneauIds = gr.allCreneaux ? CRENEAUX.map((c) => c.id) : gr.creneaux;
+    const target = gr.severity === "violation" ? violations : recommendations;
+
+    activityIds.forEach((activityId) => {
+      const activity = state.activities.find((a) => a.id === activityId);
+      if (!activity) return;
+      days.forEach((day) => {
+        creneauIds.forEach((creneauId) => {
+          if (!isCreneauApplicable(activityId, creneauId)) return;
+          const creneau = CRENEAUX.find((c) => c.id === creneauId);
+          const key = cellKey(activityId, day, creneauId);
+          if (state.fermetures[key]) return; // RG-010 : case fermée, rien à signaler.
+          effectiveAssignedIds(key).forEach((staffId) => {
+            const person = staffById(staffId);
+            if (!person) return;
+            const targeted = gr.allStatuses || (gr.staffIds || []).includes(staffId) || personMatchesAnyGlobalRuleStatus(person, gr.statuses);
+            if (!targeted) return;
+            target.push({
+              rg: "RG-028",
+              message: `${activity.nom}, ${day} ${creneau.label} : ${person.prenom} ${person.nom} ne devrait pas être posté(e) ici (règle globale).`,
+            });
+          });
+        });
+      });
+    });
+  });
+
+  return { violations, recommendations };
+}
+
 // RG-001 (spécialité, tranché le 09/08/2026 : dans le périmètre bêta) : la règle peut exiger que
 // chaque personne PRÉSENTE sur cette vacation ait la spécialité propriétaire de la case parmi les
 // siennes (1 pour un sénior, 1 ou 2 pour un interne) -- pas juste une personne du groupe. Rien à
@@ -398,7 +462,7 @@ function validateGardes() {
 
 // Point d'entrée unique du moteur : ajouter ici l'appel de toute nouvelle fonction validateXxx().
 function runValidation() {
-  const results = [validateCompositionRules(), validateAbsences(), validateGardes(), validateActivityExclusivity(), validateAstreinteExclusivity()];
+  const results = [validateCompositionRules(), validateAbsences(), validateGardes(), validateActivityExclusivity(), validateAstreinteExclusivity(), validateGlobalPostingExclusions()];
   return {
     violations: results.flatMap((r) => r.violations),
     recommendations: results.flatMap((r) => r.recommendations),

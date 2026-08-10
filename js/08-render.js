@@ -77,6 +77,13 @@ function buildAssignedChip(person, key, day) {
     // propriétaire à vérifier de toute façon, voir hasSpecialiteMismatch()).
     chip.classList.add("chip-absence-violation");
     chip.title = `${person.prenom} ${person.nom} n'a pas la spécialité de cette vacation`;
+  } else if (isPostingExcludedAsViolation(person, activityId, day, creneauId)) {
+    // RG-028 (10/08/2026, règle globale "Interdire de poster") : priorité la plus basse de toutes --
+    // seulement les règles réglées en "Obligatoire" (severity: "violation") reddent la pastille, une
+    // règle "Facultative" reste une simple recommandation dans la zone de validation, jamais sur la
+    // pastille (même logique que RG-003/009 dont l'excédent ne touche jamais le contour rouge).
+    chip.classList.add("chip-absence-violation");
+    chip.title = `${person.prenom} ${person.nom} ne devrait pas être posté(e) ici (règle globale)`;
   }
   chip.textContent = `${person.prenom[0]}. ${person.nom}`;
   if (locked) {

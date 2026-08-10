@@ -324,7 +324,11 @@ function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
   const person = staffById(staffId);
   const isSpecialiteViolation = !locked && !isAbsenceViolation && !isTPViolation && !exclusivityConflictActivity &&
     person && hasSpecialiteMismatch(person, activity.id, tagDay, tagCreneauId, tagWeekKeyPart);
-  const isViolation = isAbsenceViolation || isTPViolation || !!exclusivityConflictActivity || isSpecialiteViolation;
+  // RG-028 (10/08/2026) : priorité la plus basse de toutes, même esprit que buildAssignedChip() --
+  // uniquement les règles globales "excludePosting" réglées en "Obligatoire" reddent la pastille.
+  const isExclusionViolation = !locked && !isAbsenceViolation && !isTPViolation && !exclusivityConflictActivity &&
+    !isSpecialiteViolation && person && isPostingExcludedAsViolation(person, activity.id, tagDay, tagCreneauId);
+  const isViolation = isAbsenceViolation || isTPViolation || !!exclusivityConflictActivity || isSpecialiteViolation || isExclusionViolation;
   tag.className = "chip modalite-tag" +
     (activity.urgence ? " urgence-tag" : "") +
     (vacSpec ? ` spec-${vacSpec}` : "") +
@@ -339,7 +343,9 @@ function buildModaliteTag(activity, key, staffId, { draggable = false } = {}) {
         ? `${person.prenom} ${person.nom} est à Temps Partiel ce créneau-là`
         : exclusivityConflictActivity
           ? `${person.prenom} ${person.nom} est déjà posté(e) sur ${exclusivityConflictActivity.nom} (${creneauLabel(tagCreneauId)}) ce créneau-là`
-          : `${person.prenom} ${person.nom} n'a pas la spécialité de cette vacation`;
+          : isSpecialiteViolation
+            ? `${person.prenom} ${person.nom} n'a pas la spécialité de cette vacation`
+            : `${person.prenom} ${person.nom} ne devrait pas être posté(e) ici (règle globale)`;
   }
   tag.textContent = activity.nom;
   if (locked) return tag; // ni glisser, ni bouton de retrait -- "rien d'actif" sur une semaine verrouillée.
