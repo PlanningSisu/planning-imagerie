@@ -2083,6 +2083,32 @@ tr.group-end td {
 }
 .global-rule-staff-row { cursor: pointer; }
 .global-rule-staff-row input { flex-shrink: 0; }
+/* Index des RG (10/08/2026, repliable) -- liste compacte code+libellé, réutilise .validation-rg
+   (même badge que dans la zone de validation sous le planning) pour rester visuellement cohérent. */
+.rg-index-list {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.rg-index-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+/* Règles fixes (10/08/2026, RG-029..033) -- simples cases à cocher, une par règle, même badge RG
+   que la zone de validation pour rester reconnaissable au premier coup d'œil. */
+.fixed-rules-list { display: flex; flex-direction: column; gap: 6px; }
+.fixed-rule-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
 .rules-row-desc { font-size: 13px; line-height: 1.5; }
 .rules-row-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .rules-badge-spec {

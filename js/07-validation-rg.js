@@ -475,6 +475,56 @@ function validateAstreinteExclusivity() {
   return { violations, recommendations };
 }
 
+// RG-029..033 (10/08/2026) : 5 règles fixes codées en dur, cochables individuellement depuis l'écran
+// "Règles" -- "je veux juste pouvoir les cocher/décocher", pas de ciblage personnes/statuts/modalités
+// comme les règles globales (RG-026/028) ni de sévérité réglable comme RG-027 : TOUJOURS une
+// recommandation (jamais une violation, jamais bloquant, jamais auto-corrigé). Chacune vérifie qu'une
+// même personne n'est pas postée matin ET après-midi (le même jour calendaire) sur une "famille"
+// d'activités donnée -- l'astreinte n'entre jamais en compte (créneau à part, RG-012/RG-027 déjà
+// dédiés). RG-031/032 (Scan U seul / Echo U seul) sont volontairement redondantes avec RG-030
+// (Scanner, qui inclut déjà Scan U) et RG-033 (Scan U ou Echo U) -- Samir : "plus tard chaque RG aura
+// un poids donc il sera intéressant de distinguer", donc CHAQUE combinaison reste une RG à part
+// entière plutôt que d'être fusionnée, même si le signal se chevauche aujourd'hui.
+const FIXED_RULE_FAMILIES = {
+  "RG-029": { label: "Pas d'IRM toute la journée", activityIds: ["irm-15t", "irm-3t"], messageSuffix: "posté(e) en IRM toute la journée" },
+  "RG-030": { label: "Pas de Scanner toute la journée", activityIds: ["scan-a", "scan-b", "scan-u"], messageSuffix: "posté(e) au Scanner toute la journée" },
+  "RG-031": { label: "Pas de Scan U toute la journée", activityIds: ["scan-u"], messageSuffix: "posté(e) sur Scan U toute la journée" },
+  "RG-032": { label: "Pas de Echo U toute la journée", activityIds: ["echo-u"], messageSuffix: "posté(e) sur Echo U toute la journée" },
+  "RG-033": { label: "Pas de Scan U ou Echo U toute la journée", activityIds: ["scan-u", "echo-u"], messageSuffix: "posté(e) sur Scan U/Echo U toute la journée" },
+};
+
+// Renvoie l'ensemble des staffId postés sur au moins une activité de `activityIds` pour ce
+// jour+créneau précis -- une case fermée (RG-010) n'est jamais comptée.
+function staffAssignedToAnyActivity(activityIds, day, creneauId) {
+  const ids = new Set();
+  activityIds.forEach((activityId) => {
+    const key = cellKey(activityId, day, creneauId);
+    if (state.fermetures[key]) return;
+    effectiveAssignedIds(key).forEach((id) => ids.add(id));
+  });
+  return ids;
+}
+
+function validateFixedFamilyRules() {
+  const recommendations = [];
+
+  Object.entries(FIXED_RULE_FAMILIES).forEach(([rg, { activityIds, messageSuffix }]) => {
+    if (!state.fixedRuleToggles[rg]) return; // décochée -- rien à vérifier.
+    DAYS.forEach((day) => {
+      const morningIds = staffAssignedToAnyActivity(activityIds, day, "matin");
+      const afternoonIds = staffAssignedToAnyActivity(activityIds, day, "apres-midi");
+      morningIds.forEach((staffId) => {
+        if (!afternoonIds.has(staffId)) return;
+        const person = staffById(staffId);
+        if (!person) return;
+        recommendations.push({ rg, message: `${day} : ${person.prenom} ${person.nom} est ${messageSuffix}.` });
+      });
+    });
+  });
+
+  return { violations: [], recommendations };
+}
+
 // RG-015 : composition de la garde, éditable depuis l'écran "Règles" (10/08/2026, `state.gardeRule`
 // -- voir DEFAULT_GARDE_RULE dans js/03-state.js et renderGardeRuleSection() dans js/21-vue-regles.js,
 // avant ça codée en dur ici même). Contrairement aux RG de composition de vacation
@@ -497,7 +547,7 @@ function validateGardes() {
 
 // Point d'entrée unique du moteur : ajouter ici l'appel de toute nouvelle fonction validateXxx().
 function runValidation() {
-  const results = [validateCompositionRules(), validateAbsences(), validateGardes(), validateActivityExclusivity(), validateAstreinteExclusivity(), validateGlobalPostingExclusions()];
+  const results = [validateCompositionRules(), validateAbsences(), validateGardes(), validateActivityExclusivity(), validateAstreinteExclusivity(), validateGlobalPostingExclusions(), validateFixedFamilyRules()];
   return {
     violations: results.flatMap((r) => r.violations),
     recommendations: results.flatMap((r) => r.recommendations),

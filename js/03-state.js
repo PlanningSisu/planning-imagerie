@@ -6,7 +6,7 @@
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 15;
+const STATE_SCHEMA_VERSION = 16;
 
 // Moteur de règles paramétrable (09/08/2026, voir moteur-regles-brouillon.md) : remplace les
 // anciennes RG-002/003/007/009/012 codées en dur par des données éditables depuis l'écran "Règles"
@@ -190,6 +190,12 @@ const STATE_MIGRATIONS = {
   // exactement l'ancienne valeur codée en dur (1 sénior + 2 internes minimum) : aucun changement de
   // comportement pour un fichier existant tant que Samir n'a rien reconfiguré.
   14: (data) => ({ ...data, gardeRule: normalizeGardeRule(data.gardeRule) }),
+  // 15 -> 16 : ajout de `fixedRuleToggles` (10/08/2026, RG-029..033 -- règles fixes codées en dur,
+  // "je veux juste pouvoir les cocher/décocher", voir js/07-validation-rg.js). Un fichier plus ancien
+  // n'a jamais eu ce champ -- objet vide = toutes décochées par défaut (aucune de ces 5 règles
+  // n'existait avant, donc rien n'était vérifié -- comportement inchangé tant que Samir n'en coche
+  // aucune).
+  15: (data) => ({ ...data, fixedRuleToggles: data.fixedRuleToggles || {} }),
 };
 
 function migrateState(rawData) {
@@ -219,7 +225,7 @@ function migrateState(rawData) {
 // pour ne jamais en oublier un dans l'un des trois chemins). Délibérément SANS `activities` (piloté
 // par le code, jamais par des données utilisateur -- voir CLAUDE.md §4) ni `schemaVersion` (ajouté à
 // part par buildPersistedState()).
-const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "statsColumnVisibility", "statsCounterMode", "customColors", "weekLocks", "weekNotes", "rules", "rulesGroupOrder", "globalRules", "gardeRule"];
+const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "statsColumnVisibility", "statsCounterMode", "customColors", "weekLocks", "weekNotes", "rules", "rulesGroupOrder", "globalRules", "gardeRule", "fixedRuleToggles"];
 
 // Personnalisation (25/07/2026, ⚙ → "Personnalisation") : quelques couleurs éditables depuis
 // l'appli sans toucher au code -- une entrée par variable CSS `--custom-xxx` (voir :root dans
@@ -386,6 +392,11 @@ let state = {
   // -- pas un tableau comme state.rules, la garde n'a ni modalité ni créneau ni jour variable. Voir
   // DEFAULT_GARDE_RULE plus haut et js/21-vue-regles.js (renderGardeRuleSection()).
   gardeRule: { ...DEFAULT_GARDE_RULE },
+  // Règles fixes cochables (10/08/2026, RG-029..033) : "je veux juste pouvoir les cocher/décocher"
+  // -- pas de ciblage personnes/statuts/modalités comme les règles globales, juste un booléen par
+  // RG. Clé absente ou `false` = décochée (comportement par défaut, rien vérifié). Voir
+  // FIXED_RULE_FAMILIES (js/07-validation-rg.js) pour la définition de chaque règle.
+  fixedRuleToggles: {}, // key: "RG-029".."RG-033" -> true (cochée)
   weekOffset: 0,
   // Ordre des colonnes de la vue Stats (24/07/2026, réordonnables par glisser-déposer des en-têtes,
   // voir renderStatsView()) -- "Personnel" n'en fait pas partie, toujours fixe en 1re position.

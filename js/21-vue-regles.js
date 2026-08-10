@@ -14,6 +14,51 @@ function generateRuleId() {
 // défaut = tout déplié (comportement d'origine, inchangé si Samir n'a jamais cliqué un en-tête).
 const collapsedRuleGroups = new Set();
 
+// Index de toutes les RG (10/08/2026, "il sera bien de lister toutes les RG... pour qu'on les
+// retrouve facilement") -- catalogue de référence purement documentaire, PAS une source de vérité
+// (une RG codée en dur ou paramétrable existe indépendamment de sa présence ici). À tenir à jour à
+// chaque nouvelle RG numérotée, en miroir de regles-gestion.md (non chargé au runtime -- gitignored
+// côté dépôt public, voir CLAUDE.md §3 -- donc dupliqué ici sous forme condensée exprès).
+const RG_REFERENCE = [
+  { code: "RG-001", label: "Compétences liées au grade et à la spécialité" },
+  { code: "RG-002", label: "Composition Scan U, matin" },
+  { code: "RG-003", label: "Composition Scan U, après-midi" },
+  { code: "RG-004", label: "Interne socle non isolé en Echo U l'après-midi" },
+  { code: "RG-005", label: "Répartition des vacations d'urgence" },
+  { code: "RG-006", label: "Double-positionnement selon l'activité (tranchée par RG-021)" },
+  { code: "RG-007", label: "Exception Scan U, jeudi matin" },
+  { code: "RG-008", label: "Substitution sénior → interne (règle transverse)" },
+  { code: "RG-009", label: "Composition Scan A" },
+  { code: "RG-010", label: "Fermeture d'une vacation" },
+  { code: "RG-011", label: `Vacation de spécialité "Os" : jamais staffée` },
+  { code: "RG-012", label: "Composition de l'Astreinte (Scan U uniquement)" },
+  { code: "RG-013", label: "Repos de garde automatique après une garde" },
+  { code: "RG-014", label: "Une personne absente ne peut pas être postée" },
+  { code: "RG-015", label: "Composition de la garde" },
+  { code: "RG-016", label: `Personnel "Hors Sisu"` },
+  { code: "RG-017", label: "Trame Personnel : planning de base récurrent" },
+  { code: "RG-018", label: `"Jour Off" (fusionnée dans RG-021)` },
+  { code: "RG-019", label: "Exclusivité Scan U / Echo U (fusionnée dans RG-021)" },
+  { code: "RG-020", label: "Temps Partiel" },
+  { code: "RG-021", label: "Exclusivité entre toutes les modalités" },
+  { code: "RG-022", label: "Verrouillage manuel des semaines" },
+  { code: "RG-023", label: "La trame ne poste jamais quelqu'un d'absent" },
+  { code: "RG-024", label: "Exception de spécialité de vacation par semaine" },
+  { code: "RG-025", label: "Moteur de règles paramétrable (composition de vacation)" },
+  { code: "RG-026", label: "Règles globales : Passe-droit de spécialité" },
+  { code: "RG-027", label: "Éviter astreinte + Scan U/Echo U le même jour" },
+  { code: "RG-028", label: "Règles globales : Interdire de poster" },
+  { code: "RG-029", label: FIXED_RULE_FAMILIES["RG-029"].label },
+  { code: "RG-030", label: FIXED_RULE_FAMILIES["RG-030"].label },
+  { code: "RG-031", label: FIXED_RULE_FAMILIES["RG-031"].label },
+  { code: "RG-032", label: FIXED_RULE_FAMILIES["RG-032"].label },
+  { code: "RG-033", label: FIXED_RULE_FAMILIES["RG-033"].label },
+];
+
+// Repliée par défaut (33 entrées -- trop long pour rester ouvert en permanence) -- transitoire,
+// jamais persisté, même patron que `collapsedRuleGroups` ci-dessus.
+let rgIndexExpanded = false;
+
 // Même logique de construction de texte que checkComposition() (js/07-validation-rg.js) pour la
 // partie "attendu" d'un message -- dupliquée volontairement plutôt que d'exposer un helper partagé :
 // ici c'est un simple texte d'aperçu/résumé, pas la validation elle-même (aucun risque à ce que les
@@ -32,9 +77,58 @@ function describeRuleComposition(rule) {
   return seniorPart || internePart || "aucune composition minimale";
 }
 
+// Index de toutes les RG (voir RG_REFERENCE ci-dessus) -- repliable, juste pour retrouver un numéro
+// rapidement sans ouvrir regles-gestion.md. Aucune interaction au-delà du plier/déplier.
+function renderRgIndexSection(container) {
+  container.innerHTML = `
+    <div class="rules-header">
+      <h3>Index des RG <span class="rules-group-count">${plural(RG_REFERENCE.length, "règle")}</span></h3>
+      <button type="button" id="btnToggleRgIndex" class="btn-primary btn-outline">${rgIndexExpanded ? "Masquer" : "Afficher"}</button>
+    </div>
+    <div id="rgIndexList" class="rg-index-list"></div>
+  `;
+  document.getElementById("btnToggleRgIndex").addEventListener("click", () => {
+    rgIndexExpanded = !rgIndexExpanded;
+    renderRgIndexSection(container);
+  });
+  const listEl = document.getElementById("rgIndexList");
+  if (!rgIndexExpanded) { listEl.style.display = "none"; return; }
+  listEl.innerHTML = RG_REFERENCE.map(({ code, label }) =>
+    `<div class="rg-index-row"><span class="validation-rg rg-recommendation">${code}</span> ${label}</div>`
+  ).join("");
+}
+
+// Règles fixes (10/08/2026, RG-029..033) : "je veux juste pouvoir les cocher/décocher" -- pas de
+// formulaire, pas de ciblage, juste une case par règle. Voir FIXED_RULE_FAMILIES/
+// validateFixedFamilyRules() (js/07-validation-rg.js) -- toujours des recommandations, jamais des
+// violations, jamais bloquant.
+function renderFixedRulesSection(container) {
+  container.innerHTML = `
+    <div class="rules-header">
+      <h3>Règles fixes</h3>
+    </div>
+    <div class="fixed-rules-list">
+      ${Object.entries(FIXED_RULE_FAMILIES).map(([rg, { label }]) => `
+        <label class="fixed-rule-option">
+          <input type="checkbox" class="fixedRuleToggle" value="${rg}" ${state.fixedRuleToggles[rg] ? "checked" : ""}>
+          <span class="validation-rg rg-recommendation">${rg}</span> ${label}
+        </label>
+      `).join("")}
+    </div>
+  `;
+  [...container.querySelectorAll(".fixedRuleToggle")].forEach((cb) => {
+    cb.addEventListener("change", () => {
+      state.fixedRuleToggles[cb.value] = cb.checked;
+      saveState();
+      render();
+    });
+  });
+}
+
 function renderRulesView() {
   const container = document.getElementById("rulesView");
   container.innerHTML = `
+    <div class="global-rules-section" id="rgIndexSection"></div>
     <div class="global-rules-section">
       <div class="rules-header global-rules-header">
         <h3>Règles globales</h3>
@@ -44,6 +138,7 @@ function renderRulesView() {
       <div id="globalRulesList" class="rules-list"></div>
     </div>
     <div class="global-rules-section" id="gardeRuleSection"></div>
+    <div class="global-rules-section" id="fixedRulesSection"></div>
     <div class="rules-header">
       <h3>Règle des Vacations</h3>
       <button type="button" id="btnAddRule" class="btn-primary">+ Ajouter une règle</button>
@@ -51,6 +146,8 @@ function renderRulesView() {
     <div id="ruleFormContainer"></div>
     <div id="rulesList" class="rules-list"></div>
   `;
+  renderRgIndexSection(document.getElementById("rgIndexSection"));
+  renderFixedRulesSection(document.getElementById("fixedRulesSection"));
   document.getElementById("btnAddRule").addEventListener("click", () => {
     document.getElementById("btnAddRule").blur();
     renderRuleForm(document.getElementById("ruleFormContainer"), null);
