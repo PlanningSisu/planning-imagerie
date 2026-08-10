@@ -64,6 +64,44 @@ function renderRulesList(container) {
 
       const row = document.createElement("div");
       row.className = "rules-row";
+      // Réordonnable par glisser-déposer (09/08/2026, demande de Samir : "important pour la suite
+      // pour leur donner une priorité") -- même patron que les colonnes Stats (§6.24) : `dataset.ruleId`
+      // identifie la ligne, le drop déplace la règle dans `state.rules` (l'ordre du tableau EST
+      // l'ordre affiché/persisté, pas de champ séparé). Limité en pratique aux règles de la MÊME
+      // modalité (chaque groupe est un conteneur DOM à part, impossible de glisser d'un groupe à
+      // l'autre à la souris) -- resolveCompositionRule() n'utilise pas encore cet ordre pour
+      // départager un chevauchement (toujours "le moins de jours gagne", voir sa déclaration) ; cet
+      // ordre est pour l'instant purement une préférence d'affichage de Samir, la vraie priorité
+      // viendra plus tard.
+      row.draggable = true;
+      row.dataset.ruleId = rule.id;
+      row.addEventListener("dragstart", (e) => {
+        e.dataTransfer.setData("text/plain", rule.id);
+        e.dataTransfer.effectAllowed = "move";
+        row.classList.add("dragging");
+      });
+      row.addEventListener("dragend", () => row.classList.remove("dragging"));
+      row.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        row.classList.add("drag-over");
+      });
+      row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
+      row.addEventListener("drop", (e) => {
+        e.preventDefault();
+        row.classList.remove("drag-over");
+        const draggedId = e.dataTransfer.getData("text/plain");
+        if (!draggedId || draggedId === rule.id) return;
+        const draggedRule = state.rules.find((r) => r.id === draggedId);
+        if (!draggedRule || draggedRule.activityId !== rule.activityId) return; // pas de glissé entre modalités différentes
+        const fromIdx = state.rules.indexOf(draggedRule);
+        const targetIdxBefore = state.rules.indexOf(rule); // avant retrait, pour connaître le sens du glissé
+        state.rules.splice(fromIdx, 1);
+        let insertAt = state.rules.indexOf(rule); // position de la cible après retrait (a pu décaler de 1)
+        if (fromIdx < targetIdxBefore) insertAt += 1; // glissé vers l'avant -> insertion APRÈS la cible
+        state.rules.splice(insertAt, 0, draggedRule);
+        saveState();
+        render();
+      });
 
       const desc = document.createElement("div");
       desc.className = "rules-row-desc";

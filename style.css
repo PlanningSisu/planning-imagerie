@@ -2019,6 +2019,15 @@ tr.group-end td {
   margin-bottom: 8px;
   background: white;
 }
+/* Réordonnable par glisser-déposer (09/08/2026) -- même traitement visuel que les colonnes Stats
+   réordonnables (.stats-table thead th.dragging/.drag-over, §6.24), juste appliqué à une ligne. */
+.rules-row[draggable="true"] { cursor: grab; }
+.rules-row.dragging { opacity: 0.4; }
+.rules-row.drag-over {
+  background: #dbeafe;
+  outline: 2px dashed #3b82f6;
+  outline-offset: -2px;
+}
 .rules-row-desc { font-size: 13px; line-height: 1.5; }
 .rules-row-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .rules-badge-spec {
