@@ -14,19 +14,35 @@ function formatShort(d) {
   return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
 }
 
+// Corrigé le 09/08/2026 (piège de fuseau horaire déjà documenté en CLAUDE.md §2, jamais réparé à la
+// source) : utilisait `.toISOString()`, qui convertit la date LOCALE en UTC avant de tronquer --
+// pour un fuseau en avance sur UTC (France : CET UTC+1 ou CEST UTC+2, toujours en avance, jamais en
+// retard), soustraire n'importe quelle heure positive à minuit local retombe TOUJOURS sur la veille
+// en UTC, donc `weekKey()` renvoyait systématiquement la date de la veille du vrai lundi (ex. "le
+// lundi 5 octobre" stocké sous "2026-10-04"). Toutes les clés écrites avant ce correctif ont donc ce
+// décalage -- voir STATE_MIGRATIONS[11] (js/03-state.js) qui les réaligne une seule fois. Recalcul en
+// LOCAL direct (mêmes composants Y/M/D que toISODateLocal(), dupliqué ici plutôt qu'appelé -- ce
+// fichier charge avant js/06-conges-model.js qui la définit, voir CLAUDE.md §2 point 4) : plus aucune
+// conversion UTC, donc plus aucun décalage possible quel que soit le fuseau.
 function weekKey(monday) {
-  return monday.toISOString().slice(0, 10);
+  const y = monday.getFullYear();
+  const m = String(monday.getMonth() + 1).padStart(2, "0");
+  const d = String(monday.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 // RG-023 (05/08/2026) : reconstruit le lundi (Date locale) correspondant à un `weekKeyPart` --
-// weekKey() convertit en UTC avant de tronquer (§2 CLAUDE.md, piège de fuseau horaire déjà connu),
-// ce qui peut décaler la chaîne d'un jour selon le fuseau. Un simple `new Date(weekKeyPart)` ne
-// suffit donc pas à retrouver le VRAI lundi local -- nécessaire ici pour comparer un `weekKeyPart`
-// de state.assignments/state.trame à des dates de congé (state.conges, en heure locale, voir
-// toISODateLocal()), un besoin qui n'existait pas avant (le reste du code ne fait que comparer des
-// weekKeyPart entre eux en chaînes, jamais les reconvertir en Date). Teste le candidat naïf et son
-// lendemain, retient celui dont weekKey() reproduit exactement la chaîne d'origine -- robuste au
-// décalage quel que soit son sens/son ampleur (toujours ≤ 1 jour).
+// nécessaire pour comparer un `weekKeyPart` de state.assignments/state.trame à des dates de congé
+// (state.conges, en heure locale, voir toISODateLocal()), un besoin qui n'existait pas avant (le
+// reste du code ne fait que comparer des weekKeyPart entre eux en chaînes, jamais les reconvertir
+// en Date). Teste le candidat naïf et son lendemain, retient celui dont weekKey() reproduit
+// exactement la chaîne d'origine.
+// ⚠️ Écrite à l'origine (05/08/2026) pour contourner le piège de fuseau horaire de weekKey() (celui-ci
+// convertissait en UTC avant de tronquer, décalant la chaîne d'un jour) -- ce piège est corrigé à la
+// SOURCE depuis le 09/08/2026 (voir weekKey() juste au-dessus), donc la branche "lendemain" ci-dessous
+// ne se déclenche plus jamais en pratique (le candidat naïf correspond toujours désormais). Laissée
+// telle quelle par prudence (fonction toujours correcte, coût négligeable) plutôt que simplifiée --
+// aucune urgence à la retirer.
 function mondayFromWeekKey(weekKeyPart) {
   const candidate = new Date(`${weekKeyPart}T00:00:00`);
   if (weekKey(candidate) === weekKeyPart) return candidate;

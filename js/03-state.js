@@ -6,7 +6,7 @@
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 11;
+const STATE_SCHEMA_VERSION = 13;
 
 // Moteur de règles paramétrable (09/08/2026, voir moteur-regles-brouillon.md) : remplace les
 // anciennes RG-002/003/007/009/012 codées en dur par des données éditables depuis l'écran "Règles"
@@ -52,6 +52,17 @@ const DEFAULT_COMPOSITION_RULES = [
     seniorMin: 1, seniorMax: 1, interneMin: 1, interneMax: 2, encourageInterneGrowth: true, requireSpecialite: false,
   },
 ];
+
+// Ajoute 1 jour à la date ISO en tête d'une clé "YYYY-MM-DD" ou "YYYY-MM-DD|reste-de-la-clé" --
+// utilisée uniquement par STATE_MIGRATIONS[11] (piège de fuseau horaire de weekKey(), voir cette
+// entrée pour le contexte complet). `isoAddDays()` (js/06-conges-model.js, chargé après ce fichier)
+// n'est référencée qu'à l'intérieur de ce corps de fonction, jamais exécutée immédiatement -- safe
+// vis-à-vis de l'ordre de chargement des <script> (voir CLAUDE.md §2 point 4).
+function shiftWeekKeyPrefixForward(key) {
+  const parts = key.split("|");
+  parts[0] = isoAddDays(parts[0], 1);
+  return parts.join("|");
+}
 
 // Clé = version de départ, valeur = fonction qui transforme les données de cette version vers la
 // version suivante (N -> N+1, jamais un saut direct). migrateState() les enchaîne jusqu'à
@@ -116,6 +127,42 @@ const STATE_MIGRATIONS = {
     ...data,
     rules: Array.isArray(data.rules) ? data.rules : DEFAULT_COMPOSITION_RULES.map((r) => ({ ...r })),
   }),
+  // 11 -> 12 : correction du piège de fuseau horaire de weekKey() (09/08/2026, voir sa déclaration
+  // dans js/05-week.js) -- utilisait `.toISOString()` (conversion UTC), ce qui décale TOUJOURS
+  // exactement -1 jour calendaire pour un fuseau en avance sur UTC (France : CET/CEST, jamais en
+  // retard sur UTC -- soustraire n'importe quelle heure positive à minuit local retombe forcément sur
+  // la veille en UTC, donc le décalage ne dépend ni de l'heure d'été/hiver ni de la date). Toute clé
+  // écrite AVANT ce correctif (assignments/fermetures/vacationSpecialitesWeekly, préfixées par une
+  // semaine ; weekLocks/weekNotes, dont la clé EST la semaine) porte donc ce décalage d'un jour trop
+  // tôt -- cette migration les réaligne une seule fois en ajoutant +1 jour à chaque préfixe de
+  // semaine, pour rester cohérent avec la weekKey() corrigée. Trouvé et vérifié sur un vrai export de
+  // Samir (semaine du 5 octobre stockée sous "2026-10-04" -> "2026-10-05" après migration, qui est le
+  // vrai lundi). `shiftWeekKeyPrefixForward()` gère aussi bien une clé composée
+  // ("weekKey|activityId|jour|créneau") qu'une clé simple (weekKey seule, weekLocks/weekNotes).
+  11: (data) => {
+    const shiftKeys = (obj) => {
+      const result = {};
+      Object.entries(obj || {}).forEach(([key, value]) => {
+        result[shiftWeekKeyPrefixForward(key)] = value;
+      });
+      return result;
+    };
+    return {
+      ...data,
+      assignments: shiftKeys(data.assignments),
+      fermetures: shiftKeys(data.fermetures),
+      vacationSpecialitesWeekly: shiftKeys(data.vacationSpecialitesWeekly),
+      weekLocks: shiftKeys(data.weekLocks),
+      weekNotes: shiftKeys(data.weekNotes),
+    };
+  },
+  // 12 -> 13 : ajout de `rulesGroupOrder` (09/08/2026, réordonner par glisser-déposer les BLOCS par
+  // modalité de l'écran Règles -- ex. faire passer le bloc "Scan A" avant le bloc "Scan U" -- distinct
+  // du réordonnancement des règles À L'INTÉRIEUR d'un même bloc, déjà possible avant cette migration).
+  // Un fichier plus ancien n'a jamais eu ce champ -- normalizeRulesGroupOrder(undefined) retombe sur
+  // l'ordre naturel de `state.activities` (celui déjà affiché avant l'introduction de ce réglage),
+  // donc aucun changement visuel pour un fichier existant tant que personne ne glisse un bloc.
+  12: (data) => ({ ...data, rulesGroupOrder: normalizeRulesGroupOrder(data.rulesGroupOrder) }),
 };
 
 function migrateState(rawData) {
@@ -145,7 +192,7 @@ function migrateState(rawData) {
 // pour ne jamais en oublier un dans l'un des trois chemins). Délibérément SANS `activities` (piloté
 // par le code, jamais par des données utilisateur -- voir CLAUDE.md §4) ni `schemaVersion` (ajouté à
 // part par buildPersistedState()).
-const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "statsColumnVisibility", "statsCounterMode", "customColors", "weekLocks", "weekNotes", "rules"];
+const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "statsColumnVisibility", "statsCounterMode", "customColors", "weekLocks", "weekNotes", "rules", "rulesGroupOrder"];
 
 // Personnalisation (25/07/2026, ⚙ → "Personnalisation") : quelques couleurs éditables depuis
 // l'appli sans toucher au code -- une entrée par variable CSS `--custom-xxx` (voir :root dans
@@ -207,6 +254,21 @@ function normalizeStatsColumnOrder(order) {
   return valid;
 }
 
+// Ordre des blocs "par modalité" de l'écran Règles (09/08/2026, demande de Samir : réordonner
+// pas seulement les règles d'un même bloc mais les blocs eux-mêmes, ex. "Scan A" avant "Scan U").
+// Même principe que normalizeStatsColumnOrder() ci-dessus, mais la liste "canonique" est
+// `state.activities` (pas une constante à part comme DEFAULT_STATS_COLUMN_ORDER) : jamais de
+// modalité perdue si une activité est retirée du code, jamais d'erreur si `rulesGroupOrder`
+// contient un id qui n'existe plus.
+function normalizeRulesGroupOrder(order) {
+  const allIds = state.activities.map((a) => a.id);
+  const valid = Array.isArray(order) ? order.filter((id) => allIds.includes(id)) : [];
+  allIds.forEach((id) => {
+    if (!valid.includes(id)) valid.push(id);
+  });
+  return valid;
+}
+
 // ⚠️ Bug réel trouvé le 08/08/2026 en ajoutant vacationSpecialitesWeekly : cette fonction listait
 // CHAQUE champ de PERSISTED_KEYS à la main plutôt que de boucler dessus -- weekLocks (29/07/2026) et
 // weekNotes (08/08/2026, session précédente) avaient bien été ajoutés à PERSISTED_KEYS/buildPersistedState()
@@ -217,11 +279,12 @@ function normalizeStatsColumnOrder(order) {
 // SPECIAL_APPLY_KEYS liste les 3 exceptions qui ont besoin d'un traitement différent d'un simple
 // `data[key] || {}` (staff : conditionnel non-vide, weekOffset : nombre, statsColumnOrder : normalisé).
 const ARRAY_PERSISTED_KEYS = new Set(["conges", "gardes", "rules"]);
-const SPECIAL_APPLY_KEYS = new Set(["staff", "weekOffset", "statsColumnOrder"]);
+const SPECIAL_APPLY_KEYS = new Set(["staff", "weekOffset", "statsColumnOrder", "rulesGroupOrder"]);
 function applyPersistedState(rawData) {
   const data = migrateState(rawData);
   state.weekOffset = data.weekOffset || 0;
   state.statsColumnOrder = normalizeStatsColumnOrder(data.statsColumnOrder);
+  state.rulesGroupOrder = normalizeRulesGroupOrder(data.rulesGroupOrder);
   if (Array.isArray(data.staff) && data.staff.length > 0) {
     state.staff = data.staff;
   }
@@ -273,6 +336,11 @@ let state = {
   // l'écran "Règles" -- voir DEFAULT_COMPOSITION_RULES juste au-dessus pour la forme d'une règle et
   // js/07-validation-rg.js pour l'interpréteur générique (validateCompositionRules()).
   rules: DEFAULT_COMPOSITION_RULES.map((r) => ({ ...r })),
+  // Ordre des BLOCS par modalité de l'écran Règles (09/08/2026, réordonnables par glisser-déposer
+  // des en-têtes de bloc, ex. "Scan A" avant "Scan U") -- distinct de l'ordre des règles À
+  // L'INTÉRIEUR d'un bloc (déjà géré par l'ordre naturel de `state.rules`). Valeur par défaut =
+  // ordre naturel de `state.activities` -- voir normalizeRulesGroupOrder().
+  rulesGroupOrder: ACTIVITIES.map((a) => a.id),
   weekOffset: 0,
   // Ordre des colonnes de la vue Stats (24/07/2026, réordonnables par glisser-déposer des en-têtes,
   // voir renderStatsView()) -- "Personnel" n'en fait pas partie, toujours fixe en 1re position.

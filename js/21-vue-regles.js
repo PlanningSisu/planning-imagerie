@@ -47,7 +47,15 @@ function renderRulesList(container) {
   container.innerHTML = "";
   let anyRule = false;
 
-  state.activities.forEach((activity) => {
+  // Ordre des BLOCS par modalité (09/08/2026, demande de Samir : "je voulais aussi et surtout dire,
+  // le bloc 'Scan A' etc") -- state.rulesGroupOrder plutôt que l'ordre naturel de state.activities,
+  // réordonnable par glisser-déposer du <h3> (voir plus bas). Distinct du glisser-déposer déjà
+  // existant sur chaque `.rules-row` (réordonne les règles À L'INTÉRIEUR d'un même bloc).
+  const orderedActivities = state.rulesGroupOrder
+    .map((id) => state.activities.find((a) => a.id === id))
+    .filter(Boolean);
+
+  orderedActivities.forEach((activity) => {
     const rulesForActivity = state.rules.filter((r) => r.activityId === activity.id);
     if (rulesForActivity.length === 0) return;
     anyRule = true;
@@ -56,6 +64,43 @@ function renderRulesList(container) {
     section.className = "rules-activity-group";
     const h3 = document.createElement("h3");
     h3.textContent = activity.nom;
+    h3.title = "Glisser pour réordonner ce bloc";
+    // Glisser-déposer du BLOC entier (pas juste ses règles) -- réordonne state.rulesGroupOrder.
+    // `dataset.activityId` identifie le bloc ; le drop insère le bloc déplacé juste avant/après le
+    // bloc cible selon le sens du glissé, même logique que le réordonnancement des `.rules-row`
+    // au-dessus et des colonnes Stats (§6.24).
+    h3.draggable = true;
+    h3.dataset.activityId = activity.id;
+    h3.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/x-rules-group", activity.id);
+      e.dataTransfer.effectAllowed = "move";
+      h3.classList.add("dragging");
+    });
+    h3.addEventListener("dragend", () => h3.classList.remove("dragging"));
+    h3.addEventListener("dragover", (e) => {
+      if (!e.dataTransfer.types.includes("text/x-rules-group")) return;
+      e.preventDefault();
+      h3.classList.add("drag-over");
+    });
+    h3.addEventListener("dragleave", () => h3.classList.remove("drag-over"));
+    h3.addEventListener("drop", (e) => {
+      if (!e.dataTransfer.types.includes("text/x-rules-group")) return;
+      e.preventDefault();
+      h3.classList.remove("drag-over");
+      const draggedId = e.dataTransfer.getData("text/x-rules-group");
+      if (!draggedId || draggedId === activity.id) return;
+      const order = state.rulesGroupOrder.slice();
+      const fromIdx = order.indexOf(draggedId);
+      const targetIdxBefore = order.indexOf(activity.id);
+      if (fromIdx === -1 || targetIdxBefore === -1) return;
+      order.splice(fromIdx, 1);
+      let insertAt = order.indexOf(activity.id);
+      if (fromIdx < targetIdxBefore) insertAt += 1;
+      order.splice(insertAt, 0, draggedId);
+      state.rulesGroupOrder = order;
+      saveState();
+      render();
+    });
     section.appendChild(h3);
 
     rulesForActivity.forEach((rule) => {

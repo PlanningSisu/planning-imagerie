@@ -2007,6 +2007,18 @@ tr.group-end td {
   letter-spacing: 0.03em;
   color: #64748b;
   margin: 0 0 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+/* Bloc de modalité réordonnable par glisser-déposer du <h3> (09/08/2026, demande de Samir : "le
+   bloc 'Scan A' etc") -- même traitement visuel que .rules-row[draggable] ci-dessous, juste posé
+   sur l'en-tête de groupe plutôt qu'une ligne. */
+.rules-activity-group h3[draggable="true"] { cursor: grab; }
+.rules-activity-group h3.dragging { opacity: 0.4; }
+.rules-activity-group h3.drag-over {
+  background: #dbeafe;
+  outline: 2px dashed #3b82f6;
+  outline-offset: -2px;
 }
 .rules-row {
   display: flex;
