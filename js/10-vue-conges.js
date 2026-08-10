@@ -115,8 +115,14 @@ function renderCongesView() {
     const tr = document.createElement("tr");
     if (isNewMonth) tr.classList.add("group-start");
     const label = document.createElement("td");
-    label.className = "conges-week-label" + (isCurrentWeek ? " conges-current-week" : "");
+    // Annotation de semaine (10/08/2026, demande de Samir) : même donnée que le popover "Semaine
+    // du..." de la topbar (state.weekNotes, voir §6.44 CLAUDE.md) -- une semaine annotée apparaît
+    // en doré ici aussi, avec le texte complet en `title` (infobulle native au survol, même
+    // convention que personTooltip()/le libellé topbar).
+    const weekNote = state.weekNotes[weekKey(monday)];
+    label.className = "conges-week-label" + (isCurrentWeek ? " conges-current-week" : "") + (weekNote ? " conges-week-annotated" : "");
     label.textContent = `${formatShort(monday)} → ${formatShort(friday)}`;
+    if (weekNote) label.title = weekNote;
     tr.appendChild(label);
 
     people.forEach((p, i) => {

@@ -1543,6 +1543,19 @@ tr.group-end td {
   border-left: 3px solid #7c3aed;
   font-weight: 600;
 }
+/* Semaine annotée (10/08/2026, state.weekNotes -- voir §6.44 CLAUDE.md) -- doré, demandé par Samir
+   pour repérer d'un coup d'œil quelles semaines ont une note dans cette vue, comme le libellé
+   "Semaine du..." de la topbar (même donnée, couleur assortie #fbbf24). Déclarée APRÈS
+   .conges-current-week pour gagner l'égalité de spécificité si une semaine est les deux à la fois
+   (le doré est le signal qu'on cherche activement ici, la semaine en cours reste repérable via son
+   fond violet le reste du temps). Seuls background/border-left touchés (jamais font-weight/padding
+   sur une classe qui n'est pas systématiquement présente) -- même piège de largeur de colonne que
+   .conges-highlight, voir le commentaire juste en dessous. */
+.conges-week-label.conges-week-annotated {
+  background: #fef3c7;
+  border-left: 3px solid #fbbf24;
+  cursor: help;
+}
 /* ⚠️ `display: flex` posé directement sur un <td> a été essayé le 21/07/2026 pour faire
    remplir .conges-bar sur toute la hauteur de la ligne -- **testé en vrai dans le navigateur
    et confirmé cassé** : le calcul de hauteur de ligne du tableau part en vrille (une case
