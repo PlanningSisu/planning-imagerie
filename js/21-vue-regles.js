@@ -43,6 +43,7 @@ function renderRulesView() {
       <div id="globalRuleFormContainer"></div>
       <div id="globalRulesList" class="rules-list"></div>
     </div>
+    <div class="global-rules-section" id="gardeRuleSection"></div>
     <div class="rules-header">
       <h3>Règle des Vacations</h3>
       <button type="button" id="btnAddRule" class="btn-primary">+ Ajouter une règle</button>
@@ -59,6 +60,7 @@ function renderRulesView() {
     renderGlobalRuleForm(document.getElementById("globalRuleFormContainer"), null);
   });
   renderGlobalRulesList(document.getElementById("globalRulesList"));
+  renderGardeRuleSection(document.getElementById("gardeRuleSection"));
   renderRulesList(document.getElementById("rulesList"));
 }
 
@@ -433,6 +435,144 @@ function renderGlobalRuleForm(container, existingRule) {
     } else {
       state.globalRules.push({ id: generateGlobalRuleId(), ...payload });
     }
+    saveState();
+    container.innerHTML = "";
+    render();
+  });
+}
+
+// ---------- Règle de garde (10/08/2026) ----------
+// Composition de la garde (RG-015), éditable depuis un unique bloc -- distinct de state.rules
+// (liste, une entrée par modalité) ET de state.globalRules (liste, transverse à toutes les
+// modalités) : la garde n'a ni modalité ni créneau ni jour variable, une SEULE composition suffit.
+// Voir DEFAULT_GARDE_RULE (js/03-state.js) et validateGardes() (js/07-validation-rg.js).
+
+function renderGardeRuleSection(container) {
+  container.innerHTML = `
+    <div class="rules-header">
+      <h3>Règle de garde</h3>
+    </div>
+    <div id="gardeRuleFormContainer"></div>
+    <div id="gardeRuleSummary" class="rules-list"></div>
+  `;
+  renderGardeRuleSummary(document.getElementById("gardeRuleSummary"));
+}
+
+function renderGardeRuleSummary(container) {
+  container.innerHTML = "";
+  const row = document.createElement("div");
+  row.className = "rules-row";
+
+  const desc = document.createElement("div");
+  desc.className = "rules-row-desc";
+  desc.textContent = `${describeRuleComposition(state.gardeRule)} attendu(s), chaque jour calendaire.`;
+  row.appendChild(desc);
+
+  const actions = document.createElement("div");
+  actions.className = "rules-row-actions";
+  const editBtn = document.createElement("button");
+  editBtn.type = "button";
+  editBtn.className = "staff-modal-edit";
+  editBtn.textContent = "Modifier";
+  editBtn.addEventListener("click", () => renderGardeRuleForm(document.getElementById("gardeRuleFormContainer")));
+  actions.appendChild(editBtn);
+  row.appendChild(actions);
+
+  container.appendChild(row);
+}
+
+// Mêmes champs de composition que renderRuleForm() (séniors min/max, internes réglementés ou non
+// min/max, substitution, "encourager la cible") -- volontairement SANS modalité/créneau(x)/jours/
+// spécialité, qui n'ont pas de sens pour la garde. Toujours en mode "modifier" (jamais "ajouter" --
+// une seule règle de garde existe, jamais créée/supprimée) : la sauvegarde remplace directement
+// `state.gardeRule`, aucun garde-fou anti-doublon nécessaire.
+function renderGardeRuleForm(container) {
+  const rule = state.gardeRule;
+  container.innerHTML = `
+    <div class="staff-form rule-form">
+      <h3>Modifier la règle de garde</h3>
+      <div class="form-row">
+        <label for="gardeRuleSeniorMin">Séniors minimum</label>
+        <input type="number" id="gardeRuleSeniorMin" min="0" value="${rule.seniorMin}">
+      </div>
+      <div class="form-row">
+        <label for="gardeRuleSeniorMax">Séniors -- au-delà, signalé "en trop" (vide = même valeur que le minimum)</label>
+        <input type="number" id="gardeRuleSeniorMax" min="0" value="${rule.seniorMax !== rule.seniorMin ? rule.seniorMax : ""}">
+      </div>
+      <div class="form-row form-row-checkbox">
+        <label><input type="checkbox" id="gardeRuleInterneRegulated" ${rule.interneMin !== null ? "checked" : ""}> Réglementer les internes sur cette règle</label>
+      </div>
+      <div id="gardeRuleInterneFields">
+        <div class="form-row">
+          <label for="gardeRuleInterneMin">Internes minimum</label>
+          <input type="number" id="gardeRuleInterneMin" min="0" value="${rule.interneMin !== null ? rule.interneMin : 0}">
+        </div>
+        <div class="form-row">
+          <label for="gardeRuleInterneMax">Internes -- cible/max recommandé (vide = même valeur que le minimum)</label>
+          <input type="number" id="gardeRuleInterneMax" min="0" value="${rule.interneMax !== null && rule.interneMax !== rule.interneMin ? rule.interneMax : ""}">
+        </div>
+        <div class="form-row form-row-checkbox">
+          <label><input type="checkbox" id="gardeRuleEncourageGrowth" ${rule.encourageInterneGrowth ? "checked" : ""}> Encourager (sans l'exiger) à atteindre la cible</label>
+        </div>
+      </div>
+      <div class="form-row form-row-checkbox">
+        <label><input type="checkbox" id="gardeRuleSubstitution" ${rule.allowSubstitution !== false ? "checked" : ""}> Un sénior en trop peut couvrir un manque d'interne</label>
+      </div>
+      <div class="rule-preview" id="gardeRulePreview"></div>
+      <div class="form-actions">
+        <button type="button" id="gardeRuleFormSubmit">Enregistrer</button>
+        <button type="button" id="gardeRuleFormCancel">Annuler</button>
+      </div>
+    </div>
+  `;
+
+  const seniorMinInput = document.getElementById("gardeRuleSeniorMin");
+  const seniorMaxInput = document.getElementById("gardeRuleSeniorMax");
+  const interneRegulatedCheckbox = document.getElementById("gardeRuleInterneRegulated");
+  const interneMinInput = document.getElementById("gardeRuleInterneMin");
+  const interneMaxInput = document.getElementById("gardeRuleInterneMax");
+  const encourageGrowthCheckbox = document.getElementById("gardeRuleEncourageGrowth");
+  const substitutionCheckbox = document.getElementById("gardeRuleSubstitution");
+
+  const updateInterneFieldsVisibility = () => {
+    document.getElementById("gardeRuleInterneFields").style.display = interneRegulatedCheckbox.checked ? "block" : "none";
+  };
+  const updatePreview = () => {
+    const preview = document.getElementById("gardeRulePreview");
+    const seniorMin = Math.max(0, parseInt(seniorMinInput.value, 10) || 0);
+    const interneRegulated = interneRegulatedCheckbox.checked;
+    const interneMin = interneRegulated ? Math.max(0, parseInt(interneMinInput.value, 10) || 0) : null;
+    const composition = describeRuleComposition({ seniorMin, interneMin, interneMax: interneMin, mentionSeniorInText: true });
+    preview.textContent = `Aperçu : ${composition} attendu(s), chaque jour calendaire.`;
+  };
+
+  interneRegulatedCheckbox.addEventListener("change", () => { updateInterneFieldsVisibility(); updatePreview(); });
+  [seniorMinInput, seniorMaxInput, interneMinInput, interneMaxInput].forEach((el) => el.addEventListener("input", updatePreview));
+
+  updateInterneFieldsVisibility();
+  updatePreview();
+
+  document.getElementById("gardeRuleFormCancel").addEventListener("click", () => { container.innerHTML = ""; });
+
+  document.getElementById("gardeRuleFormSubmit").addEventListener("click", () => {
+    const seniorMin = Math.max(0, parseInt(seniorMinInput.value, 10) || 0);
+    const seniorMaxRaw = parseInt(seniorMaxInput.value, 10);
+    const seniorMax = Number.isFinite(seniorMaxRaw) ? Math.max(seniorMin, seniorMaxRaw) : seniorMin;
+
+    const interneRegulated = interneRegulatedCheckbox.checked;
+    let interneMin = null;
+    let interneMax = null;
+    if (interneRegulated) {
+      interneMin = Math.max(0, parseInt(interneMinInput.value, 10) || 0);
+      const interneMaxRaw = parseInt(interneMaxInput.value, 10);
+      interneMax = Number.isFinite(interneMaxRaw) ? Math.max(interneMin, interneMaxRaw) : interneMin;
+    }
+
+    state.gardeRule = {
+      seniorMin, seniorMax, interneMin, interneMax,
+      encourageInterneGrowth: encourageGrowthCheckbox.checked,
+      allowSubstitution: substitutionCheckbox.checked,
+    };
     saveState();
     container.innerHTML = "";
     render();

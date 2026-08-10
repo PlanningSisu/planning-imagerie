@@ -333,10 +333,13 @@ function validateActivityExclusivity() {
   return { violations, recommendations: [] };
 }
 
-// RG-015 : composition de la garde -- 1 sénior + 2 internes minimum, par jour. Contrairement aux
-// RG de composition de vacation (RG-002/003/007/009/012), il n'y a pas de créneau ni de modalité :
-// state.gardes n'a qu'une date par personne, donc une seule composition attendue par jour calendaire
-// de la semaine affichée. Réutilise checkComposition() comme RG-002 (mêmes seuils).
+// RG-015 : composition de la garde, éditable depuis l'écran "Règles" (10/08/2026, `state.gardeRule`
+// -- voir DEFAULT_GARDE_RULE dans js/03-state.js et renderGardeRuleSection() dans js/21-vue-regles.js,
+// avant ça codée en dur ici même). Contrairement aux RG de composition de vacation
+// (RG-002/003/007/009/012), il n'y a pas de créneau ni de modalité : state.gardes n'a qu'une date par
+// personne, donc une seule composition attendue par jour calendaire de la semaine affichée, la même
+// tous les jours (pas de variation par jour comme RG-007 vs RG-002). Réutilise checkComposition()
+// comme les règles de composition de vacation.
 function validateGardes() {
   const violations = [];
   const recommendations = [];
@@ -344,11 +347,7 @@ function validateGardes() {
 
   weekIsoDates(monday).forEach((iso, i) => {
     const onGarde = gardeStaffForDate(iso);
-    checkComposition(
-      onGarde,
-      { seniorMin: 1, seniorMax: 1, interneMin: 2, interneMax: 2 },
-      "RG-015", `Garde, ${DAYS[i]}`, violations, recommendations
-    );
+    checkComposition(onGarde, state.gardeRule, "RG-015", `Garde, ${DAYS[i]}`, violations, recommendations);
   });
 
   return { violations, recommendations };

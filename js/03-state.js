@@ -6,7 +6,7 @@
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 14;
+const STATE_SCHEMA_VERSION = 15;
 
 // Moteur de règles paramétrable (09/08/2026, voir moteur-regles-brouillon.md) : remplace les
 // anciennes RG-002/003/007/009/012 codées en dur par des données éditables depuis l'écran "Règles"
@@ -52,6 +52,18 @@ const DEFAULT_COMPOSITION_RULES = [
     seniorMin: 1, seniorMax: 1, interneMin: 1, interneMax: 2, encourageInterneGrowth: true, requireSpecialite: false,
   },
 ];
+
+// Règle de garde (10/08/2026, "Rajoute moi un bloc 'règle de garde' qui permet de choisir la
+// composition des personnes de garde") -- remplace la composition RG-015 codée en dur
+// (`{ seniorMin: 1, seniorMax: 1, interneMin: 2, interneMax: 2 }` dans validateGardes(), js/07-
+// validation-rg.js) par un unique objet éditable, `state.gardeRule`. Contrairement à `state.rules`
+// (§ ci-dessus), ce n'est PAS un tableau -- la garde n'a ni modalité, ni créneau, ni jour variable
+// (même composition tous les jours), une seule règle a donc un sens, pas une liste. Reproduit
+// EXACTEMENT la valeur codée en dur avant ce changement.
+const DEFAULT_GARDE_RULE = {
+  seniorMin: 1, seniorMax: 1, interneMin: 2, interneMax: 2,
+  encourageInterneGrowth: false, allowSubstitution: true,
+};
 
 // Ajoute 1 jour à la date ISO en tête d'une clé "YYYY-MM-DD" ou "YYYY-MM-DD|reste-de-la-clé" --
 // utilisée uniquement par STATE_MIGRATIONS[11] (piège de fuseau horaire de weekKey(), voir cette
@@ -169,6 +181,12 @@ const STATE_MIGRATIONS = {
   // aucune règle globale active, comportement inchangé (RG-001 continue de s'appliquer normalement
   // à tout le monde).
   13: (data) => ({ ...data, globalRules: Array.isArray(data.globalRules) ? data.globalRules : [] }),
+  // 14 -> 15 : ajout de `gardeRule` (10/08/2026, composition de la garde -- RG-015 -- devient
+  // éditable depuis l'écran "Règles" au lieu d'être codée en dur). Un fichier plus ancien n'a jamais
+  // eu ce champ -- `normalizeGardeRule(undefined)` retombe sur `DEFAULT_GARDE_RULE`, qui reproduit
+  // exactement l'ancienne valeur codée en dur (1 sénior + 2 internes minimum) : aucun changement de
+  // comportement pour un fichier existant tant que Samir n'a rien reconfiguré.
+  14: (data) => ({ ...data, gardeRule: normalizeGardeRule(data.gardeRule) }),
 };
 
 function migrateState(rawData) {
@@ -198,7 +216,7 @@ function migrateState(rawData) {
 // pour ne jamais en oublier un dans l'un des trois chemins). Délibérément SANS `activities` (piloté
 // par le code, jamais par des données utilisateur -- voir CLAUDE.md §4) ni `schemaVersion` (ajouté à
 // part par buildPersistedState()).
-const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "statsColumnVisibility", "statsCounterMode", "customColors", "weekLocks", "weekNotes", "rules", "rulesGroupOrder", "globalRules"];
+const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "statsColumnVisibility", "statsCounterMode", "customColors", "weekLocks", "weekNotes", "rules", "rulesGroupOrder", "globalRules", "gardeRule"];
 
 // Personnalisation (25/07/2026, ⚙ → "Personnalisation") : quelques couleurs éditables depuis
 // l'appli sans toucher au code -- une entrée par variable CSS `--custom-xxx` (voir :root dans
@@ -275,6 +293,14 @@ function normalizeRulesGroupOrder(order) {
   return valid;
 }
 
+// Complète un `state.gardeRule` persisté avec les champs de DEFAULT_GARDE_RULE manquants -- un
+// fichier plus ancien (sans ce champ du tout) ou un objet partiellement corrompu ne doit jamais
+// faire planter checkComposition() (qui a besoin de tous ces champs), même principe défensif que
+// normalizeStatsColumnOrder()/normalizeRulesGroupOrder() ci-dessus.
+function normalizeGardeRule(rule) {
+  return { ...DEFAULT_GARDE_RULE, ...(rule || {}) };
+}
+
 // ⚠️ Bug réel trouvé le 08/08/2026 en ajoutant vacationSpecialitesWeekly : cette fonction listait
 // CHAQUE champ de PERSISTED_KEYS à la main plutôt que de boucler dessus -- weekLocks (29/07/2026) et
 // weekNotes (08/08/2026, session précédente) avaient bien été ajoutés à PERSISTED_KEYS/buildPersistedState()
@@ -285,12 +311,13 @@ function normalizeRulesGroupOrder(order) {
 // SPECIAL_APPLY_KEYS liste les 3 exceptions qui ont besoin d'un traitement différent d'un simple
 // `data[key] || {}` (staff : conditionnel non-vide, weekOffset : nombre, statsColumnOrder : normalisé).
 const ARRAY_PERSISTED_KEYS = new Set(["conges", "gardes", "rules", "globalRules"]);
-const SPECIAL_APPLY_KEYS = new Set(["staff", "weekOffset", "statsColumnOrder", "rulesGroupOrder"]);
+const SPECIAL_APPLY_KEYS = new Set(["staff", "weekOffset", "statsColumnOrder", "rulesGroupOrder", "gardeRule"]);
 function applyPersistedState(rawData) {
   const data = migrateState(rawData);
   state.weekOffset = data.weekOffset || 0;
   state.statsColumnOrder = normalizeStatsColumnOrder(data.statsColumnOrder);
   state.rulesGroupOrder = normalizeRulesGroupOrder(data.rulesGroupOrder);
+  state.gardeRule = normalizeGardeRule(data.gardeRule);
   if (Array.isArray(data.staff) && data.staff.length > 0) {
     state.staff = data.staff;
   }
@@ -352,6 +379,10 @@ let state = {
   // isSpecialiteIgnoredForPerson() dans js/07-validation-rg.js, écran dans js/21-vue-regles.js).
   // { id, type: "ignoreSpecialite", staffIds: [...], statuses: [...], activityIds: [...] }
   globalRules: [],
+  // Règle de garde (10/08/2026) : composition attendue de garde (RG-015), un unique objet éditable
+  // -- pas un tableau comme state.rules, la garde n'a ni modalité ni créneau ni jour variable. Voir
+  // DEFAULT_GARDE_RULE plus haut et js/21-vue-regles.js (renderGardeRuleSection()).
+  gardeRule: { ...DEFAULT_GARDE_RULE },
   weekOffset: 0,
   // Ordre des colonnes de la vue Stats (24/07/2026, réordonnables par glisser-déposer des en-têtes,
   // voir renderStatsView()) -- "Personnel" n'en fait pas partie, toujours fixe en 1re position.
