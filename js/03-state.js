@@ -379,8 +379,8 @@ let state = {
   rulesGroupOrder: ACTIVITIES.map((a) => a.id),
   // Règles globales (10/08/2026) : transverses à toutes les modalités, distinctes de state.rules
   // (composition PAR modalité) -- 1er type : "ignoreSpecialite" (voir GLOBAL_RULE_STATUS_OPTIONS et
-  // isSpecialiteIgnoredForPerson() dans js/07-validation-rg.js, écran dans js/21-vue-regles.js).
-  // { id, type: "ignoreSpecialite", staffIds: [...], statuses: [...], activityIds: [...] }
+  // specialiteOverrideForPerson() dans js/07-validation-rg.js, écran dans js/21-vue-regles.js).
+  // { id, type: "ignoreSpecialite", staffIds: [...], statuses: [...], activityIds: [...], mode: "ignore"|"downgrade" }
   globalRules: [],
   // Règle de garde (10/08/2026) : composition attendue de garde (RG-015), un unique objet éditable
   // -- pas un tableau comme state.rules, la garde n'a ni modalité ni créneau ni jour variable. Voir

@@ -228,13 +228,18 @@ function renderRulesList(container) {
 
 // ---------- Règles globales (10/08/2026) ----------
 // Zone tout en haut de l'écran, transverse à toutes les modalités -- distincte de state.rules
-// (composition PAR modalité, ci-dessus). 1er type : "ignoreSpecialite" (RG-001 desactivée pour des
-// personnes/statuts ciblés, sur des modalités choisies -- voir isSpecialiteIgnoredForPerson() et
-// GLOBAL_RULE_STATUS_OPTIONS, js/07-validation-rg.js). 2e type (10/08/2026) : "excludePosting"
-// (RG-028, "Interdire de poster" -- pour des personnes/statuts choisis, sur des modalités/jours/
-// créneaux choisis, voir validateGlobalPostingExclusions()/isPostingExcludedAsViolation()).
+// (composition PAR modalité, ci-dessus). 1er type : "ignoreSpecialite" (RG-001, passe-droit de
+// spécialité pour des personnes/statuts ciblés, sur des modalités/jours/créneaux choisis -- voir
+// specialiteOverrideForPerson() et GLOBAL_RULE_STATUS_OPTIONS, js/07-validation-rg.js). Étendu le
+// 10/08/2026 (même journée) : `mode` "ignore" (comportement historique, RG-001 jamais vérifiée pour
+// la cible) ou "downgrade" ("passe-droit" -- le signal reste visible mais dégradé en recommandation
+// au lieu d'une violation), plus une granularité jour(s)/créneau(x) optionnelle (rétrocompatible :
+// une règle existante sans ces champs continue de s'appliquer à TOUT jour/créneau, comme avant leur
+// introduction). 2e type : "excludePosting" (RG-028, "Interdire de poster" -- pour des personnes/
+// statuts choisis, sur des modalités/jours/créneaux choisis, voir
+// validateGlobalPostingExclusions()/isPostingExcludedAsViolation()).
 const GLOBAL_RULE_TYPE_LABELS = {
-  ignoreSpecialite: "Ignorer la spécialité (RG-001)",
+  ignoreSpecialite: "Passe-droit de spécialité (RG-001)",
   excludePosting: "Interdire de poster (RG-028)",
 };
 
@@ -245,7 +250,9 @@ function generateGlobalRuleId() {
 // Texte résumé affiché dans la liste -- réutilisé aussi comme aperçu en direct dans le formulaire.
 // `allActivities`/`allStatuses` (10/08/2026) court-circuitent leur partie du texte respective --
 // "tout le monde" masque staffIds/statuses (redondants dès que allStatuses est coché). `allDays`/
-// `allCreneaux` (10/08/2026, "excludePosting" uniquement) suivent le même principe.
+// `allCreneaux` suivent le même principe, pour les deux types depuis le 10/08/2026 -- `!rule.days`/
+// `!rule.creneaux` (champ absent, pas juste vide) retombent sur "tous" pour rester rétrocompatibles
+// avec une règle "ignoreSpecialite" créée avant l'ajout de ces champs.
 function describeGlobalRule(rule) {
   let targetsText;
   if (rule.allStatuses) {
@@ -273,14 +280,15 @@ function describeGlobalRule(rule) {
       .map((a) => a.nom);
     activitiesText = activityNames.length > 0 ? activityNames.join(", ") : "aucune modalité choisie";
   }
+  const daysText = rule.allDays || !rule.days ? "tous les jours" : rule.days.join(", ") || "aucun jour choisi";
+  const creneauxText = rule.allCreneaux || !rule.creneaux ? "tous les créneaux" : rule.creneaux.map(creneauLabel).join(" + ") || "aucun créneau choisi";
   const typeLabel = GLOBAL_RULE_TYPE_LABELS[rule.type] || rule.type;
-  if (rule.type !== "excludePosting") {
-    return `${typeLabel} pour ${targetsText} — sur ${activitiesText}`;
+  if (rule.type === "excludePosting") {
+    const severityText = rule.severity === "violation" ? "Obligatoire" : "Facultative";
+    return `${typeLabel} (${severityText}) pour ${targetsText} — sur ${activitiesText}, ${daysText}, ${creneauxText}`;
   }
-  const daysText = rule.allDays ? "tous les jours" : (rule.days || []).join(", ") || "aucun jour choisi";
-  const creneauxText = rule.allCreneaux ? "tous les créneaux" : (rule.creneaux || []).map(creneauLabel).join(" + ") || "aucun créneau choisi";
-  const severityText = rule.severity === "violation" ? "Obligatoire" : "Facultative";
-  return `${typeLabel} (${severityText}) pour ${targetsText} — sur ${activitiesText}, ${daysText}, ${creneauxText}`;
+  const modeText = rule.mode === "downgrade" ? "dégradée en recommandation" : "ignorée complètement";
+  return `${typeLabel} (${modeText}) pour ${targetsText} — sur ${activitiesText}, ${daysText}, ${creneauxText}`;
 }
 
 function renderGlobalRulesList(container) {
@@ -349,6 +357,13 @@ function renderGlobalRuleForm(container, existingRule) {
           <option value="violation">Obligatoire (violation)</option>
         </select>
       </div>
+      <div class="form-row" id="globalRuleModeRow">
+        <label for="globalRuleMode">Mode</label>
+        <select id="globalRuleMode">
+          <option value="ignore">Ignorer complètement (RG-001 jamais vérifiée)</option>
+          <option value="downgrade">Passe-droit (visible en recommandation, jamais en violation)</option>
+        </select>
+      </div>
       <div class="form-row">
         <label>Modalité(s) concernée(s)</label>
         <div class="rule-checkbox-group">
@@ -397,6 +412,7 @@ function renderGlobalRuleForm(container, existingRule) {
 
   const typeSelect = document.getElementById("globalRuleType");
   const severitySelect = document.getElementById("globalRuleSeverity");
+  const modeSelect = document.getElementById("globalRuleMode");
   const allActivitiesCheckbox = document.getElementById("globalRuleAllActivities");
   const allDaysCheckbox = document.getElementById("globalRuleAllDays");
   const allCreneauxCheckbox = document.getElementById("globalRuleAllCreneaux");
@@ -410,14 +426,20 @@ function renderGlobalRuleForm(container, existingRule) {
   if (existingRule) {
     typeSelect.value = existingRule.type;
     severitySelect.value = existingRule.severity === "violation" ? "violation" : "recommendation";
+    modeSelect.value = existingRule.mode === "downgrade" ? "downgrade" : "ignore";
     activityCheckboxes.forEach((cb) => { cb.checked = (existingRule.activityIds || []).includes(cb.value); });
     dayCheckboxes.forEach((cb) => { cb.checked = (existingRule.days || []).includes(cb.value); });
     creneauCheckboxes.forEach((cb) => { cb.checked = (existingRule.creneaux || []).includes(cb.value); });
     statusCheckboxes.forEach((cb) => { cb.checked = (existingRule.statuses || []).includes(cb.value); });
     staffCheckboxes.forEach((cb) => { cb.checked = (existingRule.staffIds || []).includes(cb.value); });
     allActivitiesCheckbox.checked = !!existingRule.allActivities;
-    allDaysCheckbox.checked = !!existingRule.allDays;
-    allCreneauxCheckbox.checked = !!existingRule.allCreneaux;
+    // Rétrocompatibilité (10/08/2026) : une règle "ignoreSpecialite" créée avant l'ajout de la
+    // granularité jour/créneau n'a ni `days` ni `allDays` -- se comportait comme "tous les jours" en
+    // pratique (voir specialiteOverrideForPerson()), donc coche "Tous les jours"/"Tous les créneaux"
+    // par défaut à l'ouverture du formulaire plutôt que de laisser les deux décochés (ce qui
+    // suggérerait à tort "aucun jour" au lieu de "tous").
+    allDaysCheckbox.checked = existingRule.allDays !== undefined ? !!existingRule.allDays : !existingRule.days;
+    allCreneauxCheckbox.checked = existingRule.allCreneaux !== undefined ? !!existingRule.allCreneaux : !existingRule.creneaux;
     allStatusesCheckbox.checked = !!existingRule.allStatuses;
   }
 
@@ -456,14 +478,14 @@ function renderGlobalRuleForm(container, existingRule) {
   updateCreneauCheckboxesDisabled();
   updateStatusCheckboxesDisabled();
 
-  // Champs propres à "Interdire de poster" (Sévérité/Jours/Créneaux) -- masqués pour "Ignorer la
-  // Spé", qui n'a pas de notion de jour/créneau/sévérité (§4.15). Même patron que la visibilité
+  // Champs propres à un seul type -- Sévérité pour "Interdire de poster", Mode pour "Ignorer la
+  // Spé" (10/08/2026, "passe-droit"). Jours/Créneaux sont désormais communs aux deux types (avant
+  // le 10/08/2026, "Ignorer la Spé" n'avait pas cette granularité). Même patron que la visibilité
   // conditionnelle du créneau Astreinte dans renderRuleForm() (updateAstreinteVisibility()).
   const updateTypeSpecificVisibility = () => {
     const isExcludePosting = typeSelect.value === "excludePosting";
-    ["globalRuleSeverityRow", "globalRuleDaysRow", "globalRuleCreneauxRow"].forEach((id) => {
-      document.getElementById(id).style.display = isExcludePosting ? "block" : "none";
-    });
+    document.getElementById("globalRuleSeverityRow").style.display = isExcludePosting ? "block" : "none";
+    document.getElementById("globalRuleModeRow").style.display = isExcludePosting ? "none" : "block";
   };
 
   const updatePreview = () => {
@@ -471,6 +493,7 @@ function renderGlobalRuleForm(container, existingRule) {
     const draft = {
       type: typeSelect.value,
       severity: severitySelect.value,
+      mode: modeSelect.value,
       allActivities: allActivitiesCheckbox.checked,
       activityIds: activityCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value),
       allDays: allDaysCheckbox.checked,
@@ -485,6 +508,7 @@ function renderGlobalRuleForm(container, existingRule) {
   };
   typeSelect.addEventListener("change", () => { updateTypeSpecificVisibility(); updatePreview(); });
   severitySelect.addEventListener("change", updatePreview);
+  modeSelect.addEventListener("change", updatePreview);
   allActivitiesCheckbox.addEventListener("change", () => { updateActivityCheckboxesDisabled(); updatePreview(); });
   allDaysCheckbox.addEventListener("change", () => { updateDayCheckboxesDisabled(); updatePreview(); });
   allCreneauxCheckbox.addEventListener("change", () => { updateCreneauCheckboxesDisabled(); updatePreview(); });
@@ -505,24 +529,27 @@ function renderGlobalRuleForm(container, existingRule) {
     const allStatuses = allStatusesCheckbox.checked;
     const statuses = allStatuses ? [] : statusCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
     const staffIds = allStatuses ? [] : staffCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
+    const allDays = allDaysCheckbox.checked;
+    const days = allDays ? [] : dayCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
+    const allCreneaux = allCreneauxCheckbox.checked;
+    const creneaux = allCreneaux ? [] : creneauCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
 
     if (!allActivities && activityIds.length === 0) { errorEl.textContent = "Choisis au moins une modalité, ou coche \"Toutes les modalités\"."; return; }
     if (!allStatuses && statuses.length === 0 && staffIds.length === 0) { errorEl.textContent = "Choisis au moins une personne ou un statut, ou coche \"Tous les statuts\"."; return; }
+    if (!allDays && days.length === 0) { errorEl.textContent = "Choisis au moins un jour, ou coche \"Tous les jours\"."; return; }
+    if (!allCreneaux && creneaux.length === 0) { errorEl.textContent = "Choisis au moins un créneau, ou coche \"Tous les créneaux\"."; return; }
 
     let payload;
     if (type === "excludePosting") {
-      const allDays = allDaysCheckbox.checked;
-      const days = allDays ? [] : dayCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
-      const allCreneaux = allCreneauxCheckbox.checked;
-      const creneaux = allCreneaux ? [] : creneauCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
-      if (!allDays && days.length === 0) { errorEl.textContent = "Choisis au moins un jour, ou coche \"Tous les jours\"."; return; }
-      if (!allCreneaux && creneaux.length === 0) { errorEl.textContent = "Choisis au moins un créneau, ou coche \"Tous les créneaux\"."; return; }
       payload = {
         type, allActivities, activityIds, allDays, days, allCreneaux, creneaux, allStatuses, statuses, staffIds,
         severity: severitySelect.value,
       };
     } else {
-      payload = { type: "ignoreSpecialite", allActivities, activityIds, allStatuses, statuses, staffIds };
+      payload = {
+        type: "ignoreSpecialite", allActivities, activityIds, allDays, days, allCreneaux, creneaux, allStatuses, statuses, staffIds,
+        mode: modeSelect.value,
+      };
     }
 
     if (existingRule) {

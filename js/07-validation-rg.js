@@ -160,21 +160,34 @@ function personMatchesAnyGlobalRuleStatus(person, statusIds) {
   });
 }
 
-// RG-001 : la spécialité n'est jamais vérifiée pour une personne/un statut couvert par une règle
-// globale "ignoreSpecialite" active sur cette modalité précise (portée "Par modalité", demande
-// explicite de Samir plutôt qu'un blanket "partout"). `staffIds` et `statuses` se combinent en OR
-// (une personne nommée directement ignore la spé même si aucun statut ne la couvre, et vice-versa).
-// `allActivities`/`allStatuses` (10/08/2026) : cases "Toutes les modalités"/"Tous les statuts" dans
-// le formulaire -- des sentinelles qui court-circuitent la comparaison plutôt que d'énumérer chaque
-// id, pour qu'une modalité ajoutée plus tard soit automatiquement couverte sans revenir éditer la
-// règle. Champs optionnels sur un item d'un tableau déjà persisté (comme person.cca en son temps) --
-// absents sur une règle existante = `undefined`, falsy, donc aucun comportement changé pour elles.
-function isSpecialiteIgnoredForPerson(person, activityId) {
-  return state.globalRules.some((gr) =>
-    gr.type === "ignoreSpecialite" &&
-    (gr.allActivities || gr.activityIds.includes(activityId)) &&
-    (gr.allStatuses || (gr.staffIds || []).includes(person.id) || personMatchesAnyGlobalRuleStatus(person, gr.statuses))
-  );
+// RG-001 : passe-droit de spécialité -- une règle globale "ignoreSpecialite" active pour cette
+// personne/ce statut, sur cette modalité/ce jour/ce créneau précis (portée "Par modalité", demande
+// explicite de Samir plutôt qu'un blanket "partout"), renvoie soit `"ignore"` (comportement
+// historique -- RG-001 jamais vérifiée pour la cible, ni violation ni recommandation), soit
+// `"downgrade"` (10/08/2026, "cheat code"/"passe-droit" : le signal reste visible mais dégradé en
+// recommandation au lieu d'une violation -- mots de Samir : "j'autorise Victoria à faire de l'Uro...
+// tu mets juste une recommandation pas une violation"), soit `null` si aucune règle ne s'applique.
+// `staffIds`/`statuses` se combinent en OR (une personne nommée directement est couverte même si
+// aucun statut ne la couvre, et vice-versa) -- `allActivities`/`allStatuses`/`allDays`/`allCreneaux`
+// sont des sentinelles "tous" plutôt qu'une énumération, pour qu'une modalité/un jour/un créneau
+// ajouté plus tard soit automatiquement couvert sans revenir éditer la règle.
+// `days`/`creneaux`/`allDays`/`allCreneaux`/`mode` (10/08/2026) sont optionnels -- une règle créée
+// AVANT leur introduction n'a ni les uns ni l'autre (`undefined`) : `!gr.days`/`!gr.creneaux`
+// retombent alors sur "tous les jours/créneaux" (comportement historique, cette règle s'appliquait
+// déjà sans notion de jour/créneau), et `gr.mode` absent retombe sur `"ignore"` (comportement
+// historique aussi, seul mode qui existait avant le passe-droit). Si plusieurs règles se
+// chevauchent pour la même case, "ignore" gagne toujours sur "downgrade" (le passe-droit le plus
+// fort l'emporte, jamais un mélange incohérent des deux).
+function specialiteOverrideForPerson(person, activityId, day, creneauId) {
+  const matches = state.globalRules.filter((gr) => {
+    if (gr.type !== "ignoreSpecialite") return false;
+    if (!(gr.allActivities || gr.activityIds.includes(activityId))) return false;
+    if (!(gr.allDays || !gr.days || gr.days.includes(day))) return false;
+    if (!(gr.allCreneaux || !gr.creneaux || gr.creneaux.includes(creneauId))) return false;
+    return gr.allStatuses || (gr.staffIds || []).includes(person.id) || personMatchesAnyGlobalRuleStatus(person, gr.statuses);
+  });
+  if (matches.length === 0) return null;
+  return matches.some((gr) => (gr.mode || "ignore") === "ignore") ? "ignore" : "downgrade";
 }
 
 // RG-028 (10/08/2026, 2e type de règle globale) : "Interdire de poster" -- pour des personnes/
@@ -266,7 +279,11 @@ function personSatisfiesSpecialite(person, vacSpec) {
 function hasSpecialiteMismatch(person, activityId, day, creneauId, weekKeyPart) {
   const rule = resolveCompositionRule(activityId, day, creneauId);
   if (!rule || !rule.requireSpecialite) return false;
-  if (isSpecialiteIgnoredForPerson(person, activityId)) return false; // règle globale (10/08/2026)
+  // Passe-droit (10/08/2026) : "ignore" ET "downgrade" suppriment tous les deux le contour rouge --
+  // seul un "downgrade" reste visible, mais uniquement comme recommandation dans la zone de
+  // validation (voir la boucle RG-001 de validateCompositionRules() plus bas), jamais sur la
+  // pastille (même principe que RG-028 en sévérité "Facultative", qui ne touche jamais le contour).
+  if (specialiteOverrideForPerson(person, activityId, day, creneauId)) return false;
   const vacSpec = effectiveVacationSpecialiteForWeek(activityId, day, creneauId, weekKeyPart);
   if (!vacSpec) return false;
   return !personSatisfiesSpecialite(person, vacSpec);
@@ -303,17 +320,22 @@ function validateCompositionRules() {
         checkComposition(present, rule, rule.rg, label, violations, recommendations);
 
         // Spécialité (RG-001) : une violation par personne présente qui ne correspond pas, jamais une
-        // seule ligne pour toute la case (voir hasSpecialiteMismatch()).
+        // seule ligne pour toute la case (voir hasSpecialiteMismatch()). Passe-droit (10/08/2026) :
+        // "ignore" supprime le signal complètement (comportement historique) ; "downgrade" le garde
+        // visible mais en recommandation plutôt qu'en violation -- jamais les deux à la fois pour la
+        // même personne.
         if (rule.requireSpecialite) {
           const vacSpec = effectiveVacationSpecialite(activityId, day, creneau.id);
           if (vacSpec) {
             present.forEach((person) => {
-              if (isSpecialiteIgnoredForPerson(person, activityId)) return; // règle globale (10/08/2026)
-              if (!personSatisfiesSpecialite(person, vacSpec)) { // "cheat code" compétence (10/08/2026)
-                violations.push({
-                  rg: rule.rg,
-                  message: `${label} : ${person.prenom} ${person.nom} n'a pas la spécialité de cette vacation (${SPECIALITES[vacSpec].label}).`,
-                });
+              if (personSatisfiesSpecialite(person, vacSpec)) return; // "cheat code" compétence (10/08/2026)
+              const override = specialiteOverrideForPerson(person, activityId, day, creneau.id);
+              if (override === "ignore") return;
+              const message = `${label} : ${person.prenom} ${person.nom} n'a pas la spécialité de cette vacation (${SPECIALITES[vacSpec].label}).`;
+              if (override === "downgrade") {
+                recommendations.push({ rg: rule.rg, message });
+              } else {
+                violations.push({ rg: rule.rg, message });
               }
             });
           }
