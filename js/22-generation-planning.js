@@ -13,6 +13,11 @@
 //   quelqu'un à la main n'est jamais vidée/remplacée) -- seuls les trous (case encore purement issue
 //   de la trame, ou déjà matérialisée mais sous le minimum) sont comblés. Repartir d'un planning vide
 //   (voir la conversation avec Samir, fichier de test anonymisé) est le cas d'usage prévu.
+//   ⚠️ PROVISOIREMENT DÉSACTIVÉ le 11/08/2026 (voir GENERATION_RESET_TO_TRAME_FIRST juste plus bas) :
+//   tant que les règles changent souvent, chaque génération repart entièrement de la trame plutôt que
+//   de ne combler que les trous -- sinon une case déjà remplie par un ancien run/une ancienne règle
+//   masquerait l'effet réel d'un changement de règle en cours de test. À remettre à `false` une fois
+//   les règles stabilisées (mots de Samir : "tant que c'est pas stable on va faire ça").
 // - Une semaine verrouillée (RG-022) n'est jamais touchée, comme partout ailleurs dans l'appli.
 // - Équité (demande de Samir, 11/08/2026) : NORMALISÉE par la disponibilité réelle sur toute la plage
 //   générée ("un mi-temps doit avoir moitié moins de tout qu'un temps plein") -- ratio
@@ -61,6 +66,36 @@ const GENERATION_CRENEAUX_EQUITE = ["matin", "apres-midi"];
 // Les seules activités que ce générateur touche : celles qui ont au moins une règle de composition.
 function generationActivityIds() {
   return [...new Set(state.rules.map((r) => r.activityId))];
+}
+
+// ⚠️ PROVISOIRE (11/08/2026, demande de Samir : "pour l'instant et pour les tests... tant que c'est
+// pas stable on va faire ça") : `true` fait repartir CHAQUE génération entièrement de la trame plutôt
+// que de ne combler que les trous -- contredit volontairement le principe normal "ne touche jamais une
+// case déjà matérialisée" (voir le commentaire d'en-tête du fichier), le temps que les règles de
+// composition finissent de bouger. Repasser à `false` une fois stabilisé pour retrouver le
+// comportement définitif (respecte les affectations déjà posées, générateur ou main). Le texte de
+// confirmation du bouton (tout en bas du fichier) s'adapte automatiquement à ce flag.
+const GENERATION_RESET_TO_TRAME_FIRST = true;
+
+// Vide state.assignments pour toutes les cases gérées par ce générateur (voir generationActivityIds())
+// sur la plage ciblée -- chaque case retombe sur sa trame (RG-017/RG-023), comme si elle n'avait
+// jamais été touchée, avant que runGeneration() ne recommence un remplissage complet. Ne touche à rien
+// en dehors du périmètre du générateur (Bureau/Off/Hors-sisu/fermetures intacts) ; une semaine
+// verrouillée n'est jamais vidée, comme partout ailleurs.
+function clearGenerationManagedRange(weekOffsets) {
+  const activityIds = generationActivityIds();
+  weekOffsets.forEach((offset) => {
+    const wk = weekKey(getMonday(offset));
+    if (isWeekLocked(wk)) return;
+    DAYS.forEach((day) => {
+      CRENEAUX.forEach((creneau) => {
+        activityIds.forEach((activityId) => {
+          if (!isCreneauApplicable(activityId, creneau.id)) return;
+          delete state.assignments[`${wk}|${activityId}|${day}|${creneau.id}`];
+        });
+      });
+    });
+  });
 }
 
 // Convertit une weekKey (lundi, "YYYY-MM-DD") en offset relatif à la semaine réelle actuelle --
@@ -319,6 +354,10 @@ function runGeneration(startWeekKeyPart, numWeeks) {
   const weekOffsets = Array.from({ length: numWeeks }, (_, i) => startOffset + i);
   const activityIds = generationActivityIds();
 
+  if (GENERATION_RESET_TO_TRAME_FIRST) {
+    clearGenerationManagedRange(weekOffsets);
+  }
+
   const capacity = computeGenerationCapacity(weekOffsets);
   const load = computeGenerationBaselineLoad(weekOffsets);
 
@@ -386,9 +425,12 @@ document.getElementById("btnGenerate").addEventListener("click", () => {
     return;
   }
   const weekWord = numWeeks > 1 ? "semaines" : "semaine";
+  const behaviorText = GENERATION_RESET_TO_TRAME_FIRST
+    ? "MODE TEST : les affectations déjà posées sur ces semaines (générées ou à la main), pour les vacations gérées par le générateur, seront d'abord effacées puis entièrement refaites depuis la trame."
+    : "Les cases déjà remplies à la main ne sont pas touchées, seuls les trous sont comblés.";
   if (
     !confirm(
-      `Générer automatiquement ${numWeeks} ${weekWord} à partir de la semaine actuelle ?\n\nLes cases déjà remplies à la main ne sont pas touchées, seuls les trous sont comblés. Les semaines verrouillées sont ignorées.`
+      `Générer automatiquement ${numWeeks} ${weekWord} à partir de la semaine actuelle ?\n\n${behaviorText} Les semaines verrouillées sont ignorées.`
     )
   )
     return;
