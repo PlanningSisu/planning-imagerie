@@ -220,6 +220,7 @@ function personMatchesAnyGlobalRuleStatus(person, statusIds) {
 function specialiteOverrideForPerson(person, activityId, day, creneauId) {
   const matches = state.globalRules.filter((gr) => {
     if (gr.type !== "ignoreSpecialite") return false;
+    if (gr.enabled === false) return false; // désactivée (11/08/2026, voir renderGlobalRulesList()) -- traitée comme absente, sans la supprimer.
     if (!(gr.allActivities || gr.activityIds.includes(activityId))) return false;
     if (!(gr.allDays || !gr.days || gr.days.includes(day))) return false;
     if (!(gr.allCreneaux || !gr.creneaux || gr.creneaux.includes(creneauId))) return false;
@@ -233,15 +234,16 @@ function specialiteOverrideForPerson(person, activityId, day, creneauId) {
 // statuts choisis, sur des modalités/jours/créneaux choisis, être posté(e) est signalé comme une
 // contradiction. Contrairement à "ignoreSpecialite" (qui court-circuite une vérification existante),
 // celle-ci EST la vérification -- jamais bloquant, jamais auto-corrigé (confirmé par Samir, même
-// famille que RG-021/RG-027), sévérité réglable PAR RÈGLE (`severity`: "recommendation"|"violation")
-// plutôt qu'un simple on/off comme RG-027 : une règle globale qu'on ne veut plus vérifier se
-// supprime directement (pas de 3e état "désactivée" ici, contrairement à `astreinteExclusivityMode`
-// qui vit sur une règle structurelle qu'on ne supprime jamais).
+// famille que RG-021/RG-027), sévérité réglable PAR RÈGLE (`severity`: "recommendation"|"violation").
+// `enabled` (11/08/2026, demande de Samir : "activer/désactiver sans supprimer") : `false` explicite
+// = règle ignorée sans être supprimée (voir renderGlobalRulesList()) -- absent/`true` = active,
+// comportement historique pour toute règle créée avant ce champ.
 // `days`/`creneaux`/`allDays`/`allCreneaux` : même patron que `activityIds`/`allActivities` --
 // sentinelles "tous" plutôt qu'une énumération, pour qu'un jour/créneau ne soit jamais oublié.
 function isPostingExcludedAsViolation(person, activityId, day, creneauId) {
   return state.globalRules.some((gr) =>
     gr.type === "excludePosting" &&
+    gr.enabled !== false && // désactivée (11/08/2026) -- traitée comme absente, sans la supprimer.
     gr.severity === "violation" &&
     (gr.allActivities || gr.activityIds.includes(activityId)) &&
     (gr.allDays || gr.days.includes(day)) &&
@@ -261,6 +263,7 @@ function validateGlobalPostingExclusions() {
 
   state.globalRules.forEach((gr) => {
     if (gr.type !== "excludePosting") return;
+    if (gr.enabled === false) return; // désactivée (11/08/2026) -- traitée comme absente, sans la supprimer.
     const activityIds = gr.allActivities ? state.activities.map((a) => a.id) : gr.activityIds;
     const days = gr.allDays ? DAYS : gr.days;
     const creneauIds = gr.allCreneaux ? CRENEAUX.map((c) => c.id) : gr.creneaux;

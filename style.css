@@ -2080,6 +2080,9 @@ tr.group-end td {
    réordonnables (.stats-table thead th.dragging/.drag-over, §6.24), juste appliqué à une ligne. */
 .rules-row[draggable="true"] { cursor: grab; }
 .rules-row.dragging { opacity: 0.4; }
+/* Règle globale désactivée sans être supprimée (11/08/2026, demande de Samir) -- même dimming que
+   .dragging ci-dessus pour rester cohérent avec le reste de l'écran "Règles". */
+.rules-row.rules-row-disabled { opacity: 0.5; }
 .rules-row.drag-over {
   background: #dbeafe;
   outline: 2px dashed #3b82f6;

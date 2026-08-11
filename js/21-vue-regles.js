@@ -395,15 +395,29 @@ function renderGlobalRulesList(container) {
     return;
   }
   state.globalRules.forEach((rule) => {
+    const enabled = rule.enabled !== false; // absent/true = active (comportement historique)
     const row = document.createElement("div");
-    row.className = "rules-row";
+    row.className = "rules-row" + (enabled ? "" : " rules-row-disabled");
     const desc = document.createElement("div");
     desc.className = "rules-row-desc";
-    desc.textContent = describeGlobalRule(rule);
+    desc.textContent = (enabled ? "" : "[Désactivée] ") + describeGlobalRule(rule);
     row.appendChild(desc);
 
     const actions = document.createElement("div");
     actions.className = "rules-row-actions";
+    // Activer/Désactiver (11/08/2026, demande de Samir : "sans avoir besoin de les supprimer") --
+    // bascule `rule.enabled`, consommé par specialiteOverrideForPerson()/isPostingExcludedAsViolation()/
+    // validateGlobalPostingExclusions() (js/07-validation-rg.js), qui traitent une règle désactivée
+    // comme absente sans jamais la retirer de state.globalRules.
+    const toggleBtn = document.createElement("button");
+    toggleBtn.type = "button";
+    toggleBtn.className = "staff-modal-edit";
+    toggleBtn.textContent = enabled ? "Désactiver" : "Activer";
+    toggleBtn.addEventListener("click", () => {
+      rule.enabled = !enabled;
+      saveState();
+      render();
+    });
     const editBtn = document.createElement("button");
     editBtn.type = "button";
     editBtn.className = "staff-modal-edit";
@@ -419,7 +433,7 @@ function renderGlobalRulesList(container) {
       saveState();
       render();
     });
-    actions.append(editBtn, delBtn);
+    actions.append(toggleBtn, editBtn, delBtn);
     row.appendChild(actions);
 
     container.appendChild(row);
