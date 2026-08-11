@@ -280,6 +280,22 @@ function propagateTrameAdditionToTouchedWeeks(activityId, day, creneauId, staffI
   return addedCount;
 }
 
+// Repère visuel "cette case ne suit plus sa trame cette semaine" (11/08/2026, générateur de planning
+// automatique -- voir js/22-generation-planning.js) : purement DÉRIVÉ, aucun nouvel état persisté --
+// compare ce que la trame aurait posé ici (filtré des absences, comme effectiveAssignedIds()) à ce
+// qui y est réellement pour la semaine affichée. Ne dit rien de QUI a fait le changement (le
+// générateur ou une main humaine) ni POURQUOI -- juste "ça diverge du gabarit", ce qui reste vrai
+// même après un rechargement/une resynchro GitHub, sans jamais pouvoir devenir périmé. Vide si la
+// case n'a jamais été touchée (elle EST alors la trame, par définition d'effectiveAssignedIds()).
+function trameDeviationMissingIds(key) {
+  if (!Object.prototype.hasOwnProperty.call(state.assignments, key)) return [];
+  const [, day, creneauId] = trameKeyFromCellKey(key).split("|");
+  const iso = weekIsoDates(getMonday(state.weekOffset))[DAYS.indexOf(day)];
+  const baseline = filterAbsentFromTrame(state.trame[trameKeyFromCellKey(key)] || [], iso, creneauId);
+  const actual = state.assignments[key];
+  return baseline.filter((id) => !actual.includes(id));
+}
+
 // Resynchronisation manuelle (26/07/2026, ⚙ → "Resynchroniser la trame") : applique
 // rétroactivement propagateTrameAdditionToTouchedWeeks() à TOUTE la trame déjà saisie -- rattrape
 // les ajouts faits AVANT que cette propagation n'existe (une trame remplie plus tôt n'a jamais pu

@@ -1042,6 +1042,22 @@ tr.group-end td {
   color: #1e293b;
 }
 
+/* Générateur de planning auto (11/08/2026, voir js/22-generation-planning.js et
+   trameDeviationMissingIds()) : petit repère orange en coin de case -- "cette case ne suit plus sa
+   trame cette semaine" (quelqu'un que la trame y aurait mis a été déplacé ailleurs), qu'il vienne du
+   générateur ou d'une main humaine. Position absolue comme .modalite-spec-label, coin opposé pour ne
+   jamais se superposer au libellé "Os". */
+.trame-deviation-mark {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #f59e0b;
+  border: 1px solid #b45309;
+}
+
 /* RG-011 : vacation "Os" non assignable (comportement identique à .cell-closed niveau interaction,
    mais sans la croix -- le libellé "Os" suffit à signaler pourquoi). */
 .slot-cell.cell-os-blocked {

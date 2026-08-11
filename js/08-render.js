@@ -691,6 +691,19 @@ function buildModaliteCell(activity, day, creneau) {
       td.appendChild(badge);
     }
 
+    // Générateur de planning auto (11/08/2026, voir js/22-generation-planning.js) : cercle orange si
+    // cette case, une fois matérialisée pour la semaine affichée, ne contient plus tout le monde que
+    // la trame y aurait mis (un déplacement -- généré ou manuel, peu importe -- a fait bouger
+    // quelqu'un). Purement dérivé, voir trameDeviationMissingIds().
+    const missingFromTrame = !locked ? trameDeviationMissingIds(key) : [];
+    if (missingFromTrame.length > 0) {
+      const mark = document.createElement("span");
+      mark.className = "trame-deviation-mark";
+      const names = missingFromTrame.map(staffById).filter(Boolean).map((p) => `${p.prenom} ${p.nom}`);
+      mark.title = `Diffère de la trame : ${names.join(", ")} normalement ici cette semaine, déplacé(e)(s) ailleurs.`;
+      td.appendChild(mark);
+    }
+
     if (assigned.length === 0) {
       if (!osBlocked) {
         const hint = document.createElement("span");
