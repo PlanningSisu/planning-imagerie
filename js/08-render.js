@@ -729,15 +729,21 @@ function buildModaliteCell(activity, day, creneau) {
     }
 
     // Composition insuffisante (11/08/2026, demande de Samir) : entoure toute la CASE en rouge si elle
-    // a moins de séniors/internes PRÉSENTS que sa règle l'exige (voir hasCompositionShortfall(),
+    // a moins de séniors/internes PRÉSENTS que sa règle l'exige (voir compositionShortfallMessage(),
     // js/07-validation-rg.js -- même calcul, filtré des absents, que la zone de validation en dessous
     // du planning) -- s'applique aussi bien à une case vide qu'à une case partiellement remplie.
+    // Infobulle (même jour, demande de Samir : "il me faudrait une infobulle... 'un sénior manquant'")
+    // avec le texte exact du manque, pour ne pas avoir à rouvrir la zone de validation pour le savoir.
     // Distinct du contour PERSONNE (chip, voir buildAssignedChip()) : "quand c'est juste la personne
     // qui pose problème, tu l'entoures elle, mais pas la case" -- absence/Temps Partiel/exclusivité/
     // spécialité/RG-028 n'entourent donc plus jamais la case elle-même (retiré ce jour, seul le signal
     // par pastille reste pour ces cas-là).
-    if (!locked && hasCompositionShortfall(activity.id, day, creneau.id)) {
-      td.classList.add("cell-composition-violation");
+    if (!locked) {
+      const shortfallMessage = compositionShortfallMessage(activity.id, day, creneau.id);
+      if (shortfallMessage) {
+        td.classList.add("cell-composition-violation");
+        td.title = shortfallMessage;
+      }
     }
 
     if (locked) {

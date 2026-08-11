@@ -135,29 +135,34 @@ function resolveCompositionRule(activityId, day, creneauId) {
 }
 
 // Repère visuel CASE (11/08/2026, demande de Samir : "si une case ne contient pas assez d'interne/
-// sénior, tu entoures en rouge [toute la case]") : cette case a-t-elle moins de séniors/internes
-// PRÉSENTS que ce que sa règle exige ? Même calcul que checkComposition() (filtré des absents, RG-014
-// -- une personne absente ne compte plus vers le minimum) mais réduit à un simple booléen, sans texte
-// ni recommandation à produire -- consommé uniquement par buildModaliteCell() pour poser
-// `.cell-composition-violation`. Rien à signaler si la case n'a pas de règle, est fermée (RG-010) ou
-// Os (RG-011) -- mêmes exclusions que validateCompositionRules()/le reste du moteur.
-function hasCompositionShortfall(activityId, day, creneauId) {
+// sénior, tu entoures en rouge [toute la case]", puis "il me faudrait une infobulle... 'un sénior
+// manquant'") : cette case a-t-elle moins de séniors/internes PRÉSENTS que ce que sa règle exige, et
+// si oui, quel texte l'expliquer ? Même calcul que checkComposition() (filtré des absents, RG-014 --
+// une personne absente ne compte plus vers le minimum), réduit à un texte court plutôt qu'une entrée
+// de violations[]/recommendations[] -- consommé uniquement par buildModaliteCell() pour poser
+// `.cell-composition-violation` + le `title` de la case. `null` s'il n'y a rien à signaler (pas de
+// règle, case fermée RG-010, ou Os RG-011 -- mêmes exclusions que validateCompositionRules()/le reste
+// du moteur) ou si la composition est déjà satisfaite.
+function compositionShortfallMessage(activityId, day, creneauId) {
   const rule = resolveCompositionRule(activityId, day, creneauId);
-  if (!rule) return false;
+  if (!rule) return null;
   const key = cellKey(activityId, day, creneauId);
-  if (state.fermetures[key]) return false;
+  if (state.fermetures[key]) return null;
   const activity = state.activities.find((a) => a.id === activityId);
   const creneau = CRENEAUX.find((c) => c.id === creneauId);
-  if (!activity || isVacationCellOs(activity, day, creneau)) return false;
+  if (!activity || isVacationCellOs(activity, day, creneau)) return null;
   const present = effectiveAssignedIds(key)
     .map(staffById)
     .filter(Boolean)
     .filter((p) => !isPersonAbsentOnSlot(p.id, day, creneauId));
   const nbSeniors = present.filter((p) => p.grade === "senior").length;
   const nbInternes = present.filter((p) => p.grade !== "senior").length;
-  if (nbSeniors < rule.seniorMin) return true;
-  if (rule.interneMin !== null && nbInternes < rule.interneMin) return true;
-  return false;
+  const seniorShort = Math.max(0, rule.seniorMin - nbSeniors);
+  const interneShort = rule.interneMin !== null ? Math.max(0, rule.interneMin - nbInternes) : 0;
+  if (seniorShort === 0 && interneShort === 0) return null;
+  const seniorPart = seniorShort > 0 ? `${plural(seniorShort, "sénior")} manquant${seniorShort > 1 ? "s" : ""}` : null;
+  const internePart = interneShort > 0 ? `${plural(interneShort, "interne")} manquant${interneShort > 1 ? "s" : ""}` : null;
+  return [seniorPart, internePart].filter(Boolean).join(" et ");
 }
 
 // ---------- Règles globales (10/08/2026) ----------
