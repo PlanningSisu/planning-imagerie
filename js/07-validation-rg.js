@@ -60,7 +60,15 @@ function checkComposition(assigned, comp, rg, label, violations, recommendations
     const found = foundSeniorPart && foundInternePart ? `${foundSeniorPart} + ${foundInternePart}` : foundSeniorPart || foundInternePart;
     const totalMin = (mentionSenior ? comp.seniorMin : 0) + (comp.interneMin || 0);
     const attendu = totalMin > 1 ? "attendus" : "attendu";
-    violations.push({ rg, message: `${label} : ${expected} ${attendu}, trouvé ${found}.` });
+    // `severity` (11/08/2026, demande de Samir : "aucun sénior dans une vacation ça doit remonter
+    // très haut") : nombre total de personnes manquantes (séniors + internes, substitution RG-008
+    // déjà appliquée) -- 0 sénior sur 2 exigés (severity 2) doit apparaître AVANT 1 manquant sur 2
+    // (severity 1) dans la zone de validation, voir le tri dans runValidation(). Les autres types de
+    // violation (absence, exclusivité, spécialité, RG-028...) n'ont pas cette notion de magnitude et
+    // restent sans `severity` explicite -- traités comme la plus basse priorité au tri (voir plus bas).
+    const seniorMissing = Math.max(0, comp.seniorMin - nbSeniors);
+    const interneMissing = comp.interneMin !== null ? Math.max(0, comp.interneMin - (nbInternes + substitutable)) : 0;
+    violations.push({ rg, message: `${label} : ${expected} ${attendu}, trouvé ${found}.`, severity: seniorMissing + interneMissing });
   }
 
   if (substitutable > 0) {
@@ -577,10 +585,16 @@ function validateGardes() {
 }
 
 // Point d'entrée unique du moteur : ajouter ici l'appel de toute nouvelle fonction validateXxx().
+// Violations triées par `severity` décroissante (11/08/2026, demande de Samir) -- une case à 0
+// sénior sur 2 exigés doit remonter avant une case à 1 manquant sur 2. Tri STABLE (comportement
+// standard de Array.prototype.sort dans tous les navigateurs ciblés) : à `severity` égale (y compris
+// les violations sans magnitude -- absence/exclusivité/spécialité/RG-028, `severity` absente = traitée
+// comme 0), l'ordre relatif d'origine (regroupé par RG) est conservé, pas de mélange arbitraire.
 function runValidation() {
   const results = [validateCompositionRules(), validateAbsences(), validateGardes(), validateActivityExclusivity(), validateAstreinteExclusivity(), validateGlobalPostingExclusions(), validateFixedFamilyRules()];
+  const violations = results.flatMap((r) => r.violations).sort((a, b) => (b.severity || 0) - (a.severity || 0));
   return {
-    violations: results.flatMap((r) => r.violations),
+    violations,
     recommendations: results.flatMap((r) => r.recommendations),
   };
 }
