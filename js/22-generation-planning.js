@@ -337,12 +337,29 @@ function runGeneration(startWeekKeyPart, numWeeks) {
     // Jour puis créneau puis activité (comme validateActivityExclusivity()) -- pour que deux
     // activités différentes du même jour+créneau se voient correctement l'une l'autre (exclusivité
     // RG-021) au fil du remplissage, pas seulement une fois tout fini.
+    //
+    // ⚠️ 11/08/2026 (retour de Samir sur un cas réel) : à l'intérieur d'un même jour+créneau, les
+    // activités À SPÉCIALITÉ EXIGÉE (`requireSpecialite: true`, ex. Scan B) sont désormais traitées
+    // AVANT celles qui n'en ont pas (ex. Scan U) -- avant ce correctif, l'ordre était juste celui de
+    // state.rules (Scan U toujours en premier), ce qui pouvait "dépenser" un sénior d'une spécialité
+    // rare (ex. Sarah Montagne, Uro) sur Scan U (n'importe quel sénior convient) alors que Scan B,
+    // traité ensuite, en avait justement besoin et ne trouvait plus personne -- observé en vrai :
+    // Montagne posée sur Scan U pendant que Scan B restait à 1 sénior au lieu de 2, alors qu'Amine
+    // Ayed (Digestif, dispo, sans contrainte de spécialité pour Scan U) aurait très bien pu couvrir
+    // Scan U à sa place. Réserver d'abord les cases qui EXIGENT une spécialité précise, avant de
+    // "dépenser" qui que ce soit sur une case qui accepte tout le monde, résout ce cas précis sans
+    // avoir besoin de modéliser une vraie notion de "rareté" par spécialité (portée limitée, comme le
+    // reste de cette 1re itération -- deux activités à spécialité exigée en concurrence pour le même
+    // profil restent départagées par leur ordre dans state.rules, pas encore par leur propre rareté).
     DAYS.forEach((day) => {
       CRENEAUX.forEach((creneau) => {
-        activityIds.forEach((activityId) => {
-          if (!isCreneauApplicable(activityId, creneau.id)) return;
-          const rule = resolveCompositionRule(activityId, day, creneau.id);
-          if (!rule) return;
+        const cellsToFill = activityIds
+          .filter((activityId) => isCreneauApplicable(activityId, creneau.id))
+          .map((activityId) => ({ activityId, rule: resolveCompositionRule(activityId, day, creneau.id) }))
+          .filter(({ rule }) => rule)
+          .sort((a, b) => (b.rule.requireSpecialite === true ? 1 : 0) - (a.rule.requireSpecialite === true ? 1 : 0));
+
+        cellsToFill.forEach(({ activityId, rule }) => {
           const key = cellKey(activityId, day, creneau.id);
           if (state.fermetures[key]) return;
           const activity = state.activities.find((a) => a.id === activityId);
