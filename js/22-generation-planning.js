@@ -115,27 +115,32 @@ function isGenerationCandidateHardBlocked(person, activityId, day, creneauId) {
   return isPostingExcludedAsViolation(person, activityId, day, creneauId) || violatesAstreinteExclusivityHard(person.id, activityId, day, creneauId);
 }
 
-// Rang de préférence spécialité pour cette personne sur cette case (0 = meilleur, `null` = jamais
-// choisie). RG-001 "cheat code" (compétence) et les passe-droits (RG-026, ignore/downgrade) sont tous
-// acceptés au même rang que la vraie spécialité -- Samir n'a jamais dit vouloir privilégier une vraie
-// spécialité à un passe-droit qu'il a lui-même posé exprès ("j'autorise Victoria à faire de l'Uro"),
-// donc pas de hiérarchie artificielle entre les deux ici. Seul le cas "aucune spécialité ET aucun
-// passe-droit" est un rang à part (1, moins bon que 0) -- toléré UNIQUEMENT s'il n'y a vraiment
-// personne de mieux (voir pickGenerationCandidate()), jamais choisi si un candidat de rang 0 existe.
-function generationSpecialiteTier(person, activityId, day, creneauId, vacSpec) {
-  if (!vacSpec) return 0;
-  if (personSatisfiesSpecialite(person, vacSpec)) return 0;
+// Ce candidat respecte-t-il la spécialité/compétence attendue par cette case ? RG-001 "cheat code"
+// (compétence) et les passe-droits (RG-026, ignore/downgrade) sont tous acceptés au même titre que la
+// vraie spécialité -- Samir n'a jamais dit vouloir privilégier une vraie spécialité à un passe-droit
+// qu'il a lui-même posé exprès ("j'autorise Victoria à faire de l'Uro"). `vacSpec` falsy (aucune
+// spécialité propriétaire attendue POUR CE CANDIDAT -- voir fillGenerationCell(), qui décide selon le
+// grade) : toujours vrai.
+// ⚠️ CORRECTION 11/08/2026 (retour de Samir : "pour les séniors, il faut absolument respecter la
+// spé/compétence") : jusque-là cette fonction renvoyait un simple RANG (0 = bon, 1 = mismatch) que
+// pickGenerationCandidate() ne faisait que DÉPRIORISER -- un sénior sans la bonne spécialité restait
+// choisissable s'il était le seul disponible, malgré le commentaire d'origine qui prétendait le
+// contraire (bug réel, pas juste une préférence à durcir). Renvoie maintenant un booléen dur : jamais
+// de compromis, pour aucun grade -- un trou visible vaut mieux qu'une composition qui a l'air bonne
+// sans respecter la spécialité.
+function generationCandidateMatchesSpecialite(person, activityId, day, creneauId, vacSpec) {
+  if (!vacSpec) return true;
+  if (personSatisfiesSpecialite(person, vacSpec)) return true;
   const override = specialiteOverrideForPerson(person, activityId, day, creneauId);
-  if (override === "ignore" || override === "downgrade") return 0;
-  return 1;
+  return override === "ignore" || override === "downgrade";
 }
 
-// Meilleur candidat DISPONIBLE (pas déjà posté ailleurs ce créneau) pour ce trou précis -- rang
-// spécialité d'abord, puis équité (ratio charge/disponibilité le plus bas) à rang égal. `null` si
-// personne n'est éligible du tout.
+// Meilleur candidat DISPONIBLE (pas déjà posté ailleurs ce créneau) pour ce trou précis -- équité
+// (ratio charge/disponibilité le plus bas) parmi ceux qui respectent la spécialité/compétence
+// attendue (voir generationCandidateMatchesSpecialite() et fillGenerationCell() pour QUAND `vacSpec`
+// est renseigné selon le grade). `null` si personne n'est éligible du tout.
 function pickGenerationCandidate({ activityId, day, creneau, wantGrade, vacSpec, excludeIds, load, capacity }) {
   let best = null;
-  let bestTier = Infinity;
   let bestRatio = Infinity;
   state.staff.forEach((person) => {
     if (person.grade !== wantGrade) return;
@@ -143,11 +148,10 @@ function pickGenerationCandidate({ activityId, day, creneau, wantGrade, vacSpec,
     if (!isGenerationCandidateEligible(person, day, creneau.id)) return;
     if (hasActivityExclusivityConflict(person.id, day, creneau.id, activityId)) return;
     if (isGenerationCandidateHardBlocked(person, activityId, day, creneau.id)) return;
-    const tier = generationSpecialiteTier(person, activityId, day, creneau.id, vacSpec);
+    if (!generationCandidateMatchesSpecialite(person, activityId, day, creneau.id, vacSpec)) return;
     const ratio = (load[person.id] || 0) / (capacity[person.id] || 1);
-    if (tier < bestTier || (tier === bestTier && ratio < bestRatio)) {
+    if (ratio < bestRatio) {
       best = person;
-      bestTier = tier;
       bestRatio = ratio;
     }
   });
@@ -183,7 +187,7 @@ function tryStealForGeneration({ activityId, day, creneau, wantGrade, vacSpec, e
       const person = staffById(candidateId);
       if (!person || person.grade !== wantGrade) return;
       if (isGenerationCandidateHardBlocked(person, activityId, day, creneau.id)) return;
-      if (generationSpecialiteTier(person, activityId, day, creneau.id, vacSpec) !== 0) return; // jamais voler pour dégrader la spécialité
+      if (!generationCandidateMatchesSpecialite(person, activityId, day, creneau.id, vacSpec)) return; // jamais voler pour dégrader la spécialité
       const remaining = otherList.filter((id) => id !== candidateId).map(staffById).filter(Boolean);
       const remainingSeniors = remaining.filter((p) => p.grade === "senior").length;
       const remainingInternes = remaining.filter((p) => p.grade !== "senior").length;
@@ -210,7 +214,10 @@ function tryStealForGeneration({ activityId, day, creneau, wantGrade, vacSpec, e
 // `guard` : filet de sécurité, une case ne devrait jamais avoir besoin de plus de quelques tours.
 function fillGenerationCell({ key, activityId, day, creneau, rule, load, capacity, deviations, unresolved }) {
   const list = state.assignments[key];
-  const vacSpec = rule.requireSpecialite ? effectiveVacationSpecialite(activityId, day, creneau.id) : null;
+  // Spécialité propriétaire de la case, indépendamment du réglage requireSpecialite de la règle (qui
+  // ne pilote que le signal de violation affiché à l'écran, pas ce que le générateur a le droit de
+  // choisir -- voir le commentaire ci-dessous).
+  const cellVacSpec = effectiveVacationSpecialite(activityId, day, creneau.id);
 
   let guard = 0;
   while (guard++ < 12) {
@@ -221,6 +228,11 @@ function fillGenerationCell({ key, activityId, day, creneau, rule, load, capacit
     const needInterne = rule.interneMin !== null && nbInternes < rule.interneMin;
     if (!needSenior && !needInterne) break;
     const wantGrade = needSenior ? "senior" : "interne";
+    // ⚠️ 11/08/2026 (retour de Samir) : un SÉNIOR respecte TOUJOURS la spécialité/compétence de la
+    // case si elle est renseignée -- c'est un professionnel d'UNE spécialité, jamais une préférence
+    // discutable comme `requireSpecialite` (qui reste, lui, le seul réglage pour un INTERNE -- en
+    // rotation, il peut légitimement être posté hors de sa spécialité si Samir n'a pas coché la case).
+    const vacSpec = wantGrade === "senior" ? cellVacSpec : rule.requireSpecialite ? cellVacSpec : null;
 
     let candidate = pickGenerationCandidate({ activityId, day, creneau, wantGrade, vacSpec, excludeIds: list, load, capacity });
     if (!candidate) {
