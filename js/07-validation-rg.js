@@ -134,6 +134,32 @@ function resolveCompositionRule(activityId, day, creneauId) {
   return matches.reduce((best, r) => (r.days.length < best.days.length ? r : best));
 }
 
+// Repère visuel CASE (11/08/2026, demande de Samir : "si une case ne contient pas assez d'interne/
+// sénior, tu entoures en rouge [toute la case]") : cette case a-t-elle moins de séniors/internes
+// PRÉSENTS que ce que sa règle exige ? Même calcul que checkComposition() (filtré des absents, RG-014
+// -- une personne absente ne compte plus vers le minimum) mais réduit à un simple booléen, sans texte
+// ni recommandation à produire -- consommé uniquement par buildModaliteCell() pour poser
+// `.cell-composition-violation`. Rien à signaler si la case n'a pas de règle, est fermée (RG-010) ou
+// Os (RG-011) -- mêmes exclusions que validateCompositionRules()/le reste du moteur.
+function hasCompositionShortfall(activityId, day, creneauId) {
+  const rule = resolveCompositionRule(activityId, day, creneauId);
+  if (!rule) return false;
+  const key = cellKey(activityId, day, creneauId);
+  if (state.fermetures[key]) return false;
+  const activity = state.activities.find((a) => a.id === activityId);
+  const creneau = CRENEAUX.find((c) => c.id === creneauId);
+  if (!activity || isVacationCellOs(activity, day, creneau)) return false;
+  const present = effectiveAssignedIds(key)
+    .map(staffById)
+    .filter(Boolean)
+    .filter((p) => !isPersonAbsentOnSlot(p.id, day, creneauId));
+  const nbSeniors = present.filter((p) => p.grade === "senior").length;
+  const nbInternes = present.filter((p) => p.grade !== "senior").length;
+  if (nbSeniors < rule.seniorMin) return true;
+  if (rule.interneMin !== null && nbInternes < rule.interneMin) return true;
+  return false;
+}
+
 // ---------- Règles globales (10/08/2026) ----------
 // Transverses à toutes les modalités, distinctes de state.rules (composition PAR modalité) -- voir
 // state.globalRules (js/03-state.js) et l'écran (js/21-vue-regles.js). 1er type : "ignoreSpecialite"
@@ -353,8 +379,8 @@ function validateCompositionRules() {
 // activités/créneaux applicables -- d'où une boucle sur state.activities plutôt qu'une seule
 // modalité. Toujours une violation (jamais une recommandation) : il n'y a pas de "trop de zèle"
 // possible ici. Filet de sécurité pour tout ce qui a échappé au blocage du glisser-déposer (le
-// popover d'ajout n'est pas filtré, voir handleAssignmentDrop()) -- voir aussi le contour rouge
-// posé directement sur la case dans buildModaliteCell() (.cell-absence-violation).
+// popover d'ajout n'est pas filtré, voir handleAssignmentDrop()) -- voir aussi le contour rouge posé
+// directement sur la pastille de la personne concernée dans buildAssignedChip() (.chip-absence-violation).
 function validateAbsences() {
   const violations = [];
   const recommendations = [];

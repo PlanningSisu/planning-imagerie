@@ -1121,11 +1121,15 @@ tr.group-end td {
   white-space: nowrap;
 }
 
-/* RG-014 (22/07/2026, vue Modalité) : une personne assignée qui s'avère absente ce jour-là (congé
-   ou repos de garde) -- normalement empêché en amont par le glisser-déposer (voir .drop-rejected
-   plus bas), mais peut encore arriver via le popover d'ajout ou une donnée existante. Contour
-   rouge qui prime visuellement sur la teinte de spécialité de la case (.tint-xxx). */
-.slot-cell.cell-absence-violation {
+/* Composition insuffisante (11/08/2026, vue Modalité, demande de Samir) : entoure toute la CASE en
+   rouge si elle a moins de séniors/internes présents que sa règle l'exige (hasCompositionShortfall(),
+   js/07-validation-rg.js) -- s'applique aussi bien vide que partiellement remplie. Contour qui prime
+   visuellement sur la teinte de spécialité de la case (.tint-xxx). Distinct du contour PERSONNE
+   (.chip-absence-violation juste en dessous) : "quand c'est juste la personne qui pose problème, tu
+   l'entoures elle, mais pas la case" -- absence/Temps Partiel/exclusivité/spécialité/RG-028
+   n'entourent donc plus jamais la case elle-même depuis ce jour (avant : .cell-absence-violation,
+   retiré, remplacé par ce nouveau signal au sens différent). */
+.slot-cell.cell-composition-violation {
   outline: 3px solid #dc2626;
   outline-offset: -3px;
 }

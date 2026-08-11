@@ -48,10 +48,11 @@ function buildAssignedChip(person, key, day) {
   const chip = document.createElement("span");
   applyChipVisual(chip, person);
   const locked = isWeekLocked(key.split("|")[0]); // verrouillage (29/07/2026), voir isWeekLocked().
-  // RG-014 (24/07/2026, retour de Samir) : le contour rouge posé sur toute la case
-  // (.cell-absence-violation) ne disait pas QUI, parmi plusieurs personnes assignées, est la
-  // personne absente en cause -- entoure désormais aussi la pastille de la personne concernée.
-  // RG-020 (25/07/2026) : idem pour un conflit Temps Partiel. RG-021 (29/07/2026, généralise
+  // RG-014 (24/07/2026, retour de Samir) : entoure la pastille de la personne concernée pour dire
+  // QUI, parmi plusieurs personnes assignées, est la personne absente en cause -- depuis le
+  // 11/08/2026, c'est le SEUL contour pour un problème propre à une personne (jamais la case elle-
+  // même, voir .cell-composition-violation dans buildModaliteCell() pour le contour de case, réservé
+  // à une composition insuffisante). RG-020 (25/07/2026) : idem pour un conflit Temps Partiel. RG-021 (29/07/2026, généralise
   // RG-018/RG-019) : idem pour un double-positionnement sur une autre activité ce même créneau --
   // Off n'est plus un cas particulier, voir hasActivityExclusivityConflict(). Verrouillage : prime
   // sur tout le reste, aucune violation n'a de sens à signaler sur une case gelée.
@@ -725,25 +726,18 @@ function buildModaliteCell(activity, day, creneau) {
       };
       addCellGroup(seniors);
       addCellGroup(internes);
+    }
 
-      // RG-014/RG-021 : une personne absente, ou postée sur une autre activité ce même créneau
-      // (double-positionnement, RG-021 généralise l'ancienne RG-018/RG-019 depuis le 29/07/2026),
-      // peut se retrouver assignée malgré tout -- ni le glisser-déposer ni le popover d'ajout ne
-      // bloquent plus rien (25/07/2026, retour de Samir : "je ne veux plus de blocage quand je
-      // positionne quelqu'un"), donc ce contour rouge est désormais le SEUL signal de la
-      // contradiction, en plus de la violation dans la zone du moteur (validateAbsences()/
-      // validateActivityExclusivity()). L'absence reste ignorée sur la case Off elle-même (RG-014,
-      // "être en congés et avoir un Off, c'est pas grave") ; le double-positionnement, lui,
-      // s'applique désormais aussi à Off comme à n'importe quelle autre activité.
-      if (
-        !locked &&
-        people.some((p) =>
-          (activity.id !== "off" && isPersonAbsentOnSlot(p.id, day, creneau.id)) ||
-          hasActivityExclusivityConflict(p.id, day, creneau.id, activity.id)
-        )
-      ) {
-        td.classList.add("cell-absence-violation");
-      }
+    // Composition insuffisante (11/08/2026, demande de Samir) : entoure toute la CASE en rouge si elle
+    // a moins de séniors/internes PRÉSENTS que sa règle l'exige (voir hasCompositionShortfall(),
+    // js/07-validation-rg.js -- même calcul, filtré des absents, que la zone de validation en dessous
+    // du planning) -- s'applique aussi bien à une case vide qu'à une case partiellement remplie.
+    // Distinct du contour PERSONNE (chip, voir buildAssignedChip()) : "quand c'est juste la personne
+    // qui pose problème, tu l'entoures elle, mais pas la case" -- absence/Temps Partiel/exclusivité/
+    // spécialité/RG-028 n'entourent donc plus jamais la case elle-même (retiré ce jour, seul le signal
+    // par pastille reste pour ces cas-là).
+    if (!locked && hasCompositionShortfall(activity.id, day, creneau.id)) {
+      td.classList.add("cell-composition-violation");
     }
 
     if (locked) {
