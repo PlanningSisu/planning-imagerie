@@ -47,6 +47,10 @@
 //   Samir sache où regarder sans avoir à tout relire.
 // - La garde (RG-015) N'EST PAS générée ici -- state.gardes reste une donnée déclarée à la main,
 //   hors du périmètre "vacations" demandé par Samir pour ce générateur.
+// - RG-034 (11/08/2026) : pour un interne double-spécialisé UNIQUEMENT, tente en plus d'approcher un
+//   tiers urgence (Scan U/Echo U 50/50) / tiers spé1 / tiers spé2 (chaque tiers spé réparti entre les
+//   familles Scan/IRM/ECN/Mammo où cette spécialité est réellement présente) -- voir le bloc dédié
+//   plus bas (generationBalanceAdjustment() et alentours) et regles-gestion.md RG-034 pour le détail.
 //
 // Technique : parcourt chaque semaine cible en modifiant TEMPORAIREMENT state.weekOffset (jamais
 // rendu à l'écran -- aucun render() n'est appelé avant la toute fin), ce qui permet de réutiliser TEL
@@ -170,13 +174,134 @@ function generationCandidateMatchesSpecialite(person, activityId, day, creneauId
   return override === "ignore" || override === "downgrade";
 }
 
+// ---------- RG-034 : répartition 1/3 urgence / spé1 / spé2 pour les internes double-spécialisés ----------
+// Demande de Samir (11/08/2026, capture d'écran de la vue Stats à l'appui) : pour un interne double-
+// spécialisé (2 spécialités, jamais les mono-spé/socle -- confirmé explicitement), viser un TIERS de son
+// temps de présence en urgence (Scan U + Echo U, réparti 50/50 entre les deux), un tiers dans sa 1re
+// spécialité, un tiers dans sa 2e -- chaque tiers "spécialité" réparti à son tour entre les familles de
+// modalités (Scan/IRM/ECN/Mammo) où cette spécialité est réellement propriétaire quelque part dans le
+// planning (ex. Uro présent seulement en Scan+IRM -> 50/50 ; une spécialité aussi présente en Mammo/ECN
+// -> répartie sur davantage de familles). Voir regles-gestion.md RG-034 pour le détail complet.
+//
+// Best-effort UNIQUEMENT (mots de Samir : "tu essayes au mieux") -- PAS une RG de validation, ne bloque
+// rien, n'apparaît dans aucune violation/recommandation. Un simple ajustement de score, additionné au
+// ratio charge/disponibilité déjà utilisé pour départager les candidats (voir pickGenerationCandidate()/
+// tryStealForGeneration()) -- jamais un remplacement de l'équité générale, qui continue de s'appliquer à
+// tout le monde (séniors compris) exactement comme avant.
+
+// Familles de modalités "spécialisables" -- Scan U/Echo U (urgence) volontairement absentes d'ici,
+// elles sont gérées à part (bucket "urgence", jamais une "famille" au sens d'une spécialité).
+const GENERATION_MODALITY_FAMILIES = {
+  scan: ["scan-a", "scan-b"],
+  irm: ["irm-15t", "irm-3t"],
+  ecn: ["ecn-1", "ecn-2"],
+  mammo: ["mammo"],
+};
+const GENERATION_FAMILY_BY_ACTIVITY = Object.fromEntries(
+  Object.entries(GENERATION_MODALITY_FAMILIES).flatMap(([family, ids]) => ids.map((id) => [id, family]))
+);
+
+// Quelles familles de modalités une spécialité couvre-t-elle RÉELLEMENT quelque part dans le planning ?
+// Calculé UNE FOIS par génération depuis `state.vacationSpecialites` (structurel -- une définition
+// stable pour toute la plage générée, pas les exceptions de semaine RG-024). Ex. si aucune case Mammo
+// n'est jamais taguée "digestif", "digestif" n'aura jamais "mammo" dans son tableau de familles.
+function computeSpecialiteModalityFamilies() {
+  const bySpec = {};
+  SPECIALITE_ORDER.forEach((spec) => { bySpec[spec] = new Set(); });
+  Object.entries(GENERATION_MODALITY_FAMILIES).forEach(([family, activityIds]) => {
+    activityIds.forEach((activityId) => {
+      DAYS.forEach((day) => {
+        CRENEAUX.forEach((creneau) => {
+          if (!isCreneauApplicable(activityId, creneau.id)) return;
+          const spec = state.vacationSpecialites[vacationSpecKey(activityId, day, creneau.id)];
+          if (spec && bySpec[spec]) bySpec[spec].add(family);
+        });
+      });
+    });
+  });
+  const result = {};
+  Object.entries(bySpec).forEach(([spec, set]) => { result[spec] = [...set]; });
+  return result;
+}
+
+// Structure de suivi vide pour UN interne double-spécialisé -- 3 compartiments (urgence/spe1/spe2),
+// chacun un compteur par sous-catégorie (scan-u/echo-u pour urgence, famille de modalité pour une spé).
+// `internBalance` (staffId -> cette forme) n'est JAMAIS peuplée pour qui que ce soit d'autre --
+// generationBalanceAdjustment()/recordGenerationBucket() court-circuitent avant d'y toucher.
+function createInternBalanceEntry() {
+  return { urgence: {}, spe1: {}, spe2: {} };
+}
+
+function bucketTotal(entryBucket) {
+  return Object.values(entryBucket).reduce((sum, n) => sum + n, 0);
+}
+
+// À quel compartiment (bucket) + sous-catégorie (sub) cette case appartient-elle POUR CETTE personne ?
+// `null` si elle n'entre dans aucun des 3 -- une case dont la spécialité ne correspond à AUCUNE des 2
+// spécialités de la personne (ex. Thorax pour un Digestif+Uro) n'affecte jamais son équilibrage, comme
+// n'importe quelle activité hors périmètre de cette règle (ECN/Mammo sans spécialité correspondante,
+// etc.). Astreinte toujours exclue (hors sujet, comme pour l'équité générale -- voir
+// GENERATION_CRENEAUX_EQUITE) même si `activityId` vaut "scan-u".
+function generationInternBucketForCell(person, activityId, creneauId, vacSpec, specialiteFamilies) {
+  if (creneauId === "astreinte") return null;
+  if (activityId === "scan-u" || activityId === "echo-u") {
+    return { bucket: "urgence", sub: activityId, subCount: 2 };
+  }
+  const family = GENERATION_FAMILY_BY_ACTIVITY[activityId];
+  if (!family || !vacSpec) return null;
+  const specs = orderedSpecialites(person); // toujours 2 ici, vérifié par l'appelant
+  const families = specialiteFamilies[vacSpec] || [];
+  const subCount = Math.max(1, families.length);
+  if (vacSpec === specs[0]) return { bucket: "spe1", sub: family, subCount };
+  if (vacSpec === specs[1]) return { bucket: "spe2", sub: family, subCount };
+  return null;
+}
+
+// Ajustement de score : NÉGATIF = bonus (rend le candidat plus attractif), POSITIF = pénalité. `0` pour
+// tout le monde hors périmètre (pas interne, pas double-spécialisé, ou case hors des 3 compartiments) --
+// comportement strictement inchangé pour eux. Poids (0.4 pour l'équilibre urgence/spé1/spé2, 0.2 pour
+// l'équilibre plus fin à l'intérieur d'un compartiment) choisis pour peser sensiblement sans jamais
+// dominer totalement un écart d'équité générale déjà important -- valeurs de départ, à ajuster avec
+// Samir selon les résultats réels ("tu essayes au mieux", pas une garantie exacte).
+const GENERATION_BUCKET_WEIGHT = 0.4;
+const GENERATION_SUB_WEIGHT = 0.2;
+function generationBalanceAdjustment(person, activityId, creneauId, vacSpec, internBalance, specialiteFamilies) {
+  if (person.grade !== "interne" || orderedSpecialites(person).length !== 2) return 0;
+  const info = generationInternBucketForCell(person, activityId, creneauId, vacSpec, specialiteFamilies);
+  if (!info) return 0;
+  const entry = internBalance[person.id] || createInternBalanceEntry();
+
+  const bucketCount = bucketTotal(entry[info.bucket]);
+  const grandTotal = bucketTotal(entry.urgence) + bucketTotal(entry.spe1) + bucketTotal(entry.spe2);
+  const bucketShare = grandTotal === 0 ? 0 : bucketCount / grandTotal;
+  const bucketDeficit = 1 / 3 - bucketShare; // positif = sous-représenté
+
+  const subCount = entry[info.bucket][info.sub] || 0;
+  const subShare = bucketCount === 0 ? 0 : subCount / bucketCount;
+  const subDeficit = 1 / info.subCount - subShare;
+
+  return -(bucketDeficit * GENERATION_BUCKET_WEIGHT + subDeficit * GENERATION_SUB_WEIGHT);
+}
+
+// Enregistre une affectation dans `internBalance` (ajout, `sign: 1`) ou son retrait (vol, `sign: -1`) --
+// même paire de compartiment/sous-catégorie que generationBalanceAdjustment() ci-dessus, pour ne jamais
+// désynchroniser le calcul du score et sa mise à jour. No-op pour qui est hors périmètre.
+function recordGenerationBucket(person, activityId, creneauId, vacSpec, internBalance, specialiteFamilies, sign) {
+  if (person.grade !== "interne" || orderedSpecialites(person).length !== 2) return;
+  const info = generationInternBucketForCell(person, activityId, creneauId, vacSpec, specialiteFamilies);
+  if (!info) return;
+  if (!internBalance[person.id]) internBalance[person.id] = createInternBalanceEntry();
+  const entry = internBalance[person.id];
+  entry[info.bucket][info.sub] = (entry[info.bucket][info.sub] || 0) + sign;
+}
+
 // Meilleur candidat DISPONIBLE (pas déjà posté ailleurs ce créneau) pour ce trou précis -- équité
 // (ratio charge/disponibilité le plus bas) parmi ceux qui respectent la spécialité/compétence
 // attendue (voir generationCandidateMatchesSpecialite() et fillGenerationCell() pour QUAND `vacSpec`
 // est renseigné selon le grade). `null` si personne n'est éligible du tout.
-function pickGenerationCandidate({ activityId, day, creneau, wantGrade, vacSpec, excludeIds, load, capacity }) {
+function pickGenerationCandidate({ activityId, day, creneau, wantGrade, vacSpec, bucketVacSpec, excludeIds, load, capacity, internBalance, specialiteFamilies }) {
   let best = null;
-  let bestRatio = Infinity;
+  let bestScore = Infinity;
   state.staff.forEach((person) => {
     if (person.grade !== wantGrade) return;
     if (excludeIds.includes(person.id)) return;
@@ -185,9 +310,12 @@ function pickGenerationCandidate({ activityId, day, creneau, wantGrade, vacSpec,
     if (isGenerationCandidateHardBlocked(person, activityId, day, creneau.id)) return;
     if (!generationCandidateMatchesSpecialite(person, activityId, day, creneau.id, vacSpec)) return;
     const ratio = (load[person.id] || 0) / (capacity[person.id] || 1);
-    if (ratio < bestRatio) {
+    // RG-034 : ajustement d'équilibrage urgence/spé1/spé2 pour un interne double-spécialisé -- `0`
+    // pour tout le monde d'autre, voir generationBalanceAdjustment().
+    const score = ratio + generationBalanceAdjustment(person, activityId, creneau.id, bucketVacSpec, internBalance, specialiteFamilies);
+    if (score < bestScore) {
       best = person;
-      bestRatio = ratio;
+      bestScore = score;
     }
   });
   return best;
@@ -200,10 +328,11 @@ function pickGenerationCandidate({ activityId, day, creneau, wantGrade, vacSpec,
 // itération, voir le commentaire d'en-tête du fichier. Enregistre le déplacement dans `deviations`
 // pour le résumé affiché à Samir (le repère orange sur le planning, lui, est purement dérivé -- voir
 // trameDeviationMissingIds()).
-function tryStealForGeneration({ activityId, day, creneau, wantGrade, vacSpec, excludeIds, load, capacity, deviations }) {
+function tryStealForGeneration({ activityId, day, creneau, wantGrade, vacSpec, bucketVacSpec, excludeIds, load, capacity, deviations, internBalance, specialiteFamilies }) {
   let best = null;
   let bestOtherKey = null;
-  let bestRatio = Infinity;
+  let bestOtherActivityId = null;
+  let bestScore = Infinity;
 
   generationActivityIds().forEach((otherActivityId) => {
     if (otherActivityId === activityId) return;
@@ -230,16 +359,26 @@ function tryStealForGeneration({ activityId, day, creneau, wantGrade, vacSpec, e
       if (otherRule.interneMin !== null && remainingInternes < otherRule.interneMin) return;
 
       const ratio = (load[candidateId] || 0) / (capacity[candidateId] || 1);
-      if (ratio < bestRatio) {
+      // RG-034 : même ajustement que pickGenerationCandidate(), évalué pour la case CIBLE (celle
+      // qu'on cherche à combler) -- préfère voler quelqu'un pour qui cette case cible comble
+      // justement un manque dans son équilibrage urgence/spé1/spé2, pas l'inverse.
+      const score = ratio + generationBalanceAdjustment(person, activityId, creneau.id, bucketVacSpec, internBalance, specialiteFamilies);
+      if (score < bestScore) {
         best = person;
         bestOtherKey = otherKey;
-        bestRatio = ratio;
+        bestOtherActivityId = otherActivityId;
+        bestScore = score;
       }
     });
   });
 
   if (!best) return null;
   state.assignments[bestOtherKey] = state.assignments[bestOtherKey].filter((id) => id !== best.id);
+  // RG-034 : retire l'affectation volée de son ancien compartiment AVANT que fillGenerationCell()
+  // n'enregistre la nouvelle -- sinon le suivi resterait désynchronisé de la réalité (la personne
+  // semblerait présente aux DEUX endroits à la fois pour le calcul d'équilibrage).
+  const otherVacSpec = effectiveVacationSpecialite(bestOtherActivityId, day, creneau.id);
+  recordGenerationBucket(best, bestOtherActivityId, creneau.id, otherVacSpec, internBalance, specialiteFamilies, -1);
   deviations.push({ key: bestOtherKey, staffId: best.id, movedToActivityId: activityId });
   return best;
 }
@@ -247,11 +386,14 @@ function tryStealForGeneration({ activityId, day, creneau, wantGrade, vacSpec, e
 // Comble UNE case jusqu'à son minimum (séniors + internes), en tentant candidat libre puis vol en
 // dernier recours -- s'arrête et note le trou dans `unresolved` si ni l'un ni l'autre n'aboutit.
 // `guard` : filet de sécurité, une case ne devrait jamais avoir besoin de plus de quelques tours.
-function fillGenerationCell({ key, activityId, day, creneau, rule, load, capacity, deviations, unresolved }) {
+function fillGenerationCell({ key, activityId, day, creneau, rule, load, capacity, deviations, unresolved, internBalance, specialiteFamilies }) {
   const list = state.assignments[key];
   // Spécialité propriétaire de la case, indépendamment du réglage requireSpecialite de la règle (qui
   // ne pilote que le signal de violation affiché à l'écran, pas ce que le générateur a le droit de
-  // choisir -- voir le commentaire ci-dessous).
+  // choisir -- voir le commentaire ci-dessous). RG-034 (11/08/2026) : c'est AUSSI la valeur utilisée
+  // pour l'équilibrage urgence/spé1/spé2 d'un interne double-spécialisé, indépendamment de
+  // `requireSpecialite` -- une case Scan B taguée "uro" reste une case "Uro Scan" pour ce calcul même
+  // si la spécialité n'y est pas activement exigée.
   const cellVacSpec = effectiveVacationSpecialite(activityId, day, creneau.id);
 
   let guard = 0;
@@ -269,9 +411,9 @@ function fillGenerationCell({ key, activityId, day, creneau, rule, load, capacit
     // rotation, il peut légitimement être posté hors de sa spécialité si Samir n'a pas coché la case).
     const vacSpec = wantGrade === "senior" ? cellVacSpec : rule.requireSpecialite ? cellVacSpec : null;
 
-    let candidate = pickGenerationCandidate({ activityId, day, creneau, wantGrade, vacSpec, excludeIds: list, load, capacity });
+    let candidate = pickGenerationCandidate({ activityId, day, creneau, wantGrade, vacSpec, bucketVacSpec: cellVacSpec, excludeIds: list, load, capacity, internBalance, specialiteFamilies });
     if (!candidate) {
-      candidate = tryStealForGeneration({ activityId, day, creneau, wantGrade, vacSpec, excludeIds: list, load, capacity, deviations });
+      candidate = tryStealForGeneration({ activityId, day, creneau, wantGrade, vacSpec, bucketVacSpec: cellVacSpec, excludeIds: list, load, capacity, deviations, internBalance, specialiteFamilies });
     }
     if (!candidate) {
       const specText = vacSpec ? ` avec la spécialité ${SPECIALITES[vacSpec].label}` : "";
@@ -283,6 +425,7 @@ function fillGenerationCell({ key, activityId, day, creneau, rule, load, capacit
     }
     list.push(candidate.id);
     load[candidate.id] = (load[candidate.id] || 0) + 1;
+    recordGenerationBucket(candidate, activityId, creneau.id, cellVacSpec, internBalance, specialiteFamilies, 1); // RG-034
   }
 }
 
@@ -316,7 +459,7 @@ function computeGenerationCapacity(weekOffsets) {
 // ajoute lui-même. Nécessaire aussi pour que tryStealForGeneration() puisse trouver des cases
 // "source" déjà matérialisées dès le premier trou rencontré, quel que soit l'ordre de la boucle
 // principale.
-function computeGenerationBaselineLoad(weekOffsets) {
+function computeGenerationBaselineLoad(weekOffsets, internBalance, specialiteFamilies) {
   const load = {};
   const originalOffset = state.weekOffset;
   const activityIds = generationActivityIds();
@@ -333,9 +476,12 @@ function computeGenerationBaselineLoad(weekOffsets) {
           if (state.fermetures[key]) return;
           const activity = state.activities.find((a) => a.id === activityId);
           if (isVacationCellOs(activity, day, creneau)) return;
+          const vacSpec = effectiveVacationSpecialite(activityId, day, creneau.id); // RG-034
           const list = ensureMaterializedAssignments(key);
           list.forEach((id) => {
             load[id] = (load[id] || 0) + 1;
+            const person = staffById(id);
+            if (person) recordGenerationBucket(person, activityId, creneau.id, vacSpec, internBalance, specialiteFamilies, 1); // RG-034
           });
         });
       });
@@ -359,7 +505,13 @@ function runGeneration(startWeekKeyPart, numWeeks) {
   }
 
   const capacity = computeGenerationCapacity(weekOffsets);
-  const load = computeGenerationBaselineLoad(weekOffsets);
+  // RG-034 : suivi urgence/spé1/spé2 par interne double-spécialisé, calculé une fois pour toute la
+  // plage (`specialiteFamilies`, stable) puis mis à jour au fil du remplissage (`internBalance`, muté
+  // par recordGenerationBucket() dans computeGenerationBaselineLoad()/fillGenerationCell()/
+  // tryStealForGeneration()).
+  const specialiteFamilies = computeSpecialiteModalityFamilies();
+  const internBalance = {};
+  const load = computeGenerationBaselineLoad(weekOffsets, internBalance, specialiteFamilies);
 
   const deviations = [];
   const unresolved = [];
@@ -403,7 +555,7 @@ function runGeneration(startWeekKeyPart, numWeeks) {
           if (state.fermetures[key]) return;
           const activity = state.activities.find((a) => a.id === activityId);
           if (isVacationCellOs(activity, day, creneau)) return;
-          fillGenerationCell({ key, activityId, day, creneau, rule, load, capacity, deviations, unresolved });
+          fillGenerationCell({ key, activityId, day, creneau, rule, load, capacity, deviations, unresolved, internBalance, specialiteFamilies });
         });
       });
     });

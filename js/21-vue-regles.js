@@ -53,6 +53,7 @@ const RG_REFERENCE = [
   { code: "RG-031", label: FIXED_RULE_FAMILIES["RG-031"].label },
   { code: "RG-032", label: FIXED_RULE_FAMILIES["RG-032"].label },
   { code: "RG-033", label: FIXED_RULE_FAMILIES["RG-033"].label },
+  { code: "RG-034", label: "Répartition 1/3 urgence-spé1-spé2 (internes double-spé, générateur uniquement)" },
 ];
 
 // Repliée par défaut (33 entrées -- trop long pour rester ouvert en permanence) -- transitoire,
