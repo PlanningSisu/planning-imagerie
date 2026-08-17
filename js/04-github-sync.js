@@ -24,10 +24,10 @@ let fileWritePending = false; // une modif est arrivée PENDANT une écriture d�
 // confirm()) faisait réapparaître les affectations juste effacées. Cause -- confirm()/alert() sont
 // des dialogues natifs qui déclenchent un blur/focus de la fenêtre ; l'événement "focus" (voir plus
 // bas) ne peut s'exécuter qu'une fois le code synchrone du clic terminé (JS mono-thread), donc APRÈS
-// que saveState() ait DÉJÀ programmé une écriture différée de 400ms (scheduleFileSave()) -- mais
+// que saveState() ait DÉJÀ programmé une écriture différée (scheduleFileSave()) -- mais
 // fileWriteInFlight/fileWritePending sont encore tous les deux `false` à ce moment précis (l'écriture
 // n'a pas encore DÉMARRÉ). Le focus déclenchait donc un reloadFromGitHub() qui relisait l'ANCIEN
-// contenu (pas encore écrasé par notre reset, toujours dans les 400ms d'attente) et l'appliquait
+// contenu (pas encore écrasé par notre reset, toujours dans le debounce d'attente) et l'appliquait
 // par-dessus l'état tout juste réinitialisé. `hasUnflushedChange` comble ce trou : positionné de
 // façon SYNCHRONE dès qu'un changement est programmé (avant que le focus différé ait pu s'exécuter),
 // et retiré seulement après une écriture réussie ET sans changement plus récent en attente derrière.
@@ -75,9 +75,35 @@ async function githubContentsRequest(method, body) {
   });
 }
 
+// Distingue un vrai jeton invalide/sans accès (401, ou 403 de permission) d'un 403 de LIMITE DE
+// TAUX GitHub (11/08/2026, bug réel remonté par Samir : "turbo click" sur les flèches ←/→ de
+// navigation -- chaque clic déclenche une sauvegarde, voir js/14-navigation-semaine.js -- assez de
+// clics rapprochés dépasse la limite secondaire de GitHub, qui renvoie AUSSI un 403, avec un message
+// distinct ("You have exceeded a secondary rate limit...") d'un vrai problème de jeton). Sans cette
+// distinction, l'appli affichait à tort "Jeton invalide" alors que le jeton fonctionne très bien --
+// confusant et alarmant pour rien. `retryAfterMs` (en-tête `Retry-After` s'il est présent, sinon 60s
+// par défaut) pilote la nouvelle tentative automatique, voir flushFileSave().
+async function githubErrorFromResponse(res) {
+  if (res.status === 401) return { code: "invalid-token", message: "Jeton invalide ou sans accès à ce dépôt." };
+  if (res.status === 403) {
+    const body = await res.json().catch(() => ({}));
+    if ((body.message || "").toLowerCase().includes("rate limit")) {
+      const retryAfterHeader = res.headers.get("retry-after");
+      return {
+        code: "rate-limited",
+        message: "Trop de sauvegardes rapprochées (limite GitHub) -- nouvelle tentative automatique dans quelques instants.",
+        retryAfterMs: retryAfterHeader ? Number(retryAfterHeader) * 1000 : 60000,
+      };
+    }
+    return { code: "invalid-token", message: "Jeton invalide ou sans accès à ce dépôt." };
+  }
+  return null;
+}
+
 async function readStateFromGitHub() {
   const res = await githubContentsRequest("GET");
-  if (res.status === 401 || res.status === 403) throw Object.assign(new Error("Jeton invalide ou sans accès à ce dépôt."), { code: "invalid-token" });
+  const ghErr = await githubErrorFromResponse(res);
+  if (ghErr) throw Object.assign(new Error(ghErr.message), { code: ghErr.code, retryAfterMs: ghErr.retryAfterMs });
   if (!res.ok) throw new Error(`Lecture impossible (HTTP ${res.status}).`);
   const data = await res.json();
   githubFileSha = data.sha;
@@ -92,7 +118,8 @@ async function writeStateToGitHub() {
   };
   if (githubFileSha) body.sha = githubFileSha;
   const res = await githubContentsRequest("PUT", body);
-  if (res.status === 401 || res.status === 403) throw Object.assign(new Error("Jeton invalide ou sans accès à ce dépôt."), { code: "invalid-token" });
+  const ghErr = await githubErrorFromResponse(res);
+  if (ghErr) throw Object.assign(new Error(ghErr.message), { code: ghErr.code, retryAfterMs: ghErr.retryAfterMs });
   if (res.status === 409) throw Object.assign(new Error("Le fichier a été modifié ailleurs entre-temps."), { code: "conflict" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -109,6 +136,7 @@ function fileSyncStatusLabel() {
     case "error": return "erreur d'enregistrement";
     case "invalid-token": return "jeton invalide";
     case "conflict": return "conflit -- recharger";
+    case "rate-limited": return "trop de sauvegardes rapprochées -- nouvelle tentative automatique";
     default: return "non connecté";
   }
 }
@@ -123,6 +151,7 @@ function fileSyncStatusShortLabel() {
     case "error": return "Erreur";
     case "invalid-token": return "Jeton invalide";
     case "conflict": return "Conflit";
+    case "rate-limited": return "Nouvel essai...";
     default: return "Non connecté";
   }
 }
@@ -169,14 +198,22 @@ function renderWeekLockButton() {
     : "Semaine non verrouillée -- cliquer pour verrouiller.";
 }
 
-// Debounce (~400ms après la dernière modif) pour ne pas écrire à chaque action individuelle, +
-// garde fileWriteInFlight/fileWritePending pour ne jamais avoir deux écritures concurrentes (une
-// modif arrivant pendant une écriture en cours est rejouée juste après, jamais perdue).
+// Debounce (~1200ms après la dernière modif -- augmenté depuis 400ms le 11/08/2026, voir le commentaire
+// juste en dessous) pour ne pas écrire à chaque action individuelle, + garde
+// fileWriteInFlight/fileWritePending pour ne jamais avoir deux écritures concurrentes (une modif
+// arrivant pendant une écriture en cours est rejouée juste après, jamais perdue).
+// ⚠️ 400ms -> 1200ms (11/08/2026, bug réel remonté par Samir : "j'ai des erreurs quand je turbo click
+// sur les flèches" ←/→) : chaque clic de navigation de semaine appelle saveState() (voir
+// js/14-navigation-semaine.js), donc un "turbo click" pouvait déclencher plusieurs écritures GitHub
+// distinctes en quelques secondes (confirmé dans l'historique des commits : rafales de 4 à 10 en
+// quelques secondes) -- assez pour dépasser la limite secondaire de GitHub. Un debounce plus long
+// absorbe une rafale de clics rapprochés en UNE seule écriture (celle qui suit le DERNIER clic),
+// sans changer le comportement pour un usage normal (imperceptible à l'échelle humaine).
 function scheduleFileSave() {
   if (!getGitHubToken()) return; // pas connecté -- localStorage seul, rien à faire ici.
-  hasUnflushedChange = true; // positionné en synchrone, avant même le délai de 400ms -- voir plus haut.
+  hasUnflushedChange = true; // positionné en synchrone, avant même le délai de 1200ms -- voir plus haut.
   clearTimeout(fileWriteTimer);
-  fileWriteTimer = setTimeout(flushFileSave, 400);
+  fileWriteTimer = setTimeout(flushFileSave, 1200);
 }
 
 async function flushFileSave() {
@@ -198,6 +235,15 @@ async function flushFileSave() {
     setFileSyncStatus(err.code || "error");
     // hasUnflushedChange reste `true` : l'échec laisse un changement local toujours pas persisté,
     // un rechargement au focus ne doit surtout pas l'écraser avec l'ancien contenu.
+    // Limite de taux (11/08/2026) : jamais un vrai échec définitif -- nouvelle tentative automatique
+    // après le délai indiqué par GitHub (ou 60s par défaut), sans que Samir ait à recliquer sur quoi
+    // que ce soit. Planifiée à PART de fileWritePending/finally ci-dessous (qui ne rejoue
+    // qu'immédiatement) pour ne pas retenter tout de suite contre la même limite.
+    if (err.code === "rate-limited") {
+      setTimeout(() => {
+        if (getGitHubToken()) flushFileSave();
+      }, err.retryAfterMs || 60000);
+    }
   } finally {
     fileWriteInFlight = false;
     if (fileWritePending) {
@@ -262,7 +308,7 @@ async function tryAutoConnectGitHub() {
 // modifié le fichier pendant que cet onglet restait ouvert en arrière-plan. Ignoré si une écriture
 // locale est en cours/en attente/programmée (hasUnflushedChange, voir sa déclaration plus haut --
 // bug réel corrigé le 24/07/2026 : confirm()/alert() déclenchent un focus dont le traitement était
-// jusque-là plus rapide que le début effectif de l'écriture différée de 400ms).
+// jusque-là plus rapide que le début effectif de l'écriture différée).
 window.addEventListener("focus", () => {
   if (!getGitHubToken() || fileWriteInFlight || fileWritePending || hasUnflushedChange) return;
   reloadFromGitHub().catch((e) => console.warn("Rechargement au focus impossible.", e));

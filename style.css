@@ -325,6 +325,10 @@ body {
 .file-sync-status.file-sync-error { background: #7f1d1d; color: #fecaca; }
 .file-sync-status.file-sync-invalid-token { background: #78350f; color: #fde68a; }
 .file-sync-status.file-sync-conflict { background: #78350f; color: #fde68a; }
+/* Limite de taux GitHub (11/08/2026) : même teinte que "saving" (pas rouge, jamais alarmant --
+   c'est temporaire et se corrige tout seul, voir flushFileSave()), pas la teinte ambre "error"
+   utilisée pour jeton invalide/conflit. */
+.file-sync-status.file-sync-rate-limited { background: #374151; color: #fbbf24; }
 
 /* Verrouillage des semaines (29/07/2026) : icône cadenas à côté du statut de synchro -- reflète la
    semaine actuellement affichée (renderWeekLockButton()). Fond neutre déverrouillée, rouge sourd
