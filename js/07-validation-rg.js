@@ -306,11 +306,20 @@ function validateGlobalPostingExclusions() {
 // `activityId` (11/08/2026, demande de Samir) : pour Digestif/Uro/Gynéco, une compétence peut être
 // scindée par portée Scan/IRM (`"<spé>:scan"`/`"<spé>:irm"`, voir COMPETENCE_ORDER/
 // competenceScopeForActivity() dans js/01-demo-data.js) -- ne compte que si `activityId` tombe
-// effectivement dans la portée où la personne l'a cochée (Scan A/B, ou IRM 1.5T/3T). Thorax/Mammo
-// restent de simples compétences globales, aucune portée à vérifier pour elles.
+// effectivement dans la portée où la personne l'a cochée (Scan A/B, ou IRM 1.5T/3T). Thorax reste une
+// simple compétence globale, aucune portée à vérifier pour elle.
+// Mammo (11/08/2026, bug réel remonté par Samir) : TOUTES les cases Mammo ont "Gynéco" comme
+// spécialité propriétaire en pratique (`vacationSpecialites`), puisque "Mammo" lui-même n'est jamais
+// une valeur possible de `vacationSpecialites` (voir §4.2/§4.4 CLAUDE.md -- seules les 5 spécialités
+// officielles le peuvent). Sans ce cas particulier, un sénior Uro coché "compétence Mammo" restait à
+// tort signalé en mismatch sur une case Mammo, qui exigeait alors la compétence/spécialité GYNÉCO --
+// alors que Mammo est une compétence à part, pas un sous-ensemble de Gynéco. La compétence "Mammo"
+// suffit donc à elle seule sur l'activité Mammo, quelle que soit la spécialité propriétaire affichée
+// dessus -- court-circuite le reste de la fonction avant même de regarder `vacSpec`.
 function personSatisfiesSpecialite(person, vacSpec, activityId) {
   if (orderedSpecialites(person).includes(vacSpec)) return true;
   const competences = orderedCompetences(person);
+  if (activityId === "mammo" && competences.includes("mammo")) return true;
   if (COMPETENCE_SCAN_IRM_SPECIALITES.includes(vacSpec)) {
     const scope = competenceScopeForActivity(activityId);
     return scope !== null && competences.includes(`${vacSpec}:${scope}`);
