@@ -303,8 +303,19 @@ function validateGlobalPostingExclusions() {
 // case). Centralisé ici, appelé à la fois par hasSpecialiteMismatch() (contour rouge) et la boucle
 // RG-001 de validateCompositionRules() (violation dans la zone de validation), pour ne jamais
 // désynchroniser les deux.
-function personSatisfiesSpecialite(person, vacSpec) {
-  return orderedSpecialites(person).includes(vacSpec) || orderedCompetences(person).includes(vacSpec);
+// `activityId` (11/08/2026, demande de Samir) : pour Digestif/Uro/Gynéco, une compétence peut être
+// scindée par portée Scan/IRM (`"<spé>:scan"`/`"<spé>:irm"`, voir COMPETENCE_ORDER/
+// competenceScopeForActivity() dans js/01-demo-data.js) -- ne compte que si `activityId` tombe
+// effectivement dans la portée où la personne l'a cochée (Scan A/B, ou IRM 1.5T/3T). Thorax/Mammo
+// restent de simples compétences globales, aucune portée à vérifier pour elles.
+function personSatisfiesSpecialite(person, vacSpec, activityId) {
+  if (orderedSpecialites(person).includes(vacSpec)) return true;
+  const competences = orderedCompetences(person);
+  if (COMPETENCE_SCAN_IRM_SPECIALITES.includes(vacSpec)) {
+    const scope = competenceScopeForActivity(activityId);
+    return scope !== null && competences.includes(`${vacSpec}:${scope}`);
+  }
+  return competences.includes(vacSpec);
 }
 
 // RG-001 (spécialité, tranché le 09/08/2026 : dans le périmètre bêta) : la règle peut exiger que
@@ -328,7 +339,7 @@ function hasSpecialiteMismatch(person, activityId, day, creneauId, weekKeyPart) 
   if (specialiteOverrideForPerson(person, activityId, day, creneauId)) return false;
   const vacSpec = effectiveVacationSpecialiteForWeek(activityId, day, creneauId, weekKeyPart);
   if (!vacSpec) return false;
-  return !personSatisfiesSpecialite(person, vacSpec);
+  return !personSatisfiesSpecialite(person, vacSpec, activityId);
 }
 
 // Point d'entrée du moteur générique -- une seule fonction pour toutes les modalités couvertes par
@@ -370,7 +381,7 @@ function validateCompositionRules() {
           const vacSpec = effectiveVacationSpecialite(activityId, day, creneau.id);
           if (vacSpec) {
             present.forEach((person) => {
-              if (personSatisfiesSpecialite(person, vacSpec)) return; // "cheat code" compétence (10/08/2026)
+              if (personSatisfiesSpecialite(person, vacSpec, activityId)) return; // "cheat code" compétence (10/08/2026)
               const override = specialiteOverrideForPerson(person, activityId, day, creneau.id);
               if (override === "ignore") return;
               const message = `${label} : ${person.prenom} ${person.nom} n'a pas la spécialité de cette vacation (${SPECIALITES[vacSpec].label}).`;

@@ -165,7 +165,7 @@ function isGenerationCandidateHardBlocked(person, activityId, day, creneauId) {
 // sans respecter la spécialité.
 function generationCandidateMatchesSpecialite(person, activityId, day, creneauId, vacSpec) {
   if (!vacSpec) return true;
-  if (personSatisfiesSpecialite(person, vacSpec)) return true;
+  if (personSatisfiesSpecialite(person, vacSpec, activityId)) return true;
   const override = specialiteOverrideForPerson(person, activityId, day, creneauId);
   return override === "ignore" || override === "downgrade";
 }
