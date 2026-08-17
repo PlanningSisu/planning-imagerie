@@ -520,6 +520,8 @@ function renderGlobalRuleForm(container, existingRule) {
       <div class="form-error" id="globalRuleFormError"></div>
     </div>
   `;
+  // Même correctif que renderRuleForm() -- voir son commentaire juste avant son propre scrollIntoView().
+  container.scrollIntoView({ behavior: "auto", block: "start" });
 
   const typeSelect = document.getElementById("globalRuleType");
   const severitySelect = document.getElementById("globalRuleSeverity");
@@ -888,6 +890,12 @@ function renderRuleForm(container, existingRule, prefillFrom) {
       <div class="form-error" id="ruleFormError"></div>
     </div>
   `;
+  // Le formulaire se rouvre toujours dans #ruleFormContainer, en HAUT du bloc "Règle des Vacations"
+  // -- immobile, quel que soit l'endroit de la longue liste (#rulesList, en dessous) où "Modifier"/
+  // "Copier" a été cliqué (11/08/2026, retour de Samir : "ça me met la fenêtre tout en haut au lieu
+  // de là où j'ai cliqué, c'est pas user friendly"). Un défilement automatique vers le formulaire
+  // règle ça sans changer sa position réelle dans le DOM (pas de réorganisation nécessaire).
+  container.scrollIntoView({ behavior: "auto", block: "start" });
 
   const activitySelect = document.getElementById("ruleActivity");
   const creneauCheckboxes = [...container.querySelectorAll(".ruleCreneau")];
