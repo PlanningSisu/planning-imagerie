@@ -15,6 +15,18 @@ function generateSegmentId() {
   return "seg" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
+// "Toutes les vraies vacations" (RG-038, 18/08/2026, demande de Samir : "un bloc qui s'applique à
+// toutes les vraies vacations... je peux lui rajouter des segments comme d'hab") -- PAS une entrée de
+// state.activities (ALL_REAL_VACATIONS_ID, js/02-bulk-import-parsing.js), donc une pseudo-activité
+// locale {id, nom} pour que ce bloc se rende, s'édite et se réordonne EXACTEMENT comme un bloc de
+// modalité réelle, sans dupliquer renderRulesList()/renderRuleForm(). resolveRuleActivity() est le
+// point d'entrée unique partout où ce fichier aurait fait `state.activities.find(a => a.id === x)`.
+const ALL_REAL_VACATIONS_PSEUDO_ACTIVITY = { id: ALL_REAL_VACATIONS_ID, nom: "Toutes les vraies vacations" };
+function resolveRuleActivity(activityId) {
+  if (activityId === ALL_REAL_VACATIONS_ID) return ALL_REAL_VACATIONS_PSEUDO_ACTIVITY;
+  return state.activities.find((a) => a.id === activityId) || null;
+}
+
 // Plier/déplier les blocs de modalité (10/08/2026, demande de Samir : "aider à la visibilité") --
 // transitoire, jamais persisté (repart tout déplié à chaque rechargement, comme staffModalSearchQuery
 // et les autres petits états de vue de ce genre) : un Set d'`activityId` actuellement PLIÉS, vide par
@@ -64,6 +76,7 @@ const RG_REFERENCE = [
   { code: "RG-035", label: RG_035_LABEL },
   { code: "RG-036", label: "Une règle = une modalité, plusieurs segments jour/créneau/composition" },
   { code: "RG-037", label: "Conflit entre segments à égale spécificité : le plus bas dans la liste gagne" },
+  { code: "RG-038", label: "Règle de repli \"Toutes les vraies vacations\" (hors Bureau/Off/Hors SISU)" },
 ];
 
 // Repliée par défaut (34 entrées -- trop long pour rester ouvert en permanence) -- transitoire,
@@ -186,8 +199,11 @@ function renderRulesList(container) {
   // le bloc 'Scan A' etc") -- state.rulesGroupOrder plutôt que l'ordre naturel de state.activities,
   // réordonnable par glisser-déposer du <h3> (voir plus bas). Distinct du glisser-déposer déjà
   // existant sur chaque `.rules-row` (réordonne les règles À L'INTÉRIEUR d'un même bloc).
+  // resolveRuleActivity() (au lieu de state.activities.find() direct) : inclut la pseudo-activité
+  // "Toutes les vraies vacations" (RG-038) -- son bloc se rend, se plie/déplie et se réordonne
+  // EXACTEMENT comme un bloc de modalité réelle, sans aucun code séparé pour lui.
   const orderedActivities = state.rulesGroupOrder
-    .map((id) => state.activities.find((a) => a.id === id))
+    .map((id) => resolveRuleActivity(id))
     .filter(Boolean);
 
   orderedActivities.forEach((activity) => {
@@ -881,8 +897,11 @@ function renderRuleForm(container, existingSegment, prefillFrom, opts) {
     : null;
   const lockedActivityId = containerOfSegment ? containerOfSegment.activityId : opts.lockedActivityId || null;
 
+  // "Toutes les vraies vacations" (RG-038) rejoint la liste des modalités choisissables au même titre
+  // qu'une modalité réelle -- state.activities seul ne suffit plus.
+  const allChoosableActivities = [...state.activities, ALL_REAL_VACATIONS_PSEUDO_ACTIVITY];
   if (opts.restrictToUnusedModalities) {
-    const availableActivities = state.activities.filter((a) => !state.rules.some((r) => r.activityId === a.id));
+    const availableActivities = allChoosableActivities.filter((a) => !state.rules.some((r) => r.activityId === a.id));
     if (availableActivities.length === 0) {
       container.innerHTML = '<div class="staff-modal-empty">Toutes les modalités ont déjà une règle -- ouvre le bloc correspondant pour y ajouter un segment.</div>';
       container.scrollIntoView({ behavior: "auto", block: "start" });
@@ -890,9 +909,9 @@ function renderRuleForm(container, existingSegment, prefillFrom, opts) {
     }
   }
   const activityChoices = opts.restrictToUnusedModalities
-    ? state.activities.filter((a) => !state.rules.some((r) => r.activityId === a.id))
-    : state.activities;
-  const lockedActivity = lockedActivityId ? state.activities.find((a) => a.id === lockedActivityId) : null;
+    ? allChoosableActivities.filter((a) => !state.rules.some((r) => r.activityId === a.id))
+    : allChoosableActivities;
+  const lockedActivity = lockedActivityId ? resolveRuleActivity(lockedActivityId) : null;
   // Valeur initiale du sélecteur (verrouillé OU libre) -- verrouillé : la seule option possible ;
   // libre + Copier : la modalité du segment source, pour ne devoir changer que ce qui diffère.
   const prefillActivityId = lockedActivityId || opts.prefillActivityId || null;
@@ -1072,7 +1091,7 @@ function renderRuleForm(container, existingSegment, prefillFrom, opts) {
     errorEl.textContent = "";
 
     const activityId = activitySelect.value;
-    const activity = state.activities.find((a) => a.id === activityId);
+    const activity = resolveRuleActivity(activityId);
     const creneaux = creneauCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
     const days = dayCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
     if (creneaux.length === 0) { errorEl.textContent = "Choisis au moins un créneau."; return; }

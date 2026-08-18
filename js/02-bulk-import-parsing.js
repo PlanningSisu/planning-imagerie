@@ -450,6 +450,27 @@ const ACTIVITIES = [
   { id: "hors-sisu", nom: "Hors SISU", personnelOnly: true },
 ];
 
+// RG-038 (18/08/2026, demande de Samir : "un bloc qui s'applique à toutes les vraies vacations...
+// vraies vacations = tout sauf Bureau, Off, Hors Sisu") -- Bureau/Off ne sont jamais des vacations
+// (pas de composition sénior/interne à respecter) ; Hors SISU se fait hors du service, une règle de
+// composition interne n'y a pas de sens non plus, malgré son statut de "vraie" activité ailleurs
+// (Stats, voir le commentaire au-dessus de son entrée) -- définition volontairement distincte,
+// propre à ce nouveau mécanisme.
+const NON_VACATION_ACTIVITY_IDS = ["bureau", "off", "hors-sisu"];
+function isRealVacationActivity(activityId) {
+  return !NON_VACATION_ACTIVITY_IDS.includes(activityId);
+}
+function realVacationActivityIds() {
+  return state.activities.filter((a) => isRealVacationActivity(a.id)).map((a) => a.id);
+}
+// Identifiant de règle spécial pour le bloc "Toutes les vraies vacations" (RG-038) -- PAS une entrée
+// de state.activities (aucune vraie modalité ne porte cet id), consommé uniquement par
+// resolveCompositionRule() (js/07-validation-rg.js, mécanisme de repli), generationActivityIds()
+// (js/22-generation-planning.js) et l'écran Règles (js/21-vue-regles.js, via une pseudo-activité
+// locale {id, nom} pour l'affichage). Préfixe/suffixe improbables pour ne jamais entrer en collision
+// avec un futur id d'activité réelle.
+const ALL_REAL_VACATIONS_ID = "__all_real_vacations__";
+
 const DAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi"];
 // RG-012 : "astreinte" est un créneau global (colonne affichée tous les jours, pour toutes les
 // activités) mais dont l'usage réel est réservé à Scan U -- voir isCreneauApplicable() ci-dessous.

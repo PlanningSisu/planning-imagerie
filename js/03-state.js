@@ -361,7 +361,11 @@ function normalizeStatsColumnOrder(order) {
 // modalité perdue si une activité est retirée du code, jamais d'erreur si `rulesGroupOrder`
 // contient un id qui n'existe plus.
 function normalizeRulesGroupOrder(order) {
-  const allIds = state.activities.map((a) => a.id);
+  // RG-038 (18/08/2026) : ALL_REAL_VACATIONS_ID rejoint la liste canonique -- le bloc "Toutes les
+  // vraies vacations" se réordonne/plie exactement comme un bloc de modalité normale dans l'écran
+  // Règles, sans nouvelle migration de schéma nécessaire (auto-guéri à chaque applyPersistedState(),
+  // même mécanisme qu'une modalité ajoutée au code après un vieil export).
+  const allIds = [...state.activities.map((a) => a.id), ALL_REAL_VACATIONS_ID];
   const valid = Array.isArray(order) ? order.filter((id) => allIds.includes(id)) : [];
   allIds.forEach((id) => {
     if (!valid.includes(id)) valid.push(id);
@@ -449,7 +453,7 @@ let state = {
   // des en-têtes de bloc, ex. "Scan A" avant "Scan U") -- distinct de l'ordre des règles À
   // L'INTÉRIEUR d'un bloc (déjà géré par l'ordre naturel de `state.rules`). Valeur par défaut =
   // ordre naturel de `state.activities` -- voir normalizeRulesGroupOrder().
-  rulesGroupOrder: ACTIVITIES.map((a) => a.id),
+  rulesGroupOrder: [...ACTIVITIES.map((a) => a.id), ALL_REAL_VACATIONS_ID],
   // Règles globales (10/08/2026) : transverses à toutes les modalités, distinctes de state.rules
   // (composition PAR modalité) -- 1er type : "ignoreSpecialite" (voir GLOBAL_RULE_STATUS_OPTIONS et
   // specialiteOverrideForPerson() dans js/07-validation-rg.js, écran dans js/21-vue-regles.js).

@@ -148,15 +148,20 @@ function checkComposition(assigned, comp, rg, label, violations, recommendations
 // silencieusement une composition réelle sans aucun signal à l'écran). Explicite depuis ce jour --
 // remplace un effet de bord accidentel de l'ancien `reduce()`, qui gardait le PREMIER trouvé sur une
 // égalité (sens inverse), jamais un choix délibéré ni documenté avant RG-037.
+// RG-038 (18/08/2026, voir plus bas) : si la modalité n'a pas de règle à elle qui couvre cette case,
+// repli sur la règle spéciale "Toutes les vraies vacations" (state.rules avec `activityId ===
+// ALL_REAL_VACATIONS_ID`) -- jamais pour Bureau/Off/Hors SISU.
 // Renvoie un objet APLATI (tous les champs du segment + `activityId`/`labelPrefix` du conteneur, plus
 // `ruleId` pour qui a besoin de retrouver le conteneur) -- forme IDENTIQUE à l'ancienne règle à plat,
 // donc tous les autres consommateurs (validateCompositionRules(), compositionShortfallMessage(), le
 // générateur automatique...) continuent de fonctionner sans aucun changement. Réutilisée aussi hors
 // du moteur de validation par hasSpecialiteMismatch() (contour rouge par personne, voir
 // buildAssignedChip()/buildModaliteTag()).
-function resolveCompositionRule(activityId, day, creneauId) {
-  const rule = state.rules.find((r) => r.activityId === activityId);
-  if (!rule) return null;
+// Résout le segment le plus spécifique (RG-036/037) d'UNE règle donnée pour ce jour+créneau -- pas
+// de notion de repli ici, juste l'algorithme de résolution à l'intérieur d'un seul conteneur.
+// Factorisé pour être appelé deux fois par resolveCompositionRule() (règle spécifique PUIS règle de
+// repli "Toutes les vraies vacations", RG-038).
+function resolveSegmentForRule(rule, day, creneauId) {
   const matches = rule.segments.filter((s) => s.creneaux.includes(creneauId) && s.days.includes(day));
   if (matches.length === 0) return null;
   let segment = matches[0];
@@ -165,7 +170,30 @@ function resolveCompositionRule(activityId, day, creneauId) {
     // `rule.segments`) remplace le précédent -- c'est ce qui fait gagner "le plus bas dans la liste".
     if (matches[i].days.length <= segment.days.length) segment = matches[i];
   }
-  return { ...segment, activityId: rule.activityId, labelPrefix: rule.labelPrefix, ruleId: rule.id };
+  return segment;
+}
+
+function resolveCompositionRule(activityId, day, creneauId) {
+  const specificRule = state.rules.find((r) => r.activityId === activityId);
+  if (specificRule) {
+    const segment = resolveSegmentForRule(specificRule, day, creneauId);
+    if (segment) return { ...segment, activityId, labelPrefix: specificRule.labelPrefix, ruleId: specificRule.id };
+  }
+  // RG-038 (18/08/2026, demande de Samir : "un bloc qui s'applique à toutes les vraies vacations") --
+  // repli : consulté SEULEMENT si la modalité elle-même n'a rien à dire pour cette case précise
+  // (aucune règle du tout, OU une règle qui existe mais ne couvre pas ce jour/créneau) -- une règle
+  // spécifique à la modalité gagne donc TOUJOURS quand elle a quelque chose à dire, quel que soit son
+  // nombre de jours (jamais de comparaison de spécificité entre les deux portées, qui n'aurait pas de
+  // sens). Jamais consulté pour Bureau/Off/Hors SISU (RG-038 : "vraies vacations" = tout sauf ces 3).
+  if (!isRealVacationActivity(activityId)) return null;
+  const fallbackRule = state.rules.find((r) => r.activityId === ALL_REAL_VACATIONS_ID);
+  if (!fallbackRule) return null;
+  const segment = resolveSegmentForRule(fallbackRule, day, creneauId);
+  if (!segment) return null;
+  // Le libellé affiché (messages de violation/recommandation) reste celui de la VRAIE modalité --
+  // jamais "Toutes les vraies vacations", qui rendrait les messages méconnaissables.
+  const activity = state.activities.find((a) => a.id === activityId);
+  return { ...segment, activityId, labelPrefix: activity ? activity.nom : activityId, ruleId: fallbackRule.id };
 }
 
 // Repère visuel CASE (11/08/2026, demande de Samir : "si une case ne contient pas assez d'interne/
@@ -388,7 +416,15 @@ function validateCompositionRules() {
   const violations = [];
   const recommendations = [];
 
-  const activityIds = [...new Set(state.rules.map((r) => r.activityId))];
+  // RG-038 (18/08/2026) : si la règle de repli "Toutes les vraies vacations" existe, TOUTE vraie
+  // vacation doit être visitée -- même celles qui n'ont aucune règle à elles -- pour que
+  // resolveCompositionRule() ait l'occasion d'appliquer son repli. Sans ça, une modalité sans règle
+  // propre ne serait jamais vérifiée du tout, malgré la règle de repli. Le conteneur de repli lui-même
+  // (`ALL_REAL_VACATIONS_ID`) est exclu de la liste -- ce n'est jamais une modalité à vérifier
+  // directement (state.activities.find() renverrait de toute façon `undefined` pour lui).
+  const specificActivityIds = state.rules.map((r) => r.activityId).filter((id) => id !== ALL_REAL_VACATIONS_ID);
+  const hasFallbackRule = state.rules.some((r) => r.activityId === ALL_REAL_VACATIONS_ID);
+  const activityIds = [...new Set(hasFallbackRule ? [...specificActivityIds, ...realVacationActivityIds()] : specificActivityIds)];
   activityIds.forEach((activityId) => {
     const activity = state.activities.find((a) => a.id === activityId);
     if (!activity) return;

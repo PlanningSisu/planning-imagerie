@@ -68,8 +68,15 @@
 const GENERATION_CRENEAUX_EQUITE = ["matin", "apres-midi"];
 
 // Les seules activités que ce générateur touche : celles qui ont au moins une règle de composition.
+// RG-038 (18/08/2026) : même logique que validateCompositionRules() (js/07-validation-rg.js) -- si la
+// règle de repli "Toutes les vraies vacations" existe, le générateur doit aussi tenter de combler
+// TOUTE vraie vacation, même celles sans règle propre (resolveCompositionRule() y appliquera le
+// repli). Sans ça, une modalité couverte seulement par le repli ne serait jamais touchée par le
+// générateur, malgré la règle qui s'y applique bel et bien.
 function generationActivityIds() {
-  return [...new Set(state.rules.map((r) => r.activityId))];
+  const specificActivityIds = state.rules.map((r) => r.activityId).filter((id) => id !== ALL_REAL_VACATIONS_ID);
+  const hasFallbackRule = state.rules.some((r) => r.activityId === ALL_REAL_VACATIONS_ID);
+  return [...new Set(hasFallbackRule ? [...specificActivityIds, ...realVacationActivityIds()] : specificActivityIds)];
 }
 
 // ⚠️ PROVISOIRE (11/08/2026, demande de Samir : "pour l'instant et pour les tests... tant que c'est
