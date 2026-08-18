@@ -84,8 +84,16 @@ const GENERATION_RESET_TO_TRAME_FIRST = true;
 // Vide state.assignments pour toutes les cases gérées par ce générateur (voir generationActivityIds())
 // sur la plage ciblée -- chaque case retombe sur sa trame (RG-017/RG-023), comme si elle n'avait
 // jamais été touchée, avant que runGeneration() ne recommence un remplissage complet. Ne touche à rien
-// en dehors du périmètre du générateur (Bureau/Off/Hors-sisu/fermetures intacts) ; une semaine
-// verrouillée n'est jamais vidée, comme partout ailleurs.
+// en dehors du périmètre du générateur (Bureau/Off/Hors-sisu intacts) ; une semaine verrouillée n'est
+// jamais vidée, comme partout ailleurs.
+// ⚠️ CORRECTIF (11/08/2026, retour de Samir : "tu conserves les vacations fermées") : une case FERMÉE
+// (RG-010) n'est plus vidée du tout -- avant ce correctif, `delete state.assignments[key]` effaçait
+// aussi le marqueur `[]` explicite qu'une fermeture y avait posé (voir setFermeture(), js/05-week.js),
+// cassant silencieusement la garantie documentée "rouvrir une fermeture ne restaure jamais personne"
+// (§6.9 CLAUDE.md) : la case, redevenue non-matérialisée, serait retombée sur la trame à la prochaine
+// réouverture au lieu de rester vide. `state.fermetures` lui-même n'a jamais été touché par cette
+// fonction (la fermeture restait donc déjà visible/active), seul son état interne d'assignments était
+// fragilisé -- ce correctif règle ça sans rien changer d'autre.
 function clearGenerationManagedRange(weekOffsets) {
   const activityIds = generationActivityIds();
   weekOffsets.forEach((offset) => {
@@ -95,7 +103,9 @@ function clearGenerationManagedRange(weekOffsets) {
       CRENEAUX.forEach((creneau) => {
         activityIds.forEach((activityId) => {
           if (!isCreneauApplicable(activityId, creneau.id)) return;
-          delete state.assignments[`${wk}|${activityId}|${day}|${creneau.id}`];
+          const key = `${wk}|${activityId}|${day}|${creneau.id}`;
+          if (state.fermetures[key]) return; // case fermée : jamais vidée.
+          delete state.assignments[key];
         });
       });
     });
@@ -569,7 +579,28 @@ function runGeneration(startWeekKeyPart, numWeeks) {
 
 document.getElementById("btnGenerate").addEventListener("click", () => {
   document.getElementById("moreMenu").classList.add("hidden");
-  const input = prompt("Générer le planning sur combien de semaines, à partir de la semaine actuelle ?", "4");
+
+  // Date de départ choisissable (11/08/2026, retour de Samir : "je veux qu'on puisse choisir la date
+  // de départ" -- avant ce jour, toujours la vraie semaine calendaire actuelle, `getMonday(0)`, jamais
+  // la semaine affichée/naviguée). Pré-rempli avec la semaine ACTUELLEMENT AFFICHÉE (state.weekOffset)
+  // -- un bon point de départ par défaut si Samir vient d'y naviguer avant de cliquer, sans jamais
+  // imposer cette semaine précise : n'importe quelle date de la semaine visée est acceptée, pas
+  // seulement un lundi (mondayOfDate(), déjà utilisée par la vue Stats en mode Période).
+  const defaultStartWeek = weekKey(getMonday(state.weekOffset));
+  const startInput = prompt(
+    "Générer à partir de quelle semaine ? (une date de cette semaine, AAAA-MM-JJ)",
+    defaultStartWeek
+  );
+  if (startInput === null) return;
+  const startDate = new Date(`${startInput}T00:00:00`);
+  if (isNaN(startDate.getTime())) {
+    alert("Date invalide (format attendu : AAAA-MM-JJ).");
+    return;
+  }
+  const startMonday = mondayOfDate(startDate);
+  const startWeekKeyPart = weekKey(startMonday);
+
+  const input = prompt("Générer le planning sur combien de semaines ?", "4");
   if (input === null) return;
   const numWeeks = parseInt(input, 10);
   if (!Number.isInteger(numWeeks) || numWeeks < 1 || numWeeks > 26) {
@@ -578,16 +609,15 @@ document.getElementById("btnGenerate").addEventListener("click", () => {
   }
   const weekWord = numWeeks > 1 ? "semaines" : "semaine";
   const behaviorText = GENERATION_RESET_TO_TRAME_FIRST
-    ? "MODE TEST : les affectations déjà posées sur ces semaines (générées ou à la main), pour les vacations gérées par le générateur, seront d'abord effacées puis entièrement refaites depuis la trame."
+    ? "MODE TEST : les affectations déjà posées sur ces semaines (générées ou à la main), pour les vacations gérées par le générateur, seront d'abord effacées puis entièrement refaites depuis la trame (les vacations fermées restent fermées)."
     : "Les cases déjà remplies à la main ne sont pas touchées, seuls les trous sont comblés.";
   if (
     !confirm(
-      `Générer automatiquement ${numWeeks} ${weekWord} à partir de la semaine actuelle ?\n\n${behaviorText} Les semaines verrouillées sont ignorées.`
+      `Générer automatiquement ${numWeeks} ${weekWord} à partir de la semaine du ${formatShort(startMonday)} ?\n\n${behaviorText} Les semaines verrouillées sont ignorées.`
     )
   )
     return;
 
-  const startWeekKeyPart = weekKey(getMonday(0));
   const { deviations, unresolved, weeksGenerated, lockedWeeksSkipped } = runGeneration(startWeekKeyPart, numWeeks);
 
   const lines = [`${weeksGenerated} ${weeksGenerated > 1 ? "semaines traitées" : "semaine traitée"}.`];
