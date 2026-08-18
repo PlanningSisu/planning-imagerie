@@ -1558,6 +1558,24 @@ tr.group-end td {
   font-size: 13px;
   text-align: center;
   vertical-align: middle;
+  cursor: pointer; /* 11/08/2026 : toute la case ouvre désormais le popover "Jours à signaler" */
+}
+/* "Jours à signaler" (11/08/2026, demande de Samir, "comme dans Jira") -- petit texte orange sous
+   la date de la semaine, visible seulement si state.weekDayFlags a au moins un jour pour cette
+   semaine. Orange plus saturé que le doré de .conges-week-annotated (#fbbf24) pour rester
+   distinguable si une semaine cumule les deux (annotation texte + jours signalés). */
+.conges-week-flags {
+  color: #ea580c;
+  font-size: 11px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+/* Pilule du popover "Jours à signaler" -- même gabarit que .conge-pill, coloré en orange (au lieu du
+   vert congé / indigo garde) pour rester cohérent avec .conges-week-flags ci-dessus. */
+.week-flag-pill.active {
+  background: #fff7ed;
+  color: #9a3412;
+  border-color: #ea580c;
 }
 /* Semaine en cours (getMonday(0), indépendant de state.weekOffset) -- repère "on est ici",
    demandé le 21/07/2026, en violet pour rester distinct du rouge d'absence (.conges-day-mark,

@@ -121,8 +121,28 @@ function renderCongesView() {
     // convention que personTooltip()/le libellé topbar).
     const weekNote = state.weekNotes[weekKey(monday)];
     label.className = "conges-week-label" + (isCurrentWeek ? " conges-current-week" : "") + (weekNote ? " conges-week-annotated" : "");
-    label.textContent = `${formatShort(monday)} → ${formatShort(friday)}`;
+    const labelText = document.createElement("div");
+    labelText.textContent = `${formatShort(monday)} → ${formatShort(friday)}`;
+    label.appendChild(labelText);
     if (weekNote) label.title = weekNote;
+
+    // "Jours à signaler" (11/08/2026, demande de Samir : "un jour d'indicateur comme dans Jira...
+    // des journées où y'a très peu de monde") -- purement visuel (state.weekDayFlags), affiché
+    // seulement si au moins un jour est signalé cette semaine-là. Clic sur la case (n'importe où,
+    // pas seulement sur ce petit drapeau) ouvre le popover pour choisir/retirer des jours.
+    const flaggedDays = state.weekDayFlags[weekKey(monday)] || [];
+    if (flaggedDays.length > 0) {
+      const flagsEl = document.createElement("div");
+      flagsEl.className = "conges-week-flags";
+      flagsEl.textContent = "🚩 " + flaggedDays.map((d) => d.slice(0, 3)).join(" ");
+      flagsEl.title = `Jours signalés : ${flaggedDays.join(", ")}`;
+      label.appendChild(flagsEl);
+    }
+    label.title = label.title || "Cliquer pour signaler des jours (ex. peu de monde)";
+    label.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openWeekDayFlagPopover(monday, label);
+    });
     tr.appendChild(label);
 
     people.forEach((p, i) => {
@@ -329,6 +349,73 @@ function renderCongePopoverContent(person, monday) {
     saveState();
     render();
     renderCongePopoverContent(person, monday);
+  });
+
+  document.getElementById("popClose").addEventListener("click", () => pop.classList.add("hidden"));
+}
+
+// "Jours à signaler" (11/08/2026, demande de Samir : "je veux pouvoir cliquer sur une semaine à
+// gauche... choisir des jours... mis en surbrillance... un jour d'indicateur comme dans Jira, je
+// m'en servirai pour indiquer des journées où y'a très peu de monde"). Ajoute/retire `day` du
+// tableau `state.weekDayFlags[wk]` -- même convention que weekNotes pour la clé vide : jamais un
+// tableau `[]` qui traîne, la clé est retirée entièrement dès que le dernier jour est décoché.
+function toggleWeekDayFlag(wk, day) {
+  const current = state.weekDayFlags[wk] || [];
+  if (current.includes(day)) {
+    const next = current.filter((d) => d !== day);
+    if (next.length === 0) delete state.weekDayFlags[wk];
+    else state.weekDayFlags[wk] = next;
+  } else {
+    state.weekDayFlags[wk] = [...current, day];
+  }
+}
+
+// Popover "Jours à signaler" -- ouvert par un clic sur la case de semaine (colonne de gauche) de la
+// vue Congés. Réutilise #assignPopover (même élément que le popover congé/garde d'une personne) --
+// jamais ouvert en même temps que lui, donc aucun conflit à gérer.
+function openWeekDayFlagPopover(monday, cellEl) {
+  const pop = document.getElementById("assignPopover");
+  renderWeekDayFlagPopoverContent(monday);
+  positionPopover(pop, cellEl);
+}
+
+// Même patron que renderCongePopoverContent() (rangée de pilules jour par jour, un clic = toggle
+// immédiat, pas de bouton "Enregistrer" séparé) mais sans notion de personne -- juste un signal
+// libre par jour de la semaine cliquée, purement visuel (voir toggleWeekDayFlag()).
+function renderWeekDayFlagPopoverContent(monday) {
+  const pop = document.getElementById("assignPopover");
+  pop.style.minWidth = "260px";
+  const wk = weekKey(monday);
+  const friday = new Date(monday);
+  friday.setDate(monday.getDate() + 4);
+  const flagged = new Set(state.weekDayFlags[wk] || []);
+
+  pop.innerHTML = `
+    <span class="close-btn" id="popClose">×</span>
+    <strong>Jours à signaler</strong><br>
+    <span style="font-size:12px;color:#6b7280;">${formatShort(monday)} → ${formatShort(friday)}</span>
+    <div class="conge-pill-group">
+      <div class="conge-pill-label">Peu de monde ce jour-là</div>
+      <div class="conge-pill-row" id="weekFlagPillRow"></div>
+    </div>
+  `;
+
+  const row = document.getElementById("weekFlagPillRow");
+  DAYS.forEach((day, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "conge-pill week-flag-pill" + (flagged.has(day) ? " active" : "");
+    btn.textContent = `${day.slice(0, 3)} ${d.getDate()}`;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleWeekDayFlag(wk, day);
+      saveState();
+      render();
+      renderWeekDayFlagPopoverContent(monday);
+    });
+    row.appendChild(btn);
   });
 
   document.getElementById("popClose").addEventListener("click", () => pop.classList.add("hidden"));

@@ -6,7 +6,7 @@
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 16;
+const STATE_SCHEMA_VERSION = 17;
 
 // Moteur de règles paramétrable (09/08/2026, voir moteur-regles-brouillon.md) : remplace les
 // anciennes RG-002/003/007/009/012 codées en dur par des données éditables depuis l'écran "Règles"
@@ -196,6 +196,11 @@ const STATE_MIGRATIONS = {
   // n'existait avant, donc rien n'était vérifié -- comportement inchangé tant que Samir n'en coche
   // aucune).
   15: (data) => ({ ...data, fixedRuleToggles: data.fixedRuleToggles || {} }),
+  // 16 -> 17 : ajout de `weekDayFlags` (11/08/2026, "jours à signaler" dans la vue Congés -- demande
+  // de Samir : "un jour d'indicateur comme dans Jira... des journées où y'a très peu de monde"). Un
+  // fichier plus ancien n'a jamais eu ce champ -- objet vide = aucun jour signalé, comportement
+  // inchangé (purement visuel, ne pilote aucune règle).
+  16: (data) => ({ ...data, weekDayFlags: data.weekDayFlags || {} }),
 };
 
 function migrateState(rawData) {
@@ -225,7 +230,7 @@ function migrateState(rawData) {
 // pour ne jamais en oublier un dans l'un des trois chemins). Délibérément SANS `activities` (piloté
 // par le code, jamais par des données utilisateur -- voir CLAUDE.md §4) ni `schemaVersion` (ajouté à
 // part par buildPersistedState()).
-const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "statsColumnVisibility", "statsCounterMode", "customColors", "weekLocks", "weekNotes", "rules", "rulesGroupOrder", "globalRules", "gardeRule", "fixedRuleToggles"];
+const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "statsColumnVisibility", "statsCounterMode", "customColors", "weekLocks", "weekNotes", "rules", "rulesGroupOrder", "globalRules", "gardeRule", "fixedRuleToggles", "weekDayFlags"];
 
 // Personnalisation (25/07/2026, ⚙ → "Personnalisation") : quelques couleurs éditables depuis
 // l'appli sans toucher au code -- une entrée par variable CSS `--custom-xxx` (voir :root dans
@@ -422,6 +427,12 @@ let state = {
   // comme weekLocks (clé = weekKey), jamais réinitialisé par "Réinitialiser le planning". Clé absente
   // ou vide = pas d'annotation pour cette semaine.
   weekNotes: {}, // key: weekKey (Lundi ISO) -> texte libre
+  // "Jours à signaler" (11/08/2026, vue Congés, demande de Samir : "un jour d'indicateur comme dans
+  // Jira... des journées où y'a très peu de monde") -- purement visuel, ne pilote aucune règle/
+  // validation, juste un repère manuel. Clé absente ou tableau vide = rien signalé cette semaine-là ;
+  // une entrée jamais laissée à `[]` (voir toggleWeekDayFlag(), js/10-vue-conges.js -- la clé est
+  // retirée entièrement dès que le dernier jour coché est décoché, même convention que weekNotes).
+  weekDayFlags: {}, // key: weekKey (Lundi ISO) -> tableau de DAYS (ex. ["Jeudi", "Vendredi"])
 };
 
 function loadState() {
