@@ -63,6 +63,7 @@ const RG_REFERENCE = [
   { code: "RG-034", label: "Répartition 1/3 urgence-spé1-spé2 (internes double-spé, générateur uniquement)" },
   { code: "RG-035", label: RG_035_LABEL },
   { code: "RG-036", label: "Une règle = une modalité, plusieurs segments jour/créneau/composition" },
+  { code: "RG-037", label: "Conflit entre segments à égale spécificité : le plus bas dans la liste gagne" },
 ];
 
 // Repliée par défaut (34 entrées -- trop long pour rester ouvert en permanence) -- transitoire,

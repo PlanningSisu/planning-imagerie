@@ -133,8 +133,21 @@ function checkComposition(assigned, comp, rg, label, violations, recommendations
 // (state.rules, une seule règle par activityId depuis le 18/08/2026, voir DEFAULT_COMPOSITION_RULES
 // dans js/03-state.js) s'y applique. "Le segment le plus spécifique gagne" : entre deux segments qui
 // couvriraient le même jour, la portée avec le MOINS de jours l'emporte (ex. RG-007 sur "Jeudi" seul
-// face à un segment "tous les jours" qui le couvrirait aussi) -- même algorithme qu'avant la
-// restructuration en segments, juste appliqué à `rule.segments` plutôt qu'à `state.rules` entier.
+// face à un segment "tous les jours" qui le couvrirait aussi). Un segment ne s'additionne JAMAIS à un
+// autre -- le plus spécifique remplace entièrement le plus générique (toute sa composition, pas
+// seulement le champ qui diffère).
+//
+// RG-037 (18/08/2026, retour de Samir sur la résolution des conflits) : à spécificité STRICTEMENT
+// égale (même nombre de jours, ex. Lundi+Jeudi vs Jeudi+Vendredi -- deux segments à 2 jours qui
+// couvrent tous les deux Jeudi), le segment le PLUS BAS dans la liste (`rule.segments`, l'ordre
+// réordonnable par glisser-déposer à l'écran, §6.49) l'emporte -- même logique que Samir avait
+// proposée pour un ordre global ("celui du dessous prime"), mais bornée au SEUL cas où la
+// spécificité ne suffit déjà pas à trancher (voir CLAUDE.md §6.61 pour la discussion complète :
+// un ordre qui prime sur TOUTE la résolution, même quand la spécificité donnerait déjà la bonne
+// réponse, a été jugé trop risqué -- un simple glissé cosmétique pourrait alors inverser
+// silencieusement une composition réelle sans aucun signal à l'écran). Explicite depuis ce jour --
+// remplace un effet de bord accidentel de l'ancien `reduce()`, qui gardait le PREMIER trouvé sur une
+// égalité (sens inverse), jamais un choix délibéré ni documenté avant RG-037.
 // Renvoie un objet APLATI (tous les champs du segment + `activityId`/`labelPrefix` du conteneur, plus
 // `ruleId` pour qui a besoin de retrouver le conteneur) -- forme IDENTIQUE à l'ancienne règle à plat,
 // donc tous les autres consommateurs (validateCompositionRules(), compositionShortfallMessage(), le
@@ -146,7 +159,12 @@ function resolveCompositionRule(activityId, day, creneauId) {
   if (!rule) return null;
   const matches = rule.segments.filter((s) => s.creneaux.includes(creneauId) && s.days.includes(day));
   if (matches.length === 0) return null;
-  const segment = matches.reduce((best, s) => (s.days.length < best.days.length ? s : best));
+  let segment = matches[0];
+  for (let i = 1; i < matches.length; i++) {
+    // <= (pas <) : à nombre de jours ÉGAL, le segment rencontré EN DERNIER (donc le plus bas dans
+    // `rule.segments`) remplace le précédent -- c'est ce qui fait gagner "le plus bas dans la liste".
+    if (matches[i].days.length <= segment.days.length) segment = matches[i];
+  }
   return { ...segment, activityId: rule.activityId, labelPrefix: rule.labelPrefix, ruleId: rule.id };
 }
 
