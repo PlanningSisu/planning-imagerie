@@ -379,7 +379,17 @@ function validateCompositionRules() {
         // "il manque quelqu'un" (ici) et "cette personne ne devrait pas être là" (RG-014), jamais
         // fusionnés en un seul message.
         const present = allAssigned.filter((p) => !isPersonAbsentOnSlot(p.id, day, creneau.id));
-        checkComposition(present, rule, rule.rg, label, violations, recommendations);
+        // RG-035 (18/08/2026) : coché, désactive complètement le volet "interne" de la composition
+        // pour Jeudi matin, sur TOUTES les modalités qui ont une règle -- pas de violation "interne
+        // manquant", pas de recommandation liée (trop d'internes, encourageInterneGrowth). Les
+        // séniors restent vérifiés normalement. Clone (pas de mutation de `rule`, référencé ailleurs
+        // -- écran Règles, générateur) : interneMin/interneMax à null = "internes non réglementés
+        // par cette règle", même mécanisme que RG-007 (interneMin déjà null nativement).
+        const effectiveComp =
+          state.fixedRuleToggles["RG-035"] && day === "Jeudi" && creneau.id === "matin"
+            ? { ...rule, interneMin: null, interneMax: null, encourageInterneGrowth: false }
+            : rule;
+        checkComposition(present, effectiveComp, rule.rg, label, violations, recommendations);
 
         // Spécialité (RG-001) : une violation par personne présente qui ne correspond pas, jamais une
         // seule ligne pour toute la case (voir hasSpecialiteMismatch()). Passe-droit (10/08/2026) :
@@ -554,6 +564,16 @@ const FIXED_RULE_FAMILIES = {
   "RG-032": { label: "Pas de Echo U toute la journée", activityIds: ["echo-u"], messageSuffix: "posté(e) sur Echo U toute la journée" },
   "RG-033": { label: "Pas de Scan U ou Echo U toute la journée", activityIds: ["scan-u", "echo-u"], messageSuffix: "posté(e) sur Scan U/Echo U toute la journée" },
 };
+
+// RG-035 (18/08/2026, "pas d'alerte si pas d'interne posté sur toutes les vacations le jeudi
+// matin") : contrairement aux 5 règles ci-dessus (qui AJOUTENT une recommandation via
+// validateFixedFamilyRules), celle-ci SUPPRIME une alerte déjà produite ailleurs (le manque
+// d'interne calculé par checkComposition() dans validateCompositionRules(), voir plus bas) --
+// mécaniquement différente, donc pas dans FIXED_RULE_FAMILIES (qui suppose toujours une détection
+// "même personne postée matin+après-midi"). Reste dans le même sac de state.fixedRuleToggles
+// (déjà un objet générique RG-XXX -> booléen, aucune migration nécessaire) et dans la même zone
+// "Règles fixes" à l'écran -- juste un libellé de plus, sans configuration, comme les autres.
+const RG_035_LABEL = "Pas d'alerte \"interne manquant\" le Jeudi matin (toutes vacations)";
 
 // Renvoie l'ensemble des staffId postés sur au moins une activité de `activityIds` pour ce
 // jour+créneau précis -- une case fermée (RG-010) n'est jamais comptée.

@@ -54,6 +54,7 @@ const RG_REFERENCE = [
   { code: "RG-032", label: FIXED_RULE_FAMILIES["RG-032"].label },
   { code: "RG-033", label: FIXED_RULE_FAMILIES["RG-033"].label },
   { code: "RG-034", label: "Répartition 1/3 urgence-spé1-spé2 (internes double-spé, générateur uniquement)" },
+  { code: "RG-035", label: RG_035_LABEL },
 ];
 
 // Repliée par défaut (33 entrées -- trop long pour rester ouvert en permanence) -- transitoire,
@@ -115,6 +116,10 @@ function renderFixedRulesSection(container) {
           <span class="validation-rg rg-recommendation">${rg}</span> ${label}
         </label>
       `).join("")}
+      <label class="fixed-rule-option">
+        <input type="checkbox" class="fixedRuleToggle" value="RG-035" ${state.fixedRuleToggles["RG-035"] ? "checked" : ""}>
+        <span class="validation-rg rg-recommendation">RG-035</span> ${RG_035_LABEL}
+      </label>
     </div>
   `;
   [...container.querySelectorAll(".fixedRuleToggle")].forEach((cb) => {
