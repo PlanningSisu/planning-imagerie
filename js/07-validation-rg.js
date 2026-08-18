@@ -166,7 +166,12 @@ function compositionShortfallMessage(activityId, day, creneauId) {
   const nbSeniors = present.filter((p) => p.grade === "senior").length;
   const nbInternes = present.filter((p) => p.grade !== "senior").length;
   const seniorShort = Math.max(0, rule.seniorMin - nbSeniors);
-  const interneShort = rule.interneMin !== null ? Math.max(0, rule.interneMin - nbInternes) : 0;
+  // RG-035 (18/08/2026) : même suppression que dans validateCompositionRules() -- doit rester en
+  // synchro avec elle, sinon la case resterait entourée en rouge alors que la violation a disparu
+  // de la liste. interneMin traité comme "non réglementé" pour Jeudi matin quand la case est cochée.
+  const interneMinEffective =
+    state.fixedRuleToggles["RG-035"] && day === "Jeudi" && creneauId === "matin" ? null : rule.interneMin;
+  const interneShort = interneMinEffective !== null ? Math.max(0, interneMinEffective - nbInternes) : 0;
   if (seniorShort === 0 && interneShort === 0) return null;
   const seniorPart = seniorShort > 0 ? `${plural(seniorShort, "sénior")} manquant${seniorShort > 1 ? "s" : ""}` : null;
   const internePart = interneShort > 0 ? `${plural(interneShort, "interne")} manquant${interneShort > 1 ? "s" : ""}` : null;
