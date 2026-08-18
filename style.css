@@ -2206,6 +2206,35 @@ tr.group-end td {
   padding: 0;
   text-decoration: underline;
 }
+/* Grille Jours x Créneaux (18/08/2026, RG-039) -- remplace les deux groupes de cases indépendants
+   (Créneau(x) + Jours) dans le formulaire de règle : une case par (jour, créneau), pour cocher des
+   créneaux différents d'un jour à l'autre au sein d'un même segment. Boutons d'en-tête (colonne =
+   créneau, ligne = jour) pour cocher/décocher toute une colonne/ligne d'un coup. */
+.rule-schedule-grid {
+  border-collapse: collapse;
+  margin-top: 6px;
+  font-size: 13px;
+}
+.rule-schedule-grid th,
+.rule-schedule-grid td {
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  text-align: center;
+}
+.rule-schedule-grid thead th { background: #f8fafc; }
+.rule-schedule-grid tbody th { text-align: left; background: #f8fafc; }
+.rule-schedule-grid .rule-col-toggle,
+.rule-schedule-grid .rule-row-toggle {
+  background: none;
+  border: none;
+  color: #1f2937;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+.rule-schedule-grid .rule-col-toggle:hover,
+.rule-schedule-grid .rule-row-toggle:hover { color: #2563eb; text-decoration: underline; }
 .rule-preview {
   background: #f1f5f9;
   border-radius: 6px;

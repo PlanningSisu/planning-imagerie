@@ -6,7 +6,7 @@
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 18;
+const STATE_SCHEMA_VERSION = 19;
 
 // Moteur de règles paramétrable (09/08/2026, voir moteur-regles-brouillon.md) : remplace les
 // anciennes RG-002/003/007/009/012 codées en dur par des données éditables depuis l'écran "Règles"
@@ -35,25 +35,35 @@ const STATE_SCHEMA_VERSION = 18;
 // pour deux segments différents), jamais le même `id`. Pour les 5 segments historiques, `id` reprend
 // le code RG-XXX (déjà unique) ; un segment créé depuis l'écran génère un id via generateSegmentId()
 // (js/21-vue-regles.js) et utilise le nom de la modalité comme `rg` (label).
+// `creneauxByDay` (18/08/2026, RG-039, remplace `days`/`creneaux`) : construit un objet {jour ->
+// tableau de créneaux} en répétant les MÊMES créneaux sur une liste de jours -- pur confort d'écriture
+// pour amorcer DEFAULT_COMPOSITION_RULES (le cas historique "mêmes créneaux tous les jours listés"),
+// jamais utilisé au runtime (le formulaire construit `creneauxByDay` case par case depuis la grille).
+function creneauxByDayFor(days, creneaux) {
+  const result = {};
+  days.forEach((d) => { result[d] = creneaux; });
+  return result;
+}
+
 const DEFAULT_COMPOSITION_RULES = [
   {
     id: "rule-scan-u", activityId: "scan-u", labelPrefix: "Scan U",
     segments: [
       {
-        id: "RG-002", rg: "RG-002", creneaux: ["matin"],
-        days: ["Lundi", "Mardi", "Mercredi", "Vendredi"],
+        id: "RG-002", rg: "RG-002",
+        creneauxByDay: creneauxByDayFor(["Lundi", "Mardi", "Mercredi", "Vendredi"], ["matin"]),
         seniorMin: 1, seniorMax: 1, interneMin: 2, interneMax: 2, requireSpecialite: false,
       },
       {
-        id: "RG-007", rg: "RG-007", creneaux: ["matin"], days: ["Jeudi"],
+        id: "RG-007", rg: "RG-007", creneauxByDay: creneauxByDayFor(["Jeudi"], ["matin"]),
         seniorMin: 2, seniorMax: 2, interneMin: null, interneMax: null, requireSpecialite: false,
       },
       {
-        id: "RG-003", rg: "RG-003", creneaux: ["apres-midi"], days: DAYS,
+        id: "RG-003", rg: "RG-003", creneauxByDay: creneauxByDayFor(DAYS, ["apres-midi"]),
         seniorMin: 2, seniorMax: 2, interneMin: 1, interneMax: 2, encourageInterneGrowth: true, requireSpecialite: false,
       },
       {
-        id: "RG-012", rg: "RG-012", creneaux: ["astreinte"], days: DAYS,
+        id: "RG-012", rg: "RG-012", creneauxByDay: creneauxByDayFor(DAYS, ["astreinte"]),
         seniorMin: 0, seniorMax: 0, interneMin: 1, interneMax: null, requireSpecialite: false,
         mentionSeniorInText: false, allowSubstitution: false,
         seniorExcessMessage: "l'astreinte n'accueille que des internes",
@@ -68,23 +78,30 @@ const DEFAULT_COMPOSITION_RULES = [
     id: "rule-scan-a", activityId: "scan-a", labelPrefix: "Scan A",
     segments: [
       {
-        id: "RG-009", rg: "RG-009", creneaux: ["matin", "apres-midi"], days: DAYS,
+        id: "RG-009", rg: "RG-009", creneauxByDay: creneauxByDayFor(DAYS, ["matin", "apres-midi"]),
         seniorMin: 1, seniorMax: 1, interneMin: 1, interneMax: 2, encourageInterneGrowth: true, requireSpecialite: false,
       },
     ],
   },
 ];
 
+// Clone un segment sans jamais partager de référence avec l'original -- `creneauxByDay` est un objet
+// de tableaux (pas juste des tableaux de primitifs comme `days`/`creneaux` avant RG-039), donc un
+// simple `{...s}` laisserait `creneauxByDay` ET chacun de ses tableaux-jour partagés par référence.
+function cloneSegment(s) {
+  const creneauxByDay = {};
+  Object.entries(s.creneauxByDay).forEach(([day, creneaux]) => { creneauxByDay[day] = [...creneaux]; });
+  return { ...s, creneauxByDay };
+}
+
 // Clone DEFAULT_COMPOSITION_RULES (ou tout tableau de règles au format conteneur+segments) sans
 // jamais partager de référence d'objet avec la constante -- un simple `{...r}` par règle ne suffit
-// plus depuis la restructuration en segments (18/08/2026) : `r.segments` resterait le MÊME tableau
-// (et les MÊMES objets segment) que la constante, donc modifier un segment depuis l'écran (qui fait
-// `Object.assign(existingSegment, payload)`, une mutation EN PLACE) mystifierait silencieusement
-// DEFAULT_COMPOSITION_RULES pour le reste de la session. Clone donc aussi chaque segment (`days`/
-// `creneaux` restent des références partagées avec la constante, mais jamais mutées en place --
-// toujours remplacées en entier par le formulaire, comme avant cette restructuration).
+// pas : `r.segments` resterait le MÊME tableau (et les MÊMES objets segment) que la constante, donc
+// modifier un segment depuis l'écran (qui fait `Object.assign(existingSegment, payload)`, une
+// mutation EN PLACE) mystifierait silencieusement DEFAULT_COMPOSITION_RULES pour le reste de la
+// session.
 function cloneCompositionRules(rules) {
-  return rules.map((r) => ({ ...r, segments: r.segments.map((s) => ({ ...s })) }));
+  return rules.map((r) => ({ ...r, segments: r.segments.map(cloneSegment) }));
 }
 
 // Règle de garde (10/08/2026, "Rajoute moi un bloc 'règle de garde' qui permet de choisir la
@@ -242,7 +259,28 @@ const STATE_MIGRATIONS = {
   // strictement inchangé pour un fichier existant : resolveCompositionRule() résout la même
   // combinaison jour/créneau vers le même segment qu'avant vers la même règle (voir cette fonction).
   17: (data) => ({ ...data, rules: mergeFlatRulesIntoContainers(Array.isArray(data.rules) ? data.rules : []) }),
+  // 18 -> 19 : chaque segment passe de `days`/`creneaux` (deux listes indépendantes, mêmes créneaux
+  // forcés sur tous les jours choisis) à `creneauxByDay` (18/08/2026, RG-039, "je veux dans le même
+  // segment pouvoir dire Lundi Matin, Mardi toute la journée et Vendredi après midi"). Comportement de
+  // résolution strictement inchangé pour un fichier existant : convertToCreneauxByDay() reproduit
+  // exactement le même ensemble jour×créneau qu'avant (le produit cartésien days×creneaux), juste sous
+  // une forme qui permet désormais de diverger jour par jour pour un NOUVEAU segment créé après coup.
+  18: (data) => ({ ...data, rules: convertSegmentsToCreneauxByDay(Array.isArray(data.rules) ? data.rules : []) }),
 };
+
+// Convertit chaque segment `{days, creneaux, ...}` (forme d'avant le 18/08/2026 second changement du
+// jour, RG-039) en `{creneauxByDay, ...}` -- utilisé uniquement par STATE_MIGRATIONS[18] ci-dessus.
+function convertSegmentsToCreneauxByDay(rules) {
+  return rules.map((r) => ({
+    ...r,
+    segments: r.segments.map((s) => {
+      const { days, creneaux, ...rest } = s;
+      const creneauxByDay = {};
+      (days || []).forEach((d) => { creneauxByDay[d] = [...(creneaux || [])]; });
+      return { ...rest, creneauxByDay };
+    }),
+  }));
+}
 
 // Regroupe un tableau de règles À PLAT (forme d'avant le 18/08/2026 -- une entrée = une modalité +
 // UN SEUL jeu de jours/créneaux/composition) en conteneurs "une règle par modalité, plusieurs

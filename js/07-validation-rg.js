@@ -161,14 +161,22 @@ function checkComposition(assigned, comp, rg, label, violations, recommendations
 // de notion de repli ici, juste l'algorithme de résolution à l'intérieur d'un seul conteneur.
 // Factorisé pour être appelé deux fois par resolveCompositionRule() (règle spécifique PUIS règle de
 // repli "Toutes les vraies vacations", RG-038).
+// RG-039 (18/08/2026, "je veux dans le même segment pouvoir dire Lundi Matin, Mardi toute la journée
+// et Vendredi après-midi") : un segment ne porte plus `days`/`creneaux` (deux listes indépendantes,
+// qui forçaient les MÊMES créneaux sur tous les jours choisis) mais `creneauxByDay` -- objet {jour ->
+// tableau de créneaux}, un jour absent (ou à tableau vide) = pas couvert ce jour-là. Un segment couvre
+// donc une case (jour, créneau) précise si `creneauxByDay[day]` existe et inclut `creneauId`.
+function segmentSpecificity(s) {
+  return Object.keys(s.creneauxByDay).filter((d) => (s.creneauxByDay[d] || []).length > 0).length;
+}
 function resolveSegmentForRule(rule, day, creneauId) {
-  const matches = rule.segments.filter((s) => s.creneaux.includes(creneauId) && s.days.includes(day));
+  const matches = rule.segments.filter((s) => (s.creneauxByDay[day] || []).includes(creneauId));
   if (matches.length === 0) return null;
   let segment = matches[0];
   for (let i = 1; i < matches.length; i++) {
-    // <= (pas <) : à nombre de jours ÉGAL, le segment rencontré EN DERNIER (donc le plus bas dans
-    // `rule.segments`) remplace le précédent -- c'est ce qui fait gagner "le plus bas dans la liste".
-    if (matches[i].days.length <= segment.days.length) segment = matches[i];
+    // <= (pas <) : à nombre de jours ÉGAL (RG-037), le segment rencontré EN DERNIER (donc le plus bas
+    // dans `rule.segments`) remplace le précédent -- c'est ce qui fait gagner "le plus bas dans la liste".
+    if (segmentSpecificity(matches[i]) <= segmentSpecificity(segment)) segment = matches[i];
   }
   return segment;
 }

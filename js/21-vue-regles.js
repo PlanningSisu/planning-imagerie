@@ -77,6 +77,7 @@ const RG_REFERENCE = [
   { code: "RG-036", label: "Une règle = une modalité, plusieurs segments jour/créneau/composition" },
   { code: "RG-037", label: "Conflit entre segments à égale spécificité : le plus bas dans la liste gagne" },
   { code: "RG-038", label: "Règle de repli \"Toutes les vraies vacations\" (hors Bureau/Off/Hors SISU)" },
+  { code: "RG-039", label: "Grille Jours x Créneaux : créneaux différents par jour dans un même segment" },
 ];
 
 // Repliée par défaut (34 entrées -- trop long pour rester ouvert en permanence) -- transitoire,
@@ -99,6 +100,39 @@ function describeRuleComposition(rule) {
   }
   if (seniorPart && internePart) return `${seniorPart} + ${internePart}`;
   return seniorPart || internePart || "aucune composition minimale";
+}
+
+// RG-039 (18/08/2026, demande de Samir : "je veux dans le même segment pouvoir dire Scan U, Lundi
+// Matin, Mardi toute la journée et Vendredi après midi => 1 seul sénior") : décrit le planning d'un
+// segment dont les créneaux peuvent différer d'un jour à l'autre (`segment.creneauxByDay`, voir
+// js/03-state.js -- remplace `days`/`creneaux`, deux listes indépendantes qui forçaient les MÊMES
+// créneaux sur tous les jours choisis). Cas courant (les 5 jours avec exactement les mêmes créneaux)
+// condensé en "Tous les jours (...)" ; sinon, un groupe par jour dans l'ordre canonique.
+function describeSegmentSchedule(segment) {
+  const presentDays = DAYS.filter((d) => (segment.creneauxByDay[d] || []).length > 0);
+  if (presentDays.length === 0) return "aucun jour/créneau sélectionné";
+  const setKey = (d) => (segment.creneauxByDay[d] || []).slice().sort().join(",");
+  const firstKey = setKey(presentDays[0]);
+  const allSame = presentDays.length === DAYS.length && presentDays.every((d) => setKey(d) === firstKey);
+  if (allSame) {
+    return `Tous les jours (${segment.creneauxByDay[presentDays[0]].map(creneauLabel).join(" + ")})`;
+  }
+  return presentDays.map((d) => `${d} (${segment.creneauxByDay[d].map(creneauLabel).join(" + ")})`).join(", ");
+}
+
+// Garde-fou anti-doublon (RG-036/RG-039) : deux segments couvrent-ils EXACTEMENT le même ensemble de
+// cases jour+créneau ? Comparaison en ensembles (jours présents + créneaux de chaque jour), jamais en
+// ordre -- même principe que l'ancien `sameSet()` sur des tableaux `days`/`creneaux` séparés, adapté à
+// la nouvelle forme où les créneaux peuvent différer par jour.
+function sameCreneauxByDay(a, b) {
+  const daysA = Object.keys(a).filter((d) => (a[d] || []).length > 0).sort();
+  const daysB = Object.keys(b).filter((d) => (b[d] || []).length > 0).sort();
+  if (daysA.length !== daysB.length || daysA.some((d, i) => d !== daysB[i])) return false;
+  return daysA.every((d) => {
+    const setA = a[d].slice().sort().join(",");
+    const setB = (b[d] || []).slice().sort().join(",");
+    return setA === setB;
+  });
 }
 
 // Index de toutes les RG (voir RG_REFERENCE ci-dessus) -- repliable, juste pour retrouver un numéro
@@ -285,8 +319,7 @@ function renderRulesList(container) {
     section.appendChild(headerRow);
 
     rule.segments.forEach((segment) => {
-      const daysText = segment.days.length === DAYS.length ? "Tous les jours" : segment.days.join(", ");
-      const creneauxText = segment.creneaux.map(creneauLabel).join(" + ");
+      const scheduleText = describeSegmentSchedule(segment); // RG-039
 
       const row = document.createElement("div");
       row.className = "rules-row";
@@ -332,7 +365,7 @@ function renderRulesList(container) {
       const desc = document.createElement("div");
       desc.className = "rules-row-desc";
       desc.innerHTML =
-        `<strong>${daysText}</strong> — ${creneauxText}<br>` +
+        `<strong>${scheduleText}</strong><br>` +
         `${describeRuleComposition(segment)} attendu(s)` +
         (segment.requireSpecialite ? ' <span class="rules-badge-spec">Spécialité exigée</span>' : "");
       row.appendChild(desc);
@@ -362,7 +395,7 @@ function renderRulesList(container) {
       delBtn.className = "staff-modal-delete";
       delBtn.textContent = "Supprimer";
       delBtn.addEventListener("click", () => {
-        if (!confirm(`Supprimer ce segment (${activity.nom}, ${daysText}, ${creneauxText}) ?`)) return;
+        if (!confirm(`Supprimer ce segment (${activity.nom}, ${scheduleText}) ?`)) return;
         rule.segments = rule.segments.filter((s) => s.id !== segment.id);
         // Plus aucun segment -- la règle entière (le bloc) n'a plus lieu d'exister : cohérent avec le
         // fait qu'"+ Ajouter une règle" ne propose que les modalités qui n'ont pas encore de règle.
@@ -933,18 +966,32 @@ function renderRuleForm(container, existingSegment, prefillFrom, opts) {
         <select id="ruleActivity" ${lockedActivityId ? "disabled" : ""}>${activityOptions}</select>
       </div>
       <div class="form-row">
-        <label>Créneau(x)</label>
-        <div class="rule-checkbox-group">
-          <label><input type="checkbox" class="ruleCreneau" value="matin"> Matin</label>
-          <label id="ruleCreneauAstreinteLabel"><input type="checkbox" class="ruleCreneau" value="astreinte" id="ruleCreneauAstreinte"> Astreinte</label>
-          <label><input type="checkbox" class="ruleCreneau" value="apres-midi"> Après-midi</label>
-        </div>
-      </div>
-      <div class="form-row">
-        <label>Jours <button type="button" id="ruleAllDays" class="rule-link-btn">(tous les jours)</button></label>
-        <div class="rule-checkbox-group">
-          ${DAYS.map((d) => `<label><input type="checkbox" class="ruleDay" value="${d}"> ${d}</label>`).join("")}
-        </div>
+        <label>
+          Jours / Créneaux
+          <button type="button" id="ruleAllCells" class="rule-link-btn">(tout cocher)</button>
+          <button type="button" id="ruleNoCells" class="rule-link-btn">(tout décocher)</button>
+        </label>
+        <span class="form-hint">Coche les créneaux qui s'appliquent, jour par jour -- ils peuvent différer d'un jour à l'autre (ex. Lundi matin seul, Mardi toute la journée). Clique un en-tête pour cocher/décocher toute une colonne ou toute une ligne (hors Astreinte).</span>
+        <table class="rule-schedule-grid" id="ruleScheduleGrid">
+          <thead>
+            <tr>
+              <th></th>
+              <th><button type="button" class="rule-col-toggle" data-creneau="matin">Matin</button></th>
+              <th id="ruleAstreinteColHeader"><button type="button" class="rule-col-toggle" data-creneau="astreinte">Astreinte</button></th>
+              <th><button type="button" class="rule-col-toggle" data-creneau="apres-midi">Après-midi</button></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${DAYS.map((d) => `
+              <tr>
+                <th><button type="button" class="rule-row-toggle" data-day="${d}">${d}</button></th>
+                <td><input type="checkbox" class="ruleCell" data-day="${d}" data-creneau="matin"></td>
+                <td class="ruleAstreinteCell"><input type="checkbox" class="ruleCell" data-day="${d}" data-creneau="astreinte"></td>
+                <td><input type="checkbox" class="ruleCell" data-day="${d}" data-creneau="apres-midi"></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
       </div>
       <div class="form-row">
         <label for="ruleSeniorMin">Séniors minimum</label>
@@ -1002,8 +1049,11 @@ function renderRuleForm(container, existingSegment, prefillFrom, opts) {
   container.scrollIntoView({ behavior: "auto", block: "start" });
 
   const activitySelect = document.getElementById("ruleActivity");
-  const creneauCheckboxes = [...container.querySelectorAll(".ruleCreneau")];
-  const dayCheckboxes = [...container.querySelectorAll(".ruleDay")];
+  // Grille Jours×Créneaux (RG-039) -- remplace les deux groupes de cases indépendants (Créneau(x) +
+  // Jours) : une case par (jour, créneau), pour pouvoir cocher des créneaux différents d'un jour à
+  // l'autre au sein d'un même segment (ex. Lundi matin seul, Mardi toute la journée, Vendredi
+  // après-midi seul).
+  const cellCheckboxes = [...container.querySelectorAll(".ruleCell")];
   const seniorMinInput = document.getElementById("ruleSeniorMin");
   const seniorMaxInput = document.getElementById("ruleSeniorMax");
   const interneRegulatedCheckbox = document.getElementById("ruleInterneRegulated");
@@ -1014,14 +1064,27 @@ function renderRuleForm(container, existingSegment, prefillFrom, opts) {
   const requireSpecialiteCheckbox = document.getElementById("ruleRequireSpecialite");
   const astreinteExclusivitySelect = document.getElementById("ruleAstreinteExclusivityMode");
 
+  // Construit `creneauxByDay` depuis l'état actuel de la grille -- utilisé par l'aperçu ET la
+  // sauvegarde, jamais désynchronisés puisque c'est la même fonction.
+  const buildCreneauxByDayFromGrid = () => {
+    const result = {};
+    DAYS.forEach((d) => {
+      const checked = cellCheckboxes.filter((cb) => cb.dataset.day === d && cb.checked).map((cb) => cb.dataset.creneau);
+      if (checked.length > 0) result[d] = checked;
+    });
+    return result;
+  };
+
   // La modalité n'est plus lue depuis `source.activityId` (un segment n'en porte plus, voir
   // DEFAULT_COMPOSITION_RULES dans js/03-state.js) -- `prefillActivityId` calculé plus haut couvre à
   // la fois le cas verrouillé (déjà la seule <option>, ceci est un no-op) et le cas Copier (sélecteur
   // libre, prérempli avec la modalité du segment source).
   if (prefillActivityId) activitySelect.value = prefillActivityId;
   if (source) {
-    creneauCheckboxes.forEach((cb) => { cb.checked = source.creneaux.includes(cb.value); });
-    dayCheckboxes.forEach((cb) => { cb.checked = source.days.includes(cb.value); });
+    cellCheckboxes.forEach((cb) => {
+      const dayCreneaux = source.creneauxByDay[cb.dataset.day] || [];
+      cb.checked = dayCreneaux.includes(cb.dataset.creneau);
+    });
     seniorMinInput.value = source.seniorMin;
     seniorMaxInput.value = source.seniorMax !== source.seniorMin ? source.seniorMax : "";
     const interneRegulated = source.interneMin !== null;
@@ -1036,47 +1099,80 @@ function renderRuleForm(container, existingSegment, prefillFrom, opts) {
     astreinteExclusivitySelect.value = source.astreinteExclusivityMode || "off";
   }
 
-  // Astreinte : réservée à Scan U (RG-012/isCreneauApplicable) -- masquée pour toute autre modalité,
-  // même patron que les popovers d'assignation existants.
+  // Astreinte : réservée à Scan U (RG-012/isCreneauApplicable) -- colonne entière masquée pour toute
+  // autre modalité (en-tête + chaque case), même patron que les popovers d'assignation existants.
   const updateAstreinteVisibility = () => {
     const isScanU = activitySelect.value === "scan-u";
-    document.getElementById("ruleCreneauAstreinteLabel").style.display = isScanU ? "inline-flex" : "none";
-    if (!isScanU) document.getElementById("ruleCreneauAstreinte").checked = false;
+    document.getElementById("ruleAstreinteColHeader").style.display = isScanU ? "" : "none";
+    container.querySelectorAll(".ruleAstreinteCell").forEach((td) => { td.style.display = isScanU ? "" : "none"; });
+    if (!isScanU) {
+      cellCheckboxes.forEach((cb) => { if (cb.dataset.creneau === "astreinte") cb.checked = false; });
+    }
     updateAstreinteExclusivityVisibility();
   };
-  // RG-027 (10/08/2026) : le réglage "Éviter Scan U/Echo U le même jour" n'a de sens QUE pour la
-  // règle qui couvre le créneau astreinte lui-même -- masqué sinon (même logique que le créneau
-  // Astreinte, réservée à Scan U). Revérifié à chaque changement de modalité (via updateAstreinteVisibility()
-  // ci-dessus) ET à chaque coche/décoche du créneau Astreinte directement.
+  // RG-027 (10/08/2026) : le réglage "Éviter Scan U/Echo U le même jour" n'a de sens QUE si AU MOINS
+  // UNE case Astreinte de la grille est cochée -- masqué sinon (même logique que la colonne Astreinte,
+  // réservée à Scan U). Revérifié à chaque changement de modalité ET à chaque coche/décoche d'une
+  // case Astreinte précise (peu importe le jour).
   const updateAstreinteExclusivityVisibility = () => {
-    document.getElementById("ruleAstreinteExclusivityRow").style.display =
-      document.getElementById("ruleCreneauAstreinte").checked ? "block" : "none";
+    const anyAstreinte = cellCheckboxes.some((cb) => cb.dataset.creneau === "astreinte" && cb.checked);
+    document.getElementById("ruleAstreinteExclusivityRow").style.display = anyAstreinte ? "block" : "none";
   };
-  document.getElementById("ruleCreneauAstreinte").addEventListener("change", updateAstreinteExclusivityVisibility);
   const updateInterneFieldsVisibility = () => {
     document.getElementById("ruleInterneFields").style.display = interneRegulatedCheckbox.checked ? "block" : "none";
   };
   const updatePreview = () => {
     const preview = document.getElementById("rulePreview");
-    const days = dayCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
-    const creneaux = creneauCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
-    const daysText = days.length === DAYS.length ? "tous les jours" : days.join(", ") || "aucun jour sélectionné";
-    const creneauxText = creneaux.map(creneauLabel).join(" + ") || "aucun créneau sélectionné";
+    const scheduleText = describeSegmentSchedule({ creneauxByDay: buildCreneauxByDayFromGrid() });
     const seniorMin = Math.max(0, parseInt(seniorMinInput.value, 10) || 0);
     const interneRegulated = interneRegulatedCheckbox.checked;
     const interneMin = interneRegulated ? Math.max(0, parseInt(interneMinInput.value, 10) || 0) : null;
     const composition = describeRuleComposition({ seniorMin, interneMin, interneMax: interneMin, mentionSeniorInText: true });
-    preview.textContent = `Aperçu : ${creneauxText}, ${daysText} — ${composition} attendu(s).`;
+    preview.textContent = `Aperçu : ${scheduleText} — ${composition} attendu(s).`;
   };
 
   activitySelect.addEventListener("change", () => { updateAstreinteVisibility(); updatePreview(); });
   interneRegulatedCheckbox.addEventListener("change", () => { updateInterneFieldsVisibility(); updatePreview(); });
-  [...creneauCheckboxes, ...dayCheckboxes, seniorMinInput, seniorMaxInput, interneMinInput, interneMaxInput].forEach((el) => {
+  [seniorMinInput, seniorMaxInput, interneMinInput, interneMaxInput].forEach((el) => {
     el.addEventListener("input", updatePreview);
     el.addEventListener("change", updatePreview);
   });
-  document.getElementById("ruleAllDays").addEventListener("click", () => {
-    dayCheckboxes.forEach((cb) => { cb.checked = true; });
+  cellCheckboxes.forEach((cb) => {
+    cb.addEventListener("change", () => {
+      if (cb.dataset.creneau === "astreinte") updateAstreinteExclusivityVisibility();
+      updatePreview();
+    });
+  });
+  // Bascule d'une colonne (créneau) entière -- ignore les cases masquées (Astreinte hors Scan U).
+  container.querySelectorAll(".rule-col-toggle").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const creneau = btn.dataset.creneau;
+      const colCells = cellCheckboxes.filter((cb) => cb.dataset.creneau === creneau && cb.closest("td").style.display !== "none");
+      const allChecked = colCells.length > 0 && colCells.every((cb) => cb.checked);
+      colCells.forEach((cb) => { cb.checked = !allChecked; });
+      updateAstreinteExclusivityVisibility();
+      updatePreview();
+    });
+  });
+  // Bascule d'une ligne (jour) entière -- Matin + Après-midi seulement ("toute la journée") : l'
+  // Astreinte est un concept à part, jamais incluse dans ce raccourci, se coche via sa propre colonne.
+  container.querySelectorAll(".rule-row-toggle").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const day = btn.dataset.day;
+      const rowCells = cellCheckboxes.filter((cb) => cb.dataset.day === day && cb.dataset.creneau !== "astreinte");
+      const allChecked = rowCells.every((cb) => cb.checked);
+      rowCells.forEach((cb) => { cb.checked = !allChecked; });
+      updatePreview();
+    });
+  });
+  document.getElementById("ruleAllCells").addEventListener("click", () => {
+    cellCheckboxes.forEach((cb) => { if (cb.closest("td").style.display !== "none") cb.checked = true; });
+    updateAstreinteExclusivityVisibility();
+    updatePreview();
+  });
+  document.getElementById("ruleNoCells").addEventListener("click", () => {
+    cellCheckboxes.forEach((cb) => { cb.checked = false; });
+    updateAstreinteExclusivityVisibility();
     updatePreview();
   });
 
@@ -1092,10 +1188,8 @@ function renderRuleForm(container, existingSegment, prefillFrom, opts) {
 
     const activityId = activitySelect.value;
     const activity = resolveRuleActivity(activityId);
-    const creneaux = creneauCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
-    const days = dayCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
-    if (creneaux.length === 0) { errorEl.textContent = "Choisis au moins un créneau."; return; }
-    if (days.length === 0) { errorEl.textContent = "Choisis au moins un jour."; return; }
+    const creneauxByDay = buildCreneauxByDayFromGrid();
+    if (Object.keys(creneauxByDay).length === 0) { errorEl.textContent = "Choisis au moins une case jour/créneau."; return; }
 
     const seniorMin = Math.max(0, parseInt(seniorMinInput.value, 10) || 0);
     const seniorMaxRaw = parseInt(seniorMaxInput.value, 10);
@@ -1110,15 +1204,12 @@ function renderRuleForm(container, existingSegment, prefillFrom, opts) {
       interneMax = Number.isFinite(interneMaxRaw) ? Math.max(interneMin, interneMaxRaw) : interneMin;
     }
 
-    // Garde-fou anti-doublon (moteur-regles-brouillon.md §5) : même modalité + mêmes créneaux + mêmes
-    // jours qu'un autre SEGMENT déjà existant DE CETTE MÊME RÈGLE (18/08/2026 -- avant la
-    // restructuration, comparait contre tout state.rules ; désormais une règle == une modalité, donc
-    // comparer contre les segments du conteneur cible revient exactement au même résultat).
-    // Comparaison en ensembles, pas en ordre.
-    const sameSet = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
+    // Garde-fou anti-doublon (moteur-regles-brouillon.md §5) : même modalité + même ensemble EXACT de
+    // cases jour/créneau qu'un autre SEGMENT déjà existant DE CETTE MÊME RÈGLE -- une règle == une
+    // modalité, donc comparer contre les segments du conteneur cible suffit.
     const targetContainer = state.rules.find((r) => r.activityId === activityId);
     const duplicate = targetContainer && targetContainer.segments.find((s) =>
-      s.id !== (existingSegment && existingSegment.id) && sameSet(s.creneaux, creneaux) && sameSet(s.days, days)
+      s.id !== (existingSegment && existingSegment.id) && sameCreneauxByDay(s.creneauxByDay, creneauxByDay)
     );
     if (duplicate) {
       errorEl.textContent = `Un segment existe déjà pour ${activity.nom} sur ce même périmètre (${duplicate.rg}) -- modifie-le plutôt que d'en créer un second.`;
@@ -1126,7 +1217,7 @@ function renderRuleForm(container, existingSegment, prefillFrom, opts) {
     }
 
     const payload = {
-      creneaux, days, seniorMin, seniorMax, interneMin, interneMax,
+      creneauxByDay, seniorMin, seniorMax, interneMin, interneMax,
       encourageInterneGrowth: encourageGrowthCheckbox.checked,
       allowSubstitution: substitutionCheckbox.checked,
       requireSpecialite: requireSpecialiteCheckbox.checked,
