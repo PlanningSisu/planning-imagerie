@@ -6,7 +6,7 @@
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 17;
+const STATE_SCHEMA_VERSION = 18;
 
 // Moteur de règles paramétrable (09/08/2026, voir moteur-regles-brouillon.md) : remplace les
 // anciennes RG-002/003/007/009/012 codées en dur par des données éditables depuis l'écran "Règles"
@@ -16,45 +16,76 @@ const STATE_SCHEMA_VERSION = 17;
 // entre <script> séparés, voir CLAUDE.md §2 point 4). `validateCompositionRules()`/
 // `resolveCompositionRule()` (js/07-validation-rg.js) lisent `state.rules` à l'exécution, jamais
 // cette constante directement -- elle ne sert qu'à amorcer un fichier neuf ou migrer un ancien
-// (STATE_MIGRATIONS[10] juste en dessous). Reproduit EXACTEMENT RG-002/003/007/009/012 telles
-// qu'elles étaient codées en dur avant le 09/08/2026 (vérifié par comparaison automatisée avant/
-// après le refactor) -- `requireSpecialite: false` partout par défaut, personne n'a encore activé
-// cette vérification.
-// `id` identifie la règle de façon unique (édition/suppression depuis l'écran) -- DISTINCT de `rg`,
-// qui n'est qu'un LABEL affiché (le badge coloré devant chaque violation/recommandation) : deux
-// règles de la même modalité pourraient un jour partager le même `rg` (ex. "Scan B" pour deux règles
-// différentes de la même activité), jamais le même `id`. Pour ces 5 règles historiques, `id` reprend
-// simplement le code RG-XXX (déjà unique) ; une règle créée depuis l'écran génère un id via
-// generateRuleId() (js/21-vue-regles.js) et utilise le nom de la modalité comme `rg` (label).
+// (STATE_MIGRATIONS[10]/[17] plus bas).
+//
+// Restructurée le 18/08/2026 (RG-036, "je veux pouvoir dans la même fenêtre de modification choisir
+// jour par jour si la règle s'applique le matin ou l'après-midi ou les deux") : UNE règle = UNE
+// modalité (`activityId`/`labelPrefix`, partagés), contenant plusieurs SEGMENTS -- chacun son propre
+// jour(s)/créneau(x)/composition, exactement ce qu'une règle "à plat" portait seule avant ce
+// changement. Ce qui était 4 règles séparées pour Scan U (RG-002/003/007/012) devient une seule
+// règle à 4 segments. `resolveCompositionRule()` (js/07-validation-rg.js) résout d'abord la modalité
+// (une seule règle par activityId désormais, imposé par l'écran) puis le segment le plus spécifique
+// (même algorithme "le moins de jours gagne" qu'avant, juste déplacé d'un cran) -- elle renvoie un
+// objet APLATI (segment + activityId/labelPrefix du conteneur) identique en forme à l'ancienne règle
+// à plat, donc TOUS les autres consommateurs (validateCompositionRules(), compositionShortfallMessage(),
+// le générateur automatique...) continuent de fonctionner sans aucun changement.
+// `rule.id` identifie la règle/modalité ; `segment.id` identifie un segment dans `rule.segments` --
+// DISTINCT de `segment.rg`, qui n'est qu'un LABEL affiché (le badge coloré devant chaque violation/
+// recommandation) : deux segments de la même modalité peuvent partager le même `rg` (ex. "Scan B"
+// pour deux segments différents), jamais le même `id`. Pour les 5 segments historiques, `id` reprend
+// le code RG-XXX (déjà unique) ; un segment créé depuis l'écran génère un id via generateSegmentId()
+// (js/21-vue-regles.js) et utilise le nom de la modalité comme `rg` (label).
 const DEFAULT_COMPOSITION_RULES = [
   {
-    id: "RG-002", rg: "RG-002", activityId: "scan-u", labelPrefix: "Scan U", creneaux: ["matin"],
-    days: ["Lundi", "Mardi", "Mercredi", "Vendredi"],
-    seniorMin: 1, seniorMax: 1, interneMin: 2, interneMax: 2, requireSpecialite: false,
+    id: "rule-scan-u", activityId: "scan-u", labelPrefix: "Scan U",
+    segments: [
+      {
+        id: "RG-002", rg: "RG-002", creneaux: ["matin"],
+        days: ["Lundi", "Mardi", "Mercredi", "Vendredi"],
+        seniorMin: 1, seniorMax: 1, interneMin: 2, interneMax: 2, requireSpecialite: false,
+      },
+      {
+        id: "RG-007", rg: "RG-007", creneaux: ["matin"], days: ["Jeudi"],
+        seniorMin: 2, seniorMax: 2, interneMin: null, interneMax: null, requireSpecialite: false,
+      },
+      {
+        id: "RG-003", rg: "RG-003", creneaux: ["apres-midi"], days: DAYS,
+        seniorMin: 2, seniorMax: 2, interneMin: 1, interneMax: 2, encourageInterneGrowth: true, requireSpecialite: false,
+      },
+      {
+        id: "RG-012", rg: "RG-012", creneaux: ["astreinte"], days: DAYS,
+        seniorMin: 0, seniorMax: 0, interneMin: 1, interneMax: null, requireSpecialite: false,
+        mentionSeniorInText: false, allowSubstitution: false,
+        seniorExcessMessage: "l'astreinte n'accueille que des internes",
+        socleReinforcementIfSingleInterne: true,
+        // RG-027 (10/08/2026) : "off" par défaut -- ne change rien tant que Samir ne l'active pas
+        // explicitement depuis l'écran "Règles" (même prudence que requireSpecialite: false partout).
+        astreinteExclusivityMode: "off",
+      },
+    ],
   },
   {
-    id: "RG-007", rg: "RG-007", activityId: "scan-u", labelPrefix: "Scan U", creneaux: ["matin"], days: ["Jeudi"],
-    seniorMin: 2, seniorMax: 2, interneMin: null, interneMax: null, requireSpecialite: false,
-  },
-  {
-    id: "RG-003", rg: "RG-003", activityId: "scan-u", labelPrefix: "Scan U", creneaux: ["apres-midi"], days: DAYS,
-    seniorMin: 2, seniorMax: 2, interneMin: 1, interneMax: 2, encourageInterneGrowth: true, requireSpecialite: false,
-  },
-  {
-    id: "RG-012", rg: "RG-012", activityId: "scan-u", labelPrefix: "Scan U", creneaux: ["astreinte"], days: DAYS,
-    seniorMin: 0, seniorMax: 0, interneMin: 1, interneMax: null, requireSpecialite: false,
-    mentionSeniorInText: false, allowSubstitution: false,
-    seniorExcessMessage: "l'astreinte n'accueille que des internes",
-    socleReinforcementIfSingleInterne: true,
-    // RG-027 (10/08/2026) : "off" par défaut -- ne change rien tant que Samir ne l'active pas
-    // explicitement depuis l'écran "Règles" (même prudence que requireSpecialite: false partout).
-    astreinteExclusivityMode: "off",
-  },
-  {
-    id: "RG-009", rg: "RG-009", activityId: "scan-a", labelPrefix: "Scan A", creneaux: ["matin", "apres-midi"], days: DAYS,
-    seniorMin: 1, seniorMax: 1, interneMin: 1, interneMax: 2, encourageInterneGrowth: true, requireSpecialite: false,
+    id: "rule-scan-a", activityId: "scan-a", labelPrefix: "Scan A",
+    segments: [
+      {
+        id: "RG-009", rg: "RG-009", creneaux: ["matin", "apres-midi"], days: DAYS,
+        seniorMin: 1, seniorMax: 1, interneMin: 1, interneMax: 2, encourageInterneGrowth: true, requireSpecialite: false,
+      },
+    ],
   },
 ];
+
+// Clone DEFAULT_COMPOSITION_RULES (ou tout tableau de règles au format conteneur+segments) sans
+// jamais partager de référence d'objet avec la constante -- un simple `{...r}` par règle ne suffit
+// plus depuis la restructuration en segments (18/08/2026) : `r.segments` resterait le MÊME tableau
+// (et les MÊMES objets segment) que la constante, donc modifier un segment depuis l'écran (qui fait
+// `Object.assign(existingSegment, payload)`, une mutation EN PLACE) mystifierait silencieusement
+// DEFAULT_COMPOSITION_RULES pour le reste de la session. Clone donc aussi chaque segment (`days`/
+// `creneaux` restent des références partagées avec la constante, mais jamais mutées en place --
+// toujours remplacées en entier par le formulaire, comme avant cette restructuration).
+function cloneCompositionRules(rules) {
+  return rules.map((r) => ({ ...r, segments: r.segments.map((s) => ({ ...s })) }));
+}
 
 // Règle de garde (10/08/2026, "Rajoute moi un bloc 'règle de garde' qui permet de choisir la
 // composition des personnes de garde") -- remplace la composition RG-015 codée en dur
@@ -140,7 +171,7 @@ const STATE_MIGRATIONS = {
   // premier chargement après mise à jour.
   10: (data) => ({
     ...data,
-    rules: Array.isArray(data.rules) ? data.rules : DEFAULT_COMPOSITION_RULES.map((r) => ({ ...r })),
+    rules: Array.isArray(data.rules) ? data.rules : cloneCompositionRules(DEFAULT_COMPOSITION_RULES),
   }),
   // 11 -> 12 : correction du piège de fuseau horaire de weekKey() (09/08/2026, voir sa déclaration
   // dans js/05-week.js) -- utilisait `.toISOString()` (conversion UTC), ce qui décale TOUJOURS
@@ -201,7 +232,38 @@ const STATE_MIGRATIONS = {
   // fichier plus ancien n'a jamais eu ce champ -- objet vide = aucun jour signalé, comportement
   // inchangé (purement visuel, ne pilote aucune règle).
   16: (data) => ({ ...data, weekDayFlags: data.weekDayFlags || {} }),
+  // 17 -> 18 : restructuration de `rules` en conteneur+segments (18/08/2026, RG-036, "je veux pouvoir
+  // dans la même fenêtre de modification choisir jour par jour si la règle s'applique le matin ou
+  // l'après-midi ou les deux") -- voir le commentaire au-dessus de DEFAULT_COMPOSITION_RULES pour le
+  // détail de la nouvelle forme. Regroupe les anciennes règles À PLAT par `activityId` (ordre de
+  // première apparition préservé) ; chaque ancienne règle devient un SEGMENT de la règle de sa
+  // modalité (activityId/labelPrefix remontent au conteneur, partagés par tous ses segments -- ils
+  // étaient déjà identiques entre toutes les anciennes règles d'une même modalité). Comportement
+  // strictement inchangé pour un fichier existant : resolveCompositionRule() résout la même
+  // combinaison jour/créneau vers le même segment qu'avant vers la même règle (voir cette fonction).
+  17: (data) => ({ ...data, rules: mergeFlatRulesIntoContainers(Array.isArray(data.rules) ? data.rules : []) }),
 };
+
+// Regroupe un tableau de règles À PLAT (forme d'avant le 18/08/2026 -- une entrée = une modalité +
+// UN SEUL jeu de jours/créneaux/composition) en conteneurs "une règle par modalité, plusieurs
+// segments dedans" -- utilisé uniquement par STATE_MIGRATIONS[17] ci-dessus (fichier écrit avant la
+// restructuration). Générateur d'id auto-suffisant (pas d'appel à generateRuleId(), défini dans
+// js/21-vue-regles.js qui charge après ce fichier -- safe de toute façon puisque cette fonction n'est
+// jamais exécutée au chargement, voir CLAUDE.md §2 point 4, mais autant rester indépendant).
+function mergeFlatRulesIntoContainers(flatRules) {
+  const byActivity = new Map();
+  flatRules.forEach((r) => {
+    if (!byActivity.has(r.activityId)) byActivity.set(r.activityId, { labelPrefix: r.labelPrefix, segments: [] });
+    const { activityId, labelPrefix, ...segmentFields } = r;
+    byActivity.get(r.activityId).segments.push(segmentFields);
+  });
+  return [...byActivity.entries()].map(([activityId, group], i) => ({
+    id: "rule" + Date.now().toString(36) + i + Math.random().toString(36).slice(2, 6),
+    activityId,
+    labelPrefix: group.labelPrefix,
+    segments: group.segments,
+  }));
+}
 
 function migrateState(rawData) {
   let data = rawData;
@@ -382,7 +444,7 @@ let state = {
   // Moteur de règles paramétrable (09/08/2026) : composition attendue par vacation, éditable depuis
   // l'écran "Règles" -- voir DEFAULT_COMPOSITION_RULES juste au-dessus pour la forme d'une règle et
   // js/07-validation-rg.js pour l'interpréteur générique (validateCompositionRules()).
-  rules: DEFAULT_COMPOSITION_RULES.map((r) => ({ ...r })),
+  rules: cloneCompositionRules(DEFAULT_COMPOSITION_RULES),
   // Ordre des BLOCS par modalité de l'écran Règles (09/08/2026, réordonnables par glisser-déposer
   // des en-têtes de bloc, ex. "Scan A" avant "Scan U") -- distinct de l'ordre des règles À
   // L'INTÉRIEUR d'un bloc (déjà géré par l'ordre naturel de `state.rules`). Valeur par défaut =

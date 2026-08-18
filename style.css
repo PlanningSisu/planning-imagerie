@@ -2055,6 +2055,12 @@ tr.group-end td {
 .rules-header h3 { margin: 0; font-size: 15px; }
 .rules-header .btn-primary { margin-bottom: 0; }
 .rules-activity-group { margin-bottom: 18px; }
+/* En-tête de bloc (18/08/2026, RG-036) : le <h3> (titre/plier-déplier/glisser le bloc) et le bouton
+   "+ Segment" côte à côte -- le bouton reste HORS du <h3> pour ne jamais déclencher son propre clic
+   (plier/déplier) ni son glissé (réordonnancement des blocs), voir js/21-vue-regles.js. */
+.rules-group-header-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rules-group-header-row h3 { flex: 1; margin: 0 0 6px; }
+.rules-add-segment-btn { margin-bottom: 6px; padding: 4px 10px; font-size: 12px; flex-shrink: 0; }
 .rules-activity-group h3 {
   font-size: 13px;
   font-weight: 700;

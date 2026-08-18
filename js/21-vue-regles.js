@@ -8,6 +8,13 @@ function generateRuleId() {
   return "rule" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
+// Segment (18/08/2026, RG-036) : jeu jour(s)/créneau(x)/composition à l'intérieur d'une règle (une
+// règle = une modalité, plusieurs segments possibles) -- id distinct de generateRuleId() (qui
+// identifie la règle/modalité elle-même), même format sinon.
+function generateSegmentId() {
+  return "seg" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
 // Plier/déplier les blocs de modalité (10/08/2026, demande de Samir : "aider à la visibilité") --
 // transitoire, jamais persisté (repart tout déplié à chaque rechargement, comme staffModalSearchQuery
 // et les autres petits états de vue de ce genre) : un Set d'`activityId` actuellement PLIÉS, vide par
@@ -55,9 +62,10 @@ const RG_REFERENCE = [
   { code: "RG-033", label: FIXED_RULE_FAMILIES["RG-033"].label },
   { code: "RG-034", label: "Répartition 1/3 urgence-spé1-spé2 (internes double-spé, générateur uniquement)" },
   { code: "RG-035", label: RG_035_LABEL },
+  { code: "RG-036", label: "Une règle = une modalité, plusieurs segments jour/créneau/composition" },
 ];
 
-// Repliée par défaut (33 entrées -- trop long pour rester ouvert en permanence) -- transitoire,
+// Repliée par défaut (34 entrées -- trop long pour rester ouvert en permanence) -- transitoire,
 // jamais persisté, même patron que `collapsedRuleGroups` ci-dessus.
 let rgIndexExpanded = false;
 
@@ -156,7 +164,9 @@ function renderRulesView() {
   renderFixedRulesSection(document.getElementById("fixedRulesSection"));
   document.getElementById("btnAddRule").addEventListener("click", () => {
     document.getElementById("btnAddRule").blur();
-    renderRuleForm(document.getElementById("ruleFormContainer"), null);
+    // Ne propose que les modalités qui n'ont pas encore de règle (18/08/2026, RG-036) -- pour ajouter
+    // un cas à une modalité déjà pourvue, "+ Segment" depuis son bloc (voir renderRulesList()).
+    renderRuleForm(document.getElementById("ruleFormContainer"), null, null, { restrictToUnusedModalities: true });
   });
   document.getElementById("btnAddGlobalRule").addEventListener("click", () => {
     document.getElementById("btnAddGlobalRule").blur();
@@ -180,15 +190,22 @@ function renderRulesList(container) {
     .filter(Boolean);
 
   orderedActivities.forEach((activity) => {
-    const rulesForActivity = state.rules.filter((r) => r.activityId === activity.id);
-    if (rulesForActivity.length === 0) return;
+    // Une seule règle par modalité depuis le 18/08/2026 (RG-036) -- state.rules.find(), plus .filter().
+    const rule = state.rules.find((r) => r.activityId === activity.id);
+    if (!rule) return;
     anyRule = true;
 
     const isCollapsed = collapsedRuleGroups.has(activity.id);
     const section = document.createElement("div");
     section.className = "rules-activity-group" + (isCollapsed ? " collapsed" : "");
+
+    // En-tête du bloc : le <h3> (titre + plier/déplier + glisser pour réordonner le BLOC) et le
+    // bouton "+ Segment" (18/08/2026) côte à côte plutôt que le bouton DANS le <h3> -- évite tout
+    // conflit avec son propre clic (plier/déplier)/glissé (réordonnancement des blocs).
+    const headerRow = document.createElement("div");
+    headerRow.className = "rules-group-header-row";
     const h3 = document.createElement("h3");
-    h3.innerHTML = `<span class="rules-group-chevron">▾</span> ${activity.nom} <span class="rules-group-count">${plural(rulesForActivity.length, "règle")}</span>`;
+    h3.innerHTML = `<span class="rules-group-chevron">▾</span> ${activity.nom} <span class="rules-group-count">${plural(rule.segments.length, "segment")}</span>`;
     h3.title = "Cliquer pour plier/déplier -- glisser pour réordonner ce bloc";
     // Plier/déplier (10/08/2026) : un simple clic (mousedown+mouseup sans déplacement) ne déclenche
     // jamais dragstart -- les deux gestes cohabitent sans conflit, testé en vrai. Ne touche qu'à
@@ -198,10 +215,10 @@ function renderRulesList(container) {
       else collapsedRuleGroups.add(activity.id);
       renderRulesList(container);
     });
-    // Glisser-déposer du BLOC entier (pas juste ses règles) -- réordonne state.rulesGroupOrder.
+    // Glisser-déposer du BLOC entier (pas juste ses segments) -- réordonne state.rulesGroupOrder.
     // `dataset.activityId` identifie le bloc ; le drop insère le bloc déplacé juste avant/après le
     // bloc cible selon le sens du glissé, même logique que le réordonnancement des `.rules-row`
-    // au-dessus et des colonnes Stats (§6.24).
+    // plus bas et des colonnes Stats (§6.24).
     h3.draggable = true;
     h3.dataset.activityId = activity.id;
     h3.addEventListener("dragstart", (e) => {
@@ -234,27 +251,41 @@ function renderRulesList(container) {
       saveState();
       render();
     });
-    section.appendChild(h3);
+    headerRow.appendChild(h3);
 
-    rulesForActivity.forEach((rule) => {
-      const daysText = rule.days.length === DAYS.length ? "Tous les jours" : rule.days.join(", ");
-      const creneauxText = rule.creneaux.map(creneauLabel).join(" + ");
+    // "+ Segment" (18/08/2026, RG-036) : ajoute un segment à CETTE règle (modalité déjà fixée, pas de
+    // sélecteur de modalité dans le formulaire -- voir renderRuleForm()). stopPropagation() pour ne
+    // jamais déclencher le clic plier/déplier du <h3> voisin.
+    const addSegBtn = document.createElement("button");
+    addSegBtn.type = "button";
+    addSegBtn.className = "btn-primary btn-outline rules-add-segment-btn";
+    addSegBtn.textContent = "+ Segment";
+    addSegBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      renderRuleForm(document.getElementById("ruleFormContainer"), null, null, { lockedActivityId: activity.id });
+    });
+    headerRow.appendChild(addSegBtn);
+    section.appendChild(headerRow);
+
+    rule.segments.forEach((segment) => {
+      const daysText = segment.days.length === DAYS.length ? "Tous les jours" : segment.days.join(", ");
+      const creneauxText = segment.creneaux.map(creneauLabel).join(" + ");
 
       const row = document.createElement("div");
       row.className = "rules-row";
       // Réordonnable par glisser-déposer (09/08/2026, demande de Samir : "important pour la suite
-      // pour leur donner une priorité") -- même patron que les colonnes Stats (§6.24) : `dataset.ruleId`
-      // identifie la ligne, le drop déplace la règle dans `state.rules` (l'ordre du tableau EST
-      // l'ordre affiché/persisté, pas de champ séparé). Limité en pratique aux règles de la MÊME
-      // modalité (chaque groupe est un conteneur DOM à part, impossible de glisser d'un groupe à
-      // l'autre à la souris) -- resolveCompositionRule() n'utilise pas encore cet ordre pour
-      // départager un chevauchement (toujours "le moins de jours gagne", voir sa déclaration) ; cet
-      // ordre est pour l'instant purement une préférence d'affichage de Samir, la vraie priorité
-      // viendra plus tard.
+      // pour leur donner une priorité") -- même patron que les colonnes Stats (§6.24) : `dataset.segmentId`
+      // identifie la ligne, le drop déplace le segment dans `rule.segments` (l'ordre du tableau EST
+      // l'ordre affiché/persisté, pas de champ séparé). Un id de segment est unique globalement, donc
+      // `findIndex` renvoyant -1 suffit à refuser un glissé venu d'un AUTRE bloc (plus besoin de
+      // comparer explicitement une modalité, contrairement à avant la restructuration en segments).
+      // resolveCompositionRule() n'utilise pas encore cet ordre pour départager un chevauchement
+      // (toujours "le moins de jours gagne", voir sa déclaration) ; cet ordre est pour l'instant
+      // purement une préférence d'affichage de Samir, la vraie priorité viendra plus tard.
       row.draggable = true;
-      row.dataset.ruleId = rule.id;
+      row.dataset.segmentId = segment.id;
       row.addEventListener("dragstart", (e) => {
-        e.dataTransfer.setData("text/plain", rule.id);
+        e.dataTransfer.setData("text/plain", segment.id);
         e.dataTransfer.effectAllowed = "move";
         row.classList.add("dragging");
       });
@@ -268,15 +299,15 @@ function renderRulesList(container) {
         e.preventDefault();
         row.classList.remove("drag-over");
         const draggedId = e.dataTransfer.getData("text/plain");
-        if (!draggedId || draggedId === rule.id) return;
-        const draggedRule = state.rules.find((r) => r.id === draggedId);
-        if (!draggedRule || draggedRule.activityId !== rule.activityId) return; // pas de glissé entre modalités différentes
-        const fromIdx = state.rules.indexOf(draggedRule);
-        const targetIdxBefore = state.rules.indexOf(rule); // avant retrait, pour connaître le sens du glissé
-        state.rules.splice(fromIdx, 1);
-        let insertAt = state.rules.indexOf(rule); // position de la cible après retrait (a pu décaler de 1)
+        if (!draggedId || draggedId === segment.id) return;
+        const fromIdx = rule.segments.findIndex((s) => s.id === draggedId);
+        if (fromIdx === -1) return; // pas un segment de ce même bloc
+        const draggedSegment = rule.segments[fromIdx];
+        const targetIdxBefore = rule.segments.findIndex((s) => s.id === segment.id); // avant retrait, pour le sens du glissé
+        rule.segments.splice(fromIdx, 1);
+        let insertAt = rule.segments.findIndex((s) => s.id === segment.id); // position de la cible après retrait (a pu décaler de 1)
         if (fromIdx < targetIdxBefore) insertAt += 1; // glissé vers l'avant -> insertion APRÈS la cible
-        state.rules.splice(insertAt, 0, draggedRule);
+        rule.segments.splice(insertAt, 0, draggedSegment);
         saveState();
         render();
       });
@@ -285,8 +316,8 @@ function renderRulesList(container) {
       desc.className = "rules-row-desc";
       desc.innerHTML =
         `<strong>${daysText}</strong> — ${creneauxText}<br>` +
-        `${describeRuleComposition(rule)} attendu(s)` +
-        (rule.requireSpecialite ? ' <span class="rules-badge-spec">Spécialité exigée</span>' : "");
+        `${describeRuleComposition(segment)} attendu(s)` +
+        (segment.requireSpecialite ? ' <span class="rules-badge-spec">Spécialité exigée</span>' : "");
       row.appendChild(desc);
 
       const actions = document.createElement("div");
@@ -295,23 +326,30 @@ function renderRulesList(container) {
       editBtn.type = "button";
       editBtn.className = "staff-modal-edit";
       editBtn.textContent = "Modifier";
-      editBtn.addEventListener("click", () => renderRuleForm(document.getElementById("ruleFormContainer"), rule));
+      // Modalité déjà fixée (celle du bloc) -- pas de sélecteur dans le formulaire.
+      editBtn.addEventListener("click", () => renderRuleForm(document.getElementById("ruleFormContainer"), segment, null, { lockedActivityId: activity.id }));
       // Copier (09/08/2026, demande de Samir) : ouvre le formulaire d'AJOUT (pas de modification --
-      // `existingRule` reste null, donc la sauvegarde crée une nouvelle règle) mais pré-rempli avec
-      // toutes les valeurs de la règle source via le 3e paramètre `prefillFrom`, pour ne devoir
-      // changer que ce qui diffère (modalité, jours...) plutôt que ressaisir toute la composition.
+      // `existingSegment` reste null, donc la sauvegarde crée un nouveau segment) mais pré-rempli avec
+      // toutes les valeurs du segment source via le 3e paramètre `prefillFrom`, pour ne devoir changer
+      // que ce qui diffère (modalité, jours...) plutôt que ressaisir toute la composition. Seul
+      // "Copier" garde un sélecteur de modalité LIBRE (pas verrouillé) -- c'est le seul moyen de
+      // démarrer un segment pour une AUTRE modalité déjà pourvue d'une règle en réutilisant une
+      // composition existante comme modèle (18/08/2026, voir renderRuleForm()).
       const copyBtn = document.createElement("button");
       copyBtn.type = "button";
       copyBtn.className = "staff-modal-edit";
       copyBtn.textContent = "Copier";
-      copyBtn.addEventListener("click", () => renderRuleForm(document.getElementById("ruleFormContainer"), null, rule));
+      copyBtn.addEventListener("click", () => renderRuleForm(document.getElementById("ruleFormContainer"), null, segment, { prefillActivityId: activity.id }));
       const delBtn = document.createElement("button");
       delBtn.type = "button";
       delBtn.className = "staff-modal-delete";
       delBtn.textContent = "Supprimer";
       delBtn.addEventListener("click", () => {
-        if (!confirm(`Supprimer cette règle (${activity.nom}, ${daysText}, ${creneauxText}) ?`)) return;
-        state.rules = state.rules.filter((r) => r.id !== rule.id);
+        if (!confirm(`Supprimer ce segment (${activity.nom}, ${daysText}, ${creneauxText}) ?`)) return;
+        rule.segments = rule.segments.filter((s) => s.id !== segment.id);
+        // Plus aucun segment -- la règle entière (le bloc) n'a plus lieu d'exister : cohérent avec le
+        // fait qu'"+ Ajouter une règle" ne propose que les modalités qui n'ont pas encore de règle.
+        if (rule.segments.length === 0) state.rules = state.rules.filter((r) => r.id !== rule.id);
         saveState();
         render();
       });
@@ -820,19 +858,59 @@ function renderGardeRuleForm(container) {
   });
 }
 
-// `prefillFrom` (09/08/2026, "Copier") : ignoré si `existingRule` est fourni (une modification a
-// toujours la priorité) -- ne sert que pour l'ajout, pré-remplit les champs depuis une AUTRE règle
-// sans jamais la modifier elle-même (la sauvegarde crée toujours une règle neuve dans ce cas,
-// `existingRule` reste null jusqu'au bout).
-function renderRuleForm(container, existingRule, prefillFrom) {
-  const source = existingRule || prefillFrom || null;
-  const activityOptions = state.activities.map((a) => `<option value="${a.id}">${a.nom}</option>`).join("");
+// `prefillFrom` (09/08/2026, "Copier") : ignoré si `existingSegment` est fourni (une modification a
+// toujours la priorité) -- ne sert que pour l'ajout, pré-remplit les champs depuis un AUTRE segment
+// sans jamais le modifier lui-même (la sauvegarde crée toujours un segment neuf dans ce cas,
+// `existingSegment` reste null jusqu'au bout).
+// `existingSegment`/`prefillFrom` sont désormais des SEGMENTS (18/08/2026, RG-036 -- une règle =
+// une modalité, plusieurs segments jour(x)/créneau(x)/composition dedans), plus des règles à plat.
+// `opts.lockedActivityId` fige la modalité (pas de sélecteur -- "Modifier"/"+ Segment" depuis un
+// bloc précis, la modalité est déjà connue et ne doit pas pouvoir bouger). `opts.restrictToUnusedModalities`
+// (le bouton "+ Ajouter une règle" en haut de l'écran) ne propose que les modalités SANS règle du
+// tout -- pour ajouter un cas à une modalité déjà pourvue, on utilise "+ Segment" depuis son bloc.
+// "Copier" est le seul mode avec un sélecteur LIBRE (toutes les modalités, y compris déjà pourvues) :
+// c'est le seul moyen de démarrer un segment pour une AUTRE modalité en réutilisant une composition
+// existante comme modèle.
+function renderRuleForm(container, existingSegment, prefillFrom, opts) {
+  opts = opts || {};
+  const source = existingSegment || prefillFrom || null;
+
+  const containerOfSegment = existingSegment
+    ? state.rules.find((r) => r.segments.some((s) => s.id === existingSegment.id))
+    : null;
+  const lockedActivityId = containerOfSegment ? containerOfSegment.activityId : opts.lockedActivityId || null;
+
+  if (opts.restrictToUnusedModalities) {
+    const availableActivities = state.activities.filter((a) => !state.rules.some((r) => r.activityId === a.id));
+    if (availableActivities.length === 0) {
+      container.innerHTML = '<div class="staff-modal-empty">Toutes les modalités ont déjà une règle -- ouvre le bloc correspondant pour y ajouter un segment.</div>';
+      container.scrollIntoView({ behavior: "auto", block: "start" });
+      return;
+    }
+  }
+  const activityChoices = opts.restrictToUnusedModalities
+    ? state.activities.filter((a) => !state.rules.some((r) => r.activityId === a.id))
+    : state.activities;
+  const lockedActivity = lockedActivityId ? state.activities.find((a) => a.id === lockedActivityId) : null;
+  // Valeur initiale du sélecteur (verrouillé OU libre) -- verrouillé : la seule option possible ;
+  // libre + Copier : la modalité du segment source, pour ne devoir changer que ce qui diffère.
+  const prefillActivityId = lockedActivityId || opts.prefillActivityId || null;
+  const activityOptions = lockedActivityId
+    ? `<option value="${lockedActivityId}">${lockedActivity ? lockedActivity.nom : lockedActivityId}</option>`
+    : activityChoices.map((a) => `<option value="${a.id}">${a.nom}</option>`).join("");
+
+  let title;
+  if (existingSegment) title = "Modifier un segment";
+  else if (prefillFrom) title = "Copier un segment";
+  else if (opts.lockedActivityId) title = `Ajouter un segment -- ${lockedActivity ? lockedActivity.nom : ""}`;
+  else title = "Ajouter une règle (nouvelle modalité)";
+
   container.innerHTML = `
     <div class="staff-form rule-form">
-      <h3>${existingRule ? "Modifier une règle" : prefillFrom ? "Copier une règle" : "Ajouter une règle"}</h3>
+      <h3>${title}</h3>
       <div class="form-row">
         <label for="ruleActivity">Modalité</label>
-        <select id="ruleActivity">${activityOptions}</select>
+        <select id="ruleActivity" ${lockedActivityId ? "disabled" : ""}>${activityOptions}</select>
       </div>
       <div class="form-row">
         <label>Créneau(x)</label>
@@ -890,7 +968,7 @@ function renderRuleForm(container, existingRule, prefillFrom) {
       </div>
       <div class="rule-preview" id="rulePreview"></div>
       <div class="form-actions">
-        <button type="button" id="ruleFormSubmit">${existingRule ? "Enregistrer" : "Ajouter"}</button>
+        <button type="button" id="ruleFormSubmit">${existingSegment ? "Enregistrer" : "Ajouter"}</button>
         <button type="button" id="ruleFormCancel">Annuler</button>
       </div>
       <div class="form-error" id="ruleFormError"></div>
@@ -916,8 +994,12 @@ function renderRuleForm(container, existingRule, prefillFrom) {
   const requireSpecialiteCheckbox = document.getElementById("ruleRequireSpecialite");
   const astreinteExclusivitySelect = document.getElementById("ruleAstreinteExclusivityMode");
 
+  // La modalité n'est plus lue depuis `source.activityId` (un segment n'en porte plus, voir
+  // DEFAULT_COMPOSITION_RULES dans js/03-state.js) -- `prefillActivityId` calculé plus haut couvre à
+  // la fois le cas verrouillé (déjà la seule <option>, ceci est un no-op) et le cas Copier (sélecteur
+  // libre, prérempli avec la modalité du segment source).
+  if (prefillActivityId) activitySelect.value = prefillActivityId;
   if (source) {
-    activitySelect.value = source.activityId;
     creneauCheckboxes.forEach((cb) => { cb.checked = source.creneaux.includes(cb.value); });
     dayCheckboxes.forEach((cb) => { cb.checked = source.days.includes(cb.value); });
     seniorMinInput.value = source.seniorMin;
@@ -1009,33 +1091,45 @@ function renderRuleForm(container, existingRule, prefillFrom) {
     }
 
     // Garde-fou anti-doublon (moteur-regles-brouillon.md §5) : même modalité + mêmes créneaux + mêmes
-    // jours qu'une autre règle déjà existante -- comparaison en ensembles, pas en ordre.
+    // jours qu'un autre SEGMENT déjà existant DE CETTE MÊME RÈGLE (18/08/2026 -- avant la
+    // restructuration, comparait contre tout state.rules ; désormais une règle == une modalité, donc
+    // comparer contre les segments du conteneur cible revient exactement au même résultat).
+    // Comparaison en ensembles, pas en ordre.
     const sameSet = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
-    const duplicate = state.rules.find((r) =>
-      r.id !== (existingRule && existingRule.id) &&
-      r.activityId === activityId && sameSet(r.creneaux, creneaux) && sameSet(r.days, days)
+    const targetContainer = state.rules.find((r) => r.activityId === activityId);
+    const duplicate = targetContainer && targetContainer.segments.find((s) =>
+      s.id !== (existingSegment && existingSegment.id) && sameSet(s.creneaux, creneaux) && sameSet(s.days, days)
     );
     if (duplicate) {
-      errorEl.textContent = `Une règle existe déjà pour ${activity.nom} sur ce même périmètre (${duplicate.rg}) -- modifie-la plutôt que d'en créer une seconde.`;
+      errorEl.textContent = `Un segment existe déjà pour ${activity.nom} sur ce même périmètre (${duplicate.rg}) -- modifie-le plutôt que d'en créer un second.`;
       return;
     }
 
     const payload = {
-      activityId, creneaux, days, seniorMin, seniorMax, interneMin, interneMax,
+      creneaux, days, seniorMin, seniorMax, interneMin, interneMax,
       encourageInterneGrowth: encourageGrowthCheckbox.checked,
       allowSubstitution: substitutionCheckbox.checked,
       requireSpecialite: requireSpecialiteCheckbox.checked,
       astreinteExclusivityMode: astreinteExclusivitySelect.value,
     };
 
-    if (existingRule) {
+    if (existingSegment) {
       // Object.assign sur l'existant (pas un nouvel objet) : préserve les champs internes non
       // exposés dans ce formulaire (mentionSeniorInText/seniorExcessMessage/
-      // socleReinforcementIfSingleInterne -- seule RG-012 en a aujourd'hui) plutôt que de les perdre
-      // silencieusement en modifiant cette règle depuis l'écran.
-      Object.assign(existingRule, payload);
+      // socleReinforcementIfSingleInterne -- seul le segment RG-012 en a aujourd'hui) plutôt que de
+      // les perdre silencieusement en modifiant ce segment depuis l'écran. La modalité d'un segment
+      // existant n'est jamais modifiable depuis ce formulaire (verrouillée, voir lockedActivityId) --
+      // donc jamais besoin de déplacer ce segment d'un conteneur à un autre ici.
+      Object.assign(existingSegment, payload);
     } else {
-      state.rules.push({ id: generateRuleId(), rg: activity.nom, labelPrefix: activity.nom, ...payload });
+      // Nouveau segment : rejoint le conteneur de la modalité choisie s'il existe déjà (18/08/2026,
+      // "moins de règles à créer par vacation"), sinon crée un nouveau conteneur à un seul segment.
+      const newSegment = { id: generateSegmentId(), rg: activity.nom, ...payload };
+      if (targetContainer) {
+        targetContainer.segments.push(newSegment);
+      } else {
+        state.rules.push({ id: generateRuleId(), activityId, labelPrefix: activity.nom, segments: [newSegment] });
+      }
     }
     saveState();
     container.innerHTML = "";

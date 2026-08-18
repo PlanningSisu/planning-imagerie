@@ -129,17 +129,25 @@ function checkComposition(assigned, comp, rg, label, violations, recommendations
 // (composition de la garde) N'EST PAS ici : une garde n'a pas de modalité/activité, elle reste dans
 // validateGardes() -- voir moteur-regles-brouillon.md §3 pour ce choix de périmètre.
 
-// Résout, pour une case précise (modalité/jour/créneau), quelle règle de state.rules s'y applique.
-// "La règle la plus spécifique gagne" : entre deux règles qui couvriraient le même jour, la portée
-// avec le MOINS de jours l'emporte (ex. RG-007 sur "Jeudi" seul face à une règle "tous les jours" qui
-// le couvrirait aussi). Réutilisée aussi hors du moteur de validation par hasSpecialiteMismatch()
-// (contour rouge par personne, voir buildAssignedChip()/buildModaliteTag()).
+// Résout, pour une case précise (modalité/jour/créneau), quel SEGMENT de la règle de cette modalité
+// (state.rules, une seule règle par activityId depuis le 18/08/2026, voir DEFAULT_COMPOSITION_RULES
+// dans js/03-state.js) s'y applique. "Le segment le plus spécifique gagne" : entre deux segments qui
+// couvriraient le même jour, la portée avec le MOINS de jours l'emporte (ex. RG-007 sur "Jeudi" seul
+// face à un segment "tous les jours" qui le couvrirait aussi) -- même algorithme qu'avant la
+// restructuration en segments, juste appliqué à `rule.segments` plutôt qu'à `state.rules` entier.
+// Renvoie un objet APLATI (tous les champs du segment + `activityId`/`labelPrefix` du conteneur, plus
+// `ruleId` pour qui a besoin de retrouver le conteneur) -- forme IDENTIQUE à l'ancienne règle à plat,
+// donc tous les autres consommateurs (validateCompositionRules(), compositionShortfallMessage(), le
+// générateur automatique...) continuent de fonctionner sans aucun changement. Réutilisée aussi hors
+// du moteur de validation par hasSpecialiteMismatch() (contour rouge par personne, voir
+// buildAssignedChip()/buildModaliteTag()).
 function resolveCompositionRule(activityId, day, creneauId) {
-  const matches = state.rules.filter(
-    (r) => r.activityId === activityId && r.creneaux.includes(creneauId) && r.days.includes(day)
-  );
+  const rule = state.rules.find((r) => r.activityId === activityId);
+  if (!rule) return null;
+  const matches = rule.segments.filter((s) => s.creneaux.includes(creneauId) && s.days.includes(day));
   if (matches.length === 0) return null;
-  return matches.reduce((best, r) => (r.days.length < best.days.length ? r : best));
+  const segment = matches.reduce((best, s) => (s.days.length < best.days.length ? s : best));
+  return { ...segment, activityId: rule.activityId, labelPrefix: rule.labelPrefix, ruleId: rule.id };
 }
 
 // Repère visuel CASE (11/08/2026, demande de Samir : "si une case ne contient pas assez d'interne/
