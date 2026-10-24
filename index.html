@@ -30,6 +30,7 @@
         <div id="moreMenu" class="dropdown-menu hidden">
           <button type="button" id="btnFileSync">Synchro GitHub</button>
           <button type="button" id="btnImportAri">Importer extract ARI (absences)</button>
+          <button type="button" id="btnImportGardes">Importer gardes</button>
           <button type="button" id="btnImportTrame">Importer trame personnel</button>
           <button type="button" id="btnResyncTrame">Resynchroniser la trame</button>
           <button type="button" id="btnGenerate">Générer planning (auto)</button>
@@ -42,6 +43,7 @@
       </div>
       <input type="file" id="fileInput" accept="application/json" hidden>
       <input type="file" id="ariFileInput" accept=".xlsx" hidden>
+      <input type="file" id="gardeFileInput" accept=".xlsx,.xls,.csv" hidden>
     </div>
   </header>
 
@@ -95,6 +97,16 @@
         <span class="close-btn" id="fileSyncModalClose">×</span>
       </div>
       <div class="modal-body" id="fileSyncModalBody"></div>
+    </div>
+  </div>
+
+  <div id="gardeImportModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Importer gardes</h2>
+        <span class="close-btn" id="gardeImportModalClose">×</span>
+      </div>
+      <div class="modal-body" id="gardeImportModalBody"></div>
     </div>
   </div>
 
