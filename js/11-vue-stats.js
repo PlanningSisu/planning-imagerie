@@ -37,6 +37,11 @@ function activityStatsFamily(activity) {
 // jamais de créneau astreinte (RG-012/isCreneauApplicable), donc ce compte est déjà "à la demi-
 // journée près" par construction (1 point = 1 créneau = une demi-journée), sans calcul supplémentaire.
 function computeVacationStatsForWeek(monday) {
+  const dayIso = new Map(DAYS.map((day, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    return [day, toISODateLocal(d)];
+  }));
   const stats = new Map(); // staffId -> { total, badges: Map(groupKey -> {count, label, specialite, isUrgence, activityId}), days: Set, bureau, off, astreinte }
 
   const ensureEntry = (staffId) => {
@@ -50,7 +55,7 @@ function computeVacationStatsForWeek(monday) {
         if (!isCreneauApplicable(activity.id, creneau.id)) return;
         const key = cellKey(activity.id, day, creneau.id);
         if (state.fermetures[key]) return;
-        const assigned = effectiveAssignedIds(key).filter(Boolean);
+        const assigned = effectiveAssignedIds(key).filter(Boolean).filter((id) => isCountedForStats(id, dayIso.get(day)));
         if (assigned.length === 0) return;
 
         // Harmonisé le 08/08/2026 (retour de Samir, "le mode Période couvre déjà le besoin de cumul,
@@ -350,7 +355,7 @@ function computeVacationStatsForPeriod(startIso, endIso) {
         if (!isCreneauApplicable(activity.id, creneau.id)) return;
         const key = `${weekKeyPart}|${activity.id}|${dayName}|${creneau.id}`;
         if (state.fermetures[key]) return;
-        const assigned = effectiveAssignedIdsForWeek(key, weekKeyPart);
+        const assigned = effectiveAssignedIdsForWeek(key, weekKeyPart).filter((id) => isCountedForStats(id, iso));
         if (assigned.length === 0) return;
 
         if (creneau.id === "astreinte") {
@@ -427,6 +432,149 @@ function statsPeriodTier(person, stats, periodDaysIso) {
   const entry = stats.get(person.id);
   const hasData = entry && (entry.days.size > 0 || entry.bureau > 0 || entry.off > 0);
   return hasData ? 0 : 1;
+}
+
+// ---------- Remises à zéro des stats (24/10/2026) ----------
+// Demande de Samir : "pouvoir reset les stats des gens... modulable : tout le monde, un type de poste
+// (sénior, internes...), et à partir d'une date". Une remise à zéro ne SUPPRIME RIEN (aucune
+// affectation, aucun congé touché) : c'est un repère daté `state.statsResets[i] = { id, date,
+// allStaff, statuses, staffIds }` -- pour une personne ciblée, la vue Stats ignore tout ce qui est
+// strictement avant `date` (vacations, astreinte, Bureau/Off, congés, repos de garde, manquants),
+// en mode Semaine comme en mode Période. Supprimer la remise à zéro restaure les anciens chiffres.
+// Plusieurs remises à zéro peuvent viser la même personne : la date la PLUS RÉCENTE gagne.
+// Ciblage = même catalogue de statuts que les règles globales (GLOBAL_RULE_STATUS_OPTIONS), OR avec
+// les personnes nommées, ou "tout le monde" (`allStaff`, sentinelle qui couvre aussi les futurs ajouts).
+function statsResetTargetsPerson(reset, person) {
+  if (reset.allStaff) return true;
+  if ((reset.staffIds || []).includes(person.id)) return true;
+  return personMatchesAnyGlobalRuleStatus(person, reset.statuses);
+}
+
+function statsResetDateFor(staffId) {
+  const person = staffById(staffId);
+  if (!person) return null;
+  let best = null;
+  (state.statsResets || []).forEach((r) => {
+    if (r.date && statsResetTargetsPerson(r, person) && (!best || r.date > best)) best = r.date;
+  });
+  return best;
+}
+
+function isCountedForStats(staffId, iso) {
+  const resetDate = statsResetDateFor(staffId);
+  return !resetDate || iso >= resetDate;
+}
+
+// Filtre une liste de jours (triples {iso, dayName, weekKeyPart}) aux jours comptés pour cette personne.
+function statsDaysForPerson(staffId, days) {
+  const resetDate = statsResetDateFor(staffId);
+  return resetDate ? days.filter((d) => d.iso >= resetDate) : days;
+}
+
+function describeStatsReset(reset) {
+  const dateText = formatShort(new Date(`${reset.date}T00:00:00`));
+  let target;
+  if (reset.allStaff) target = "tout le monde";
+  else {
+    const parts = (reset.statuses || [])
+      .map((id) => (GLOBAL_RULE_STATUS_OPTIONS.find((o) => o.id === id) || {}).label)
+      .filter(Boolean);
+    (reset.staffIds || []).forEach((id) => {
+      const p = staffById(id);
+      if (p) parts.push(`${p.prenom} ${p.nom}`);
+    });
+    target = parts.join(", ") || "personne";
+  }
+  return `Depuis le ${dateText} — ${target}`;
+}
+
+// Panneau dépliable sous la barre de modes (transitoire, `statsResetPanelOpen`, jamais persisté).
+function renderStatsResetPanel(container) {
+  const panel = document.createElement("div");
+  panel.className = "stats-reset-panel";
+
+  const title = document.createElement("strong");
+  title.textContent = "Remises à zéro des compteurs";
+  const hint = document.createElement("p");
+  hint.className = "stats-reset-hint";
+  hint.textContent = "Rien n'est supprimé : pour les personnes visées, la vue Stats ne compte plus rien avant la date choisie. Supprimer une remise à zéro restaure les chiffres.";
+  panel.append(title, hint);
+
+  const list = document.createElement("div");
+  list.className = "stats-reset-list";
+  const resets = [...(state.statsResets || [])].sort((a, b) => b.date.localeCompare(a.date));
+  if (resets.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "stats-reset-empty";
+    empty.textContent = "Aucune remise à zéro pour l'instant.";
+    list.appendChild(empty);
+  }
+  resets.forEach((reset) => {
+    const row = document.createElement("div");
+    row.className = "stats-reset-row";
+    const text = document.createElement("span");
+    text.textContent = describeStatsReset(reset);
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "danger";
+    del.textContent = "Supprimer";
+    del.addEventListener("click", () => {
+      state.statsResets = state.statsResets.filter((r) => r.id !== reset.id);
+      saveState();
+      render();
+    });
+    row.append(text, del);
+    list.appendChild(row);
+  });
+  panel.appendChild(list);
+
+  const form = document.createElement("div");
+  form.className = "stats-reset-form";
+  const people = state.staff.filter((p) => !p.horsSisu).sort(compareStaffOrder);
+  form.innerHTML = `
+    <div class="stats-reset-form-line">
+      <label>À partir du <input type="date" id="statsResetDate" value="${toISODateLocal(new Date())}"></label>
+      <label><input type="checkbox" id="statsResetAll"> <strong>Tout le monde</strong></label>
+    </div>
+    <div class="stats-reset-form-line stats-reset-statuses">
+      ${GLOBAL_RULE_STATUS_OPTIONS.map((o) => `<label><input type="checkbox" class="statsResetStatus" value="${o.id}"> ${o.label}</label>`).join("")}
+    </div>
+    <details class="stats-reset-people">
+      <summary>Personnes précises…</summary>
+      <div class="stats-reset-people-grid">
+        ${people.map((p) => `<label><input type="checkbox" class="statsResetStaff" value="${p.id}"> ${p.prenom} ${p.nom}</label>`).join("")}
+      </div>
+    </details>
+    <div class="stats-reset-form-line">
+      <button type="button" id="statsResetAdd">Remettre à zéro</button>
+      <span class="form-error" id="statsResetError"></span>
+    </div>
+  `;
+  panel.appendChild(form);
+  container.appendChild(panel);
+
+  const allCb = form.querySelector("#statsResetAll");
+  const otherCbs = [...form.querySelectorAll(".statsResetStatus, .statsResetStaff")];
+  allCb.addEventListener("change", () => {
+    otherCbs.forEach((cb) => { cb.disabled = allCb.checked; if (allCb.checked) cb.checked = false; });
+  });
+  form.querySelector("#statsResetAdd").addEventListener("click", () => {
+    const date = form.querySelector("#statsResetDate").value;
+    const statuses = [...form.querySelectorAll(".statsResetStatus:checked")].map((cb) => cb.value);
+    const staffIds = [...form.querySelectorAll(".statsResetStaff:checked")].map((cb) => cb.value);
+    const errorEl = form.querySelector("#statsResetError");
+    if (!date) { errorEl.textContent = "Choisis une date."; return; }
+    if (!allCb.checked && statuses.length === 0 && staffIds.length === 0) {
+      errorEl.textContent = "Choisis « Tout le monde », un statut ou au moins une personne.";
+      return;
+    }
+    state.statsResets = [...(state.statsResets || []), {
+      id: "sr" + Math.random().toString(36).slice(2, 10),
+      date, allStaff: allCb.checked, statuses, staffIds,
+    }];
+    saveState();
+    render();
+  });
 }
 
 function renderStatsView() {
@@ -550,7 +698,20 @@ function renderStatsView() {
   });
   modeBar.appendChild(columnsBtn);
 
+  const resetBtn = document.createElement("button");
+  resetBtn.type = "button";
+  resetBtn.className = "stats-columns-btn" + (statsResetPanelOpen ? " active" : "");
+  const resetCount = (state.statsResets || []).length;
+  resetBtn.textContent = "↺ Remises à zéro" + (resetCount ? ` (${resetCount})` : "");
+  resetBtn.title = "Remettre les compteurs à zéro à partir d'une date (tout le monde, un statut ou des personnes)";
+  resetBtn.addEventListener("click", () => {
+    statsResetPanelOpen = !statsResetPanelOpen;
+    render();
+  });
+  modeBar.appendChild(resetBtn);
+
   container.appendChild(modeBar);
+  if (statsResetPanelOpen) renderStatsResetPanel(container);
 
   if (people.length === 0) {
     const hint = document.createElement("p");
@@ -596,7 +757,7 @@ function renderStatsView() {
         // Samir, "j'aime bien" l'option sans bruit visuel quand tout va bien) -- badge rouge
         // uniquement si au moins un créneau n'est ni excusé (congé/repos) ni couvert
         // (affectation/Bureau/Off/Temps Partiel). Détail des créneaux précis au survol.
-        const missing = statsShowMissing ? missingDaysList.flatMap((d) => missingSlotsForDate(person.id, d)) : [];
+        const missing = statsShowMissing ? statsDaysForPerson(person.id, missingDaysList).flatMap((d) => missingSlotsForDate(person.id, d)) : [];
         if (missing.length > 0) {
           const missingBadge = document.createElement("span");
           missingBadge.className = "stats-missing-badge";
@@ -643,7 +804,7 @@ function renderStatsView() {
             td.appendChild(span);
           });
         }
-        const isoList = missingDaysList.map((d) => d.iso);
+        const isoList = statsDaysForPerson(person.id, missingDaysList).map((d) => d.iso);
         // Couleur "absence" partagée par congé ET repos de garde (même convention que
         // buildAbsenceBar(), §4.9 CLAUDE.md -- pas une nouvelle couleur inventée).
         if (state.statsCounterMode.conges === "badge") {
@@ -749,7 +910,7 @@ function renderStatsView() {
         td.className = "stats-total-cell";
         const badge = document.createElement("span");
         badge.className = "stats-total-badge";
-        badge.textContent = formatDaysCount(congeDaysCountForRange(person.id, missingDaysList.map((d) => d.iso)));
+        badge.textContent = formatDaysCount(congeDaysCountForRange(person.id, statsDaysForPerson(person.id, missingDaysList).map((d) => d.iso)));
         td.appendChild(badge);
         return td;
       },
@@ -763,7 +924,7 @@ function renderStatsView() {
         td.className = "stats-total-cell";
         const badge = document.createElement("span");
         badge.className = "stats-total-badge";
-        badge.textContent = reposGardeDaysCountForRange(person.id, missingDaysList.map((d) => d.iso));
+        badge.textContent = reposGardeDaysCountForRange(person.id, statsDaysForPerson(person.id, missingDaysList).map((d) => d.iso));
         td.appendChild(badge);
         return td;
       },
@@ -844,6 +1005,14 @@ function renderStatsView() {
     nameCell.title = personTooltip(person);
     nameCell.className = "activity-cell person-name-cell";
     nameCell.style.cssText += personCellStyle(person);
+    const resetDate = statsResetDateFor(person.id);
+    if (resetDate) {
+      const mark = document.createElement("span");
+      mark.className = "stats-reset-mark";
+      mark.textContent = "↺";
+      mark.title = `Compteurs remis à zéro le ${formatShort(new Date(`${resetDate}T00:00:00`))} (rien n'est compté avant cette date)`;
+      nameCell.appendChild(mark);
+    }
     tr.appendChild(nameCell);
 
     const entry = stats.get(person.id);

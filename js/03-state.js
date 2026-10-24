@@ -330,7 +330,7 @@ function migrateState(rawData) {
 // pour ne jamais en oublier un dans l'un des trois chemins). Délibérément SANS `activities` (piloté
 // par le code, jamais par des données utilisateur -- voir CLAUDE.md §4) ni `schemaVersion` (ajouté à
 // part par buildPersistedState()).
-const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "statsColumnVisibility", "statsCounterMode", "customColors", "weekLocks", "weekNotes", "rules", "rulesGroupOrder", "globalRules", "gardeRule", "fixedRuleToggles", "weekDayFlags"];
+const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "statsColumnVisibility", "statsCounterMode", "customColors", "weekLocks", "weekNotes", "rules", "rulesGroupOrder", "globalRules", "gardeRule", "fixedRuleToggles", "weekDayFlags", "statsResets"];
 
 // Personnalisation (25/07/2026, ⚙ → "Personnalisation") : quelques couleurs éditables depuis
 // l'appli sans toucher au code -- une entrée par variable CSS `--custom-xxx` (voir :root dans
@@ -428,7 +428,7 @@ function normalizeGardeRule(rule) {
 // sur PERSISTED_KEYS pour qu'un futur champ ajouté ne puisse plus être oublié de cette façon --
 // SPECIAL_APPLY_KEYS liste les 3 exceptions qui ont besoin d'un traitement différent d'un simple
 // `data[key] || {}` (staff : conditionnel non-vide, weekOffset : nombre, statsColumnOrder : normalisé).
-const ARRAY_PERSISTED_KEYS = new Set(["conges", "gardes", "rules", "globalRules"]);
+const ARRAY_PERSISTED_KEYS = new Set(["conges", "gardes", "rules", "globalRules", "statsResets"]);
 const SPECIAL_APPLY_KEYS = new Set(["staff", "weekOffset", "statsColumnOrder", "rulesGroupOrder", "gardeRule"]);
 function applyPersistedState(rawData) {
   const data = migrateState(rawData);
@@ -536,6 +536,7 @@ let state = {
   // validation, juste un repère manuel. Clé absente ou tableau vide = rien signalé cette semaine-là ;
   // une entrée jamais laissée à `[]` (voir toggleWeekDayFlag(), js/10-vue-conges.js -- la clé est
   // retirée entièrement dès que le dernier jour coché est décoché, même convention que weekNotes).
+  statsResets: [], // remises à zéro de la vue Stats (24/10/2026) -- { id, date, allStaff, statuses, staffIds }, voir js/11-vue-stats.js
   weekDayFlags: {}, // key: weekKey (Lundi ISO) -> tableau de DAYS (ex. ["Jeudi", "Vendredi"])
 };
 
