@@ -146,6 +146,19 @@ function trameEffectiveFromWeek() {
   return displayed > current ? displayed : current;
 }
 
+// Même borne que trameEffectiveFromWeek() ci-dessus, mais pour une date ISO ARBITRAIRE plutôt que
+// state.weekOffset -- 24/10/2026, mutualisée depuis scheduleStaffDepartureFrom()/replacePersonFrom()
+// (js/16-gestion-personnel.js, RG-040/RG-041), qui dataient jusque-là un changement de trame en
+// simulant state.weekOffset puis en appelant saveState() (même technique que le générateur
+// automatique, §6.57) -- devenu inutile depuis que recordTrameHistory() accepte un `fromOverride`
+// direct (voir plus bas, ajouté le même jour pour purgeStaffIdFromCurrentAndFuture()). Jamais
+// rétroactif : une date passée retombe sur la semaine réelle en cours, comme trameEffectiveFromWeek().
+function trameEffectiveFromDate(iso) {
+  const wk = weekKey(mondayOfDate(new Date(`${iso}T00:00:00`)));
+  const current = weekKey(getMonday(0));
+  return wk > current ? wk : current;
+}
+
 function trameHistoryValueAt(list, base, key, wk) {
   let value = base[key];
   (list[key] || []).forEach((entry) => { if (entry.from <= wk) value = entry.value; });

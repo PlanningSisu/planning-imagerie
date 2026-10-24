@@ -283,10 +283,16 @@ function scheduleStaffDepartureFrom(personId, cutoffIso) {
 
   // 2) Retirée de la trame -- ne doit plus jamais être reproposée pour une semaine future pas encore
   // touchée, quelle que soit la date (les semaines protégées à l'étape 1 sont déjà décorrélées de la
-  // trame, donc intactes -- voir ensureMaterializedAssignments() dans js/05-week.js).
+  // trame, donc intactes -- voir ensureMaterializedAssignments() dans js/05-week.js). Daté explicitement
+  // à `cutoffIso` (trames datées, §6.67 CLAUDE.md) -- jamais la semaine affichée dans le planning
+  // principal, sans rapport ici (mutualisé via trameEffectiveFromDate(), voir js/05-week.js).
+  let trameTouched = false;
   Object.keys(state.trame).forEach((trameKeyStr) => {
-    state.trame[trameKeyStr] = (state.trame[trameKeyStr] || []).filter((id) => id !== personId);
+    if (!(state.trame[trameKeyStr] || []).includes(personId)) return;
+    state.trame[trameKeyStr] = state.trame[trameKeyStr].filter((id) => id !== personId);
+    trameTouched = true;
   });
+  if (trameTouched) recordTrameHistory(trameEffectiveFromDate(cutoffIso));
 
   // 3) Retirée de toute case déjà matérialisée (y compris celles protégées à l'étape 1) dont la date
   // réelle tombe à partir de la coupure -- une semaine verrouillée (RG-022) n'est jamais modifiée,
@@ -345,25 +351,17 @@ function scheduleStaffDepartureFrom(personId, cutoffIso) {
 function replacePersonFrom(oldId, newId, cutoffIso) {
   const trameKeysToTransfer = Object.keys(state.trame).filter((k) => (state.trame[k] || []).includes(oldId));
 
-  scheduleStaffDepartureFrom(oldId, cutoffIso);
+  scheduleStaffDepartureFrom(oldId, cutoffIso); // date déjà son propre retrait de trame (voir plus haut)
 
+  let added = false;
   trameKeysToTransfer.forEach((trameKeyStr) => {
     if (!state.trame[trameKeyStr]) state.trame[trameKeyStr] = [];
-    if (!state.trame[trameKeyStr].includes(newId)) state.trame[trameKeyStr].push(newId);
+    if (!state.trame[trameKeyStr].includes(newId)) { state.trame[trameKeyStr].push(newId); added = true; }
   });
-
-  // La date d'effet de ce changement de trame doit être `cutoffIso`, pas forcément la semaine
-  // actuellement affichée dans le planning principal (`state.weekOffset`, dont dépend
-  // trameEffectiveFromWeek() -- voir js/05-week.js, "trames datées" du 24/10/2026) -- on simule donc
-  // temporairement state.weekOffset pour la durée du saveState() qui enregistre l'historique, comme
-  // le fait déjà le générateur automatique (§6.57 CLAUDE.md) pour la même raison. `trameEffectiveFromWeek()`
-  // borne elle-même le résultat à la semaine réelle en cours au minimum -- une coupure dans le passé
-  // n'aurait donc aucun effet rétroactif, cohérent avec "jamais de rétro action".
-  const savedWeekOffset = state.weekOffset;
-  const targetMonday = mondayOfDate(new Date(`${cutoffIso}T00:00:00`));
-  state.weekOffset = Math.round((targetMonday - getMonday(0)) / (7 * 24 * 60 * 60 * 1000));
-  saveState();
-  state.weekOffset = savedWeekOffset;
+  // Daté explicitement à `cutoffIso` (mutualisé, voir trameEffectiveFromDate() dans js/05-week.js) --
+  // simplifié le 24/10/2026 : utilisait auparavant une simulation de state.weekOffset autour de
+  // saveState(), devenue inutile depuis que recordTrameHistory() accepte un `fromOverride` direct.
+  if (added) recordTrameHistory(trameEffectiveFromDate(cutoffIso));
 }
 
 // Comme specialiteOptionsHtml(), avec une option vide en tête -- réservé au formulaire Hors Sisu
