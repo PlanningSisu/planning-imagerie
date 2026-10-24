@@ -296,7 +296,10 @@ function scheduleStaffDepartureFrom(personId, cutoffIso) {
 
   // 3) Retirée de toute case déjà matérialisée (y compris celles protégées à l'étape 1) dont la date
   // réelle tombe à partir de la coupure -- une semaine verrouillée (RG-022) n'est jamais modifiée,
-  // comme pour toute autre mutation d'assignments (voir removeFromAssignments()).
+  // comme pour toute autre mutation d'assignments (voir removeFromAssignments()). Nettoie aussi
+  // state.trameSourced (24/10/2026, revue -- removeFromAssignments()/purgeStaffIdFromCurrentAndFuture()
+  // le font déjà, cet oubli ici ne causait rien de visible mais laissait un id fantôme dans ce
+  // registre d'origine).
   Object.keys(state.assignments).forEach((key) => {
     const [wk, , day] = key.split("|");
     if (isWeekLocked(wk)) return;
@@ -304,6 +307,7 @@ function scheduleStaffDepartureFrom(personId, cutoffIso) {
     if (iso < cutoffIso) return;
     if (state.assignments[key].includes(personId)) {
       state.assignments[key] = state.assignments[key].filter((id) => id !== personId);
+      if (state.trameSourced[key]) state.trameSourced[key] = state.trameSourced[key].filter((id) => id !== personId);
     }
   });
 
