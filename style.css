@@ -2263,17 +2263,8 @@ tr.group-end td {
 #ruleFormCancel { background: #e5e7eb; color: #1f2937; }
 #ruleFormCancel:hover { background: #d1d5db; }
 
-/* Remises à zéro de la vue Stats (24/10/2026) -- panneau dépliable sous .stats-mode-bar. */
-.stats-columns-btn.active { background: #e0e7ff; border-color: #6366f1; }
-.stats-reset-panel {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
-  padding: 10px 12px;
-  margin-bottom: 10px;
-  font-size: 13px;
-}
-.stats-reset-hint { margin: 4px 0 8px; color: #64748b; font-size: 12px; }
+/* Remises à zéro des stats (24/10/2026) -- modale ouverte depuis le menu ⚙ (#statsResetModal). */
+#statsResetModalBody { font-size: 13px; }
 .stats-reset-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 .stats-reset-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 8px; background: #f1f5f9; border-radius: 6px; }
 .stats-reset-empty { color: #94a3b8; font-style: italic; }

@@ -488,17 +488,33 @@ function describeStatsReset(reset) {
   return `Depuis le ${dateText} — ${target}`;
 }
 
-// Panneau dépliable sous la barre de modes (transitoire, `statsResetPanelOpen`, jamais persisté).
-function renderStatsResetPanel(container) {
-  const panel = document.createElement("div");
-  panel.className = "stats-reset-panel";
+// Modale ouverte depuis le menu ⚙ (#btnStatsResets) -- déplacée là le 24/10/2026, même jour (demande
+// de Samir : "on s'en sert pas tout le temps"), au lieu d'un bouton permanent dans la vue Stats.
+function openStatsResetModal() {
+  document.getElementById("statsResetModal").classList.remove("hidden");
+  renderStatsResetModalBody();
+}
 
-  const title = document.createElement("strong");
-  title.textContent = "Remises à zéro des compteurs";
+function closeStatsResetModal() {
+  document.getElementById("statsResetModal").classList.add("hidden");
+}
+
+// Après chaque ajout/suppression : sauvegarde, re-rendu de la page (la vue Stats si elle est ouverte
+// derrière) et de la modale elle-même.
+function commitStatsResetChange() {
+  saveState();
+  render();
+  renderStatsResetModalBody();
+}
+
+function renderStatsResetModalBody() {
+  const panel = document.getElementById("statsResetModalBody");
+  panel.innerHTML = "";
+
   const hint = document.createElement("p");
-  hint.className = "stats-reset-hint";
+  hint.className = "bulk-hint";
   hint.textContent = "Rien n'est supprimé : pour les personnes visées, la vue Stats ne compte plus rien avant la date choisie. Supprimer une remise à zéro restaure les chiffres.";
-  panel.append(title, hint);
+  panel.append(hint);
 
   const list = document.createElement("div");
   list.className = "stats-reset-list";
@@ -520,8 +536,7 @@ function renderStatsResetPanel(container) {
     del.textContent = "Supprimer";
     del.addEventListener("click", () => {
       state.statsResets = state.statsResets.filter((r) => r.id !== reset.id);
-      saveState();
-      render();
+      commitStatsResetChange();
     });
     row.append(text, del);
     list.appendChild(row);
@@ -551,7 +566,6 @@ function renderStatsResetPanel(container) {
     </div>
   `;
   panel.appendChild(form);
-  container.appendChild(panel);
 
   const allCb = form.querySelector("#statsResetAll");
   const otherCbs = [...form.querySelectorAll(".statsResetStatus, .statsResetStaff")];
@@ -572,10 +586,15 @@ function renderStatsResetPanel(container) {
       id: "sr" + Math.random().toString(36).slice(2, 10),
       date, allStaff: allCb.checked, statuses, staffIds,
     }];
-    saveState();
-    render();
+    commitStatsResetChange();
   });
 }
+
+document.getElementById("btnStatsResets").addEventListener("click", openStatsResetModal);
+document.getElementById("statsResetModalClose").addEventListener("click", closeStatsResetModal);
+document.getElementById("statsResetModal").addEventListener("click", (e) => {
+  if (e.target.id === "statsResetModal") closeStatsResetModal();
+});
 
 function renderStatsView() {
   const container = document.getElementById("statsView");
@@ -698,20 +717,7 @@ function renderStatsView() {
   });
   modeBar.appendChild(columnsBtn);
 
-  const resetBtn = document.createElement("button");
-  resetBtn.type = "button";
-  resetBtn.className = "stats-columns-btn" + (statsResetPanelOpen ? " active" : "");
-  const resetCount = (state.statsResets || []).length;
-  resetBtn.textContent = "↺ Remises à zéro" + (resetCount ? ` (${resetCount})` : "");
-  resetBtn.title = "Remettre les compteurs à zéro à partir d'une date (tout le monde, un statut ou des personnes)";
-  resetBtn.addEventListener("click", () => {
-    statsResetPanelOpen = !statsResetPanelOpen;
-    render();
-  });
-  modeBar.appendChild(resetBtn);
-
   container.appendChild(modeBar);
-  if (statsResetPanelOpen) renderStatsResetPanel(container);
 
   if (people.length === 0) {
     const hint = document.createElement("p");

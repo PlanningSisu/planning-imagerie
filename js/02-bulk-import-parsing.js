@@ -325,8 +325,6 @@ let statsRangeEnd = null;
 // l'affichage des manquants dans un premier temps", demande de Samir, "on verra à l'usage") :
 // transitoire, non persisté, repart décoché à chaque rechargement comme statsMode.
 let statsShowMissing = false;
-// Panneau "Remises à zéro" de la vue Stats déplié ou non (24/10/2026) -- transitoire, non persisté.
-let statsResetPanelOpen = false;
 
 // Focus jour / demi-journée (24/07/2026) : cliquer sur l'en-tête d'un jour (ou d'un créneau précis
 // sous ce jour) dans le tableau principal filtre le panneau Personnel (#staffList) pour ne montrer

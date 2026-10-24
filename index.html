@@ -34,6 +34,7 @@
           <button type="button" id="btnResyncTrame">Resynchroniser la trame</button>
           <button type="button" id="btnGenerate">Générer planning (auto)</button>
           <button type="button" id="btnCustomize">Personnalisation</button>
+          <button type="button" id="btnStatsResets">Remises à zéro des stats</button>
           <button type="button" id="btnExport">Exporter (JSON)</button>
           <button type="button" id="btnImport">Importer (JSON)</button>
           <button type="button" id="btnReset">Réinitialiser le planning</button>
@@ -114,6 +115,16 @@
         <span class="close-btn" id="trameImportModalClose">×</span>
       </div>
       <div class="modal-body" id="trameImportModalBody"></div>
+    </div>
+  </div>
+
+  <div id="statsResetModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Remises à zéro des stats</h2>
+        <span class="close-btn" id="statsResetModalClose">×</span>
+      </div>
+      <div class="modal-body" id="statsResetModalBody"></div>
     </div>
   </div>
 
