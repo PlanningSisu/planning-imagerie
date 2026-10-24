@@ -717,10 +717,11 @@ function buildModaliteCell(activity, day, creneau) {
       }
     } else {
       const people = assigned.map(staffById).filter(Boolean);
-      // RG-042 : un Docteur Junior sur Scan U l'après-midi est rangé avec les séniors (il compte comme
-      // tel) -- sa pastille garde la forme arrondie d'un interne, la forme code toujours le vrai grade.
-      const seniors = people.filter((p) => compositionGrade(p, activity.id, creneau.id) === "senior").sort(compareSpecialiteKeys);
-      const internes = people.filter((p) => compositionGrade(p, activity.id, creneau.id) !== "senior").sort(compareSpecialiteKeys);
+      // RG-043 : une personne qui "compte comme sénior" sur cette case (ex. Docteur Junior sur Scan U
+      // l'après-midi) est rangée avec les séniors -- sa pastille garde la forme d'un interne, la forme
+      // code toujours le vrai grade.
+      const seniors = people.filter((p) => compositionGrade(p, activity.id, day, creneau.id) === "senior").sort(compareSpecialiteKeys);
+      const internes = people.filter((p) => compositionGrade(p, activity.id, day, creneau.id) !== "senior").sort(compareSpecialiteKeys);
 
       const addCellGroup = (group) => {
         if (group.length === 0) return;

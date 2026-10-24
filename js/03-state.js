@@ -6,7 +6,7 @@
 // qui n'est plus acceptable une fois que de vraies données de service sont en jeu). Toute évolution
 // future de la structure de state doit donc passer par une entrée de STATE_MIGRATIONS plutôt que de
 // casser silencieusement les fichiers déjà écrits sur le drive ou déjà exportés en JSON.
-const STATE_SCHEMA_VERSION = 19;
+const STATE_SCHEMA_VERSION = 20;
 
 // Moteur de règles paramétrable (09/08/2026, voir moteur-regles-brouillon.md) : remplace les
 // anciennes RG-002/003/007/009/012 codées en dur par des données éditables depuis l'écran "Règles"
@@ -266,6 +266,22 @@ const STATE_MIGRATIONS = {
   // exactement le même ensemble jour×créneau qu'avant (le produit cartésien days×creneaux), juste sous
   // une forme qui permet désormais de diverger jour par jour pour un NOUVEAU segment créé après coup.
   18: (data) => ({ ...data, rules: convertSegmentsToCreneauxByDay(Array.isArray(data.rules) ? data.rules : []) }),
+  // 19 -> 20 (24/10/2026, RG-043) : le cas Docteur Junior (RG-042), codé en dur jusqu'ici, devient une
+  // règle globale "Compter comme sénior" éditable -- créée UNE fois ici (jamais recréée si Samir la
+  // supprime ensuite), seulement si aucune règle de ce type n'existe déjà. Comportement inchangé.
+  19: (data) => {
+    const globalRules = Array.isArray(data.globalRules) ? data.globalRules : [];
+    if (globalRules.some((gr) => gr.type === "countAsSenior")) return { ...data, globalRules };
+    return {
+      ...data,
+      globalRules: [...globalRules, {
+        id: "grule-dj-scanu-pm", type: "countAsSenior",
+        allStatuses: false, statuses: ["docteur-junior"], staffIds: [], specialites: [],
+        allActivities: false, activityIds: ["scan-u"],
+        allDays: true, days: [], allCreneaux: false, creneaux: ["apres-midi"],
+      }],
+    };
+  },
 };
 
 // Convertit chaque segment `{days, creneaux, ...}` (forme d'avant le 18/08/2026 second changement du

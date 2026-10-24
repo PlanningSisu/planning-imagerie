@@ -6,18 +6,31 @@
 
 // Accord français : "s" au pluriel seulement à partir de 2 (0 et 1 restent au singulier).
 // Ex. plural(0,"sénior") -> "0 sénior", plural(1,"sénior") -> "1 sénior", plural(2,"sénior") -> "2 séniors".
-// RG-042 (24/10/2026) : Docteur Junior (`person.docteurJunior`) -- un interne mono-spécialisé qui
-// COMPTE COMME UN SÉNIOR dans la composition quand il est posté sur Scan U l'après-midi, et comme
-// un interne partout ailleurs (garde comprise). Point d'entrée UNIQUE pour "quel grade compte pour
-// cette case" -- utilisé par checkComposition(), compositionShortfallMessage(), le générateur
-// automatique et l'affichage des cases (ligne des séniors). Sans case (`activityId` absent) : grade réel.
-const DOCTEUR_JUNIOR_SENIOR_SLOTS = [{ activityId: "scan-u", creneauId: "apres-midi" }];
+// RG-043 (24/10/2026) : "Compter comme sénior" -- 3e type de règle globale (`type: "countAsSenior"`,
+// state.globalRules) : les personnes ciblées COMPTENT COMME UN SÉNIOR dans la composition des cases
+// choisies (modalité(s)/jour(s)/créneau(x)). Ciblage = (statut(s) OU personne(s), ou "tout le monde")
+// ET, si renseigné, au moins une des `specialites` choisies -- vraie spécialité OU compétence
+// correspondante (personSatisfiesSpecialite(), même logique que RG-001). Généralise RG-042 (Docteur
+// Junior, qui était codé en dur ici) : la règle "Docteur Junior -> sénior sur Scan U l'après-midi"
+// est désormais une règle globale comme les autres, créée une fois par STATE_MIGRATIONS[19].
+// Point d'entrée UNIQUE pour "quel grade compte pour cette case" -- checkComposition(),
+// compositionShortfallMessage(), le générateur automatique et l'affichage des cases (ligne des
+// séniors). Sans case (`activityId` absent, ex. la garde) : grade réel, jamais de règle appliquée.
+function countsAsSeniorByRule(person, activityId, day, creneauId) {
+  return (state.globalRules || []).some((gr) =>
+    gr.type === "countAsSenior" &&
+    gr.enabled !== false &&
+    (gr.allActivities || (gr.activityIds || []).includes(activityId)) &&
+    (gr.allDays || (gr.days || []).includes(day)) &&
+    (gr.allCreneaux || (gr.creneaux || []).includes(creneauId)) &&
+    (gr.allStatuses || (gr.staffIds || []).includes(person.id) || personMatchesAnyGlobalRuleStatus(person, gr.statuses)) &&
+    (!(gr.specialites || []).length || gr.specialites.some((spe) => personSatisfiesSpecialite(person, spe, activityId)))
+  );
+}
 
-function compositionGrade(person, activityId, creneauId) {
+function compositionGrade(person, activityId, day, creneauId) {
   if (person.grade === "senior") return "senior";
-  if (person.docteurJunior && DOCTEUR_JUNIOR_SENIOR_SLOTS.some((s) => s.activityId === activityId && s.creneauId === creneauId)) {
-    return "senior";
-  }
+  if (activityId && countsAsSeniorByRule(person, activityId, day, creneauId)) return "senior";
   return person.grade;
 }
 
@@ -43,8 +56,8 @@ function plural(count, word) {
 // (nouveau, 09/08/2026) désactive ce mécanisme pour une règle donnée -- seule RG-012 (astreinte) s'en
 // sert : un sénior n'y "compense" jamais un manque d'interne, sa présence est simplement indésirable.
 function checkComposition(assigned, comp, rg, label, violations, recommendations, slot = {}) {
-  // `slot` = { activityId, creneauId } de la case (RG-042, Docteur Junior) -- absent pour la garde.
-  const isSeniorHere = (p) => compositionGrade(p, slot.activityId, slot.creneauId) === "senior";
+  // `slot` = { activityId, day, creneauId } de la case (RG-043, "compter comme sénior") -- absent pour la garde.
+  const isSeniorHere = (p) => compositionGrade(p, slot.activityId, slot.day, slot.creneauId) === "senior";
   const nbSeniors = assigned.filter(isSeniorHere).length;
   const internes = assigned.filter((p) => !isSeniorHere(p));
   const nbInternes = internes.length;
@@ -242,7 +255,7 @@ function compositionShortfallMessage(activityId, day, creneauId) {
     .map(staffById)
     .filter(Boolean)
     .filter((p) => !isPersonAbsentOnSlot(p.id, day, creneauId));
-  const nbSeniors = present.filter((p) => compositionGrade(p, activityId, creneauId) === "senior").length; // RG-042
+  const nbSeniors = present.filter((p) => compositionGrade(p, activityId, day, creneauId) === "senior").length; // RG-043
   const nbInternes = present.length - nbSeniors;
   const seniorShort = Math.max(0, rule.seniorMin - nbSeniors);
   // RG-035 (18/08/2026) : même suppression que dans validateCompositionRules() -- doit rester en
@@ -482,7 +495,7 @@ function validateCompositionRules() {
           state.fixedRuleToggles["RG-035"] && day === "Jeudi" && creneau.id === "matin"
             ? { ...rule, interneMin: null, interneMax: null, encourageInterneGrowth: false }
             : rule;
-        checkComposition(present, effectiveComp, rule.rg, label, violations, recommendations, { activityId: activity.id, creneauId: creneau.id });
+        checkComposition(present, effectiveComp, rule.rg, label, violations, recommendations, { activityId: activity.id, day, creneauId: creneau.id });
 
         // Spécialité (RG-001) : une violation par personne présente qui ne correspond pas, jamais une
         // seule ligne pour toute la case (voir hasSpecialiteMismatch()). Passe-droit (10/08/2026) :

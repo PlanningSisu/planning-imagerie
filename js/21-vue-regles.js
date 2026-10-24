@@ -81,6 +81,7 @@ const RG_REFERENCE = [
   { code: "RG-040", label: "Départ programmé d'une personne à une date (Gestion Personnel)" },
   { code: "RG-041", label: "Remplacement d'une personne (nouvelle personne, reprend juste la trame, à partir d'une date)" },
   { code: "RG-042", label: "Docteur Junior : interne mono-spé, compte comme sénior en Scan U l'après-midi" },
+  { code: "RG-043", label: "Règle globale \"Compter comme sénior\" (statut/personne + spécialité, par modalité/jour/créneau)" },
 ];
 
 // Repliée par défaut (34 entrées -- trop long pour rester ouvert en permanence) -- transitoire,
@@ -435,6 +436,7 @@ function renderRulesList(container) {
 const GLOBAL_RULE_TYPE_LABELS = {
   ignoreSpecialite: "Passe-droit de spécialité (RG-001)",
   excludePosting: "Interdire de poster (RG-028)",
+  countAsSenior: "Compter comme sénior (RG-043)",
 };
 
 function generateGlobalRuleId() {
@@ -477,6 +479,12 @@ function describeGlobalRule(rule) {
   const daysText = rule.allDays || !rule.days ? "tous les jours" : rule.days.join(", ") || "aucun jour choisi";
   const creneauxText = rule.allCreneaux || !rule.creneaux ? "tous les créneaux" : rule.creneaux.map(creneauLabel).join(" + ") || "aucun créneau choisi";
   const typeLabel = GLOBAL_RULE_TYPE_LABELS[rule.type] || rule.type;
+  if (rule.type === "countAsSenior") {
+    const speText = (rule.specialites || []).length
+      ? ` ayant ${rule.specialites.map((s) => (SPECIALITES[s] || {}).label || s).join(" ou ")} (spécialité ou compétence)`
+      : "";
+    return `${typeLabel} pour ${targetsText}${speText} — sur ${activitiesText}, ${daysText}, ${creneauxText}`;
+  }
   if (rule.type === "excludePosting") {
     const severityText = rule.severity === "violation" ? "Obligatoire" : "Facultative";
     return `${typeLabel} (${severityText}) pour ${targetsText} — sur ${activitiesText}, ${daysText}, ${creneauxText}`;
@@ -556,6 +564,7 @@ function renderGlobalRuleForm(container, existingRule) {
         <select id="globalRuleType">
           <option value="ignoreSpecialite">${GLOBAL_RULE_TYPE_LABELS.ignoreSpecialite}</option>
           <option value="excludePosting">${GLOBAL_RULE_TYPE_LABELS.excludePosting}</option>
+          <option value="countAsSenior">${GLOBAL_RULE_TYPE_LABELS.countAsSenior}</option>
         </select>
       </div>
       <div class="form-row" id="globalRuleSeverityRow">
@@ -600,6 +609,13 @@ function renderGlobalRuleForm(container, existingRule) {
           ${GLOBAL_RULE_STATUS_OPTIONS.map((o) => `<label><input type="checkbox" class="globalRuleStatus" value="${o.id}"> ${o.label}</label>`).join("")}
         </div>
       </div>
+      <div class="form-row" id="globalRuleSpecialitesRow">
+        <label>Spécialité(s) (facultatif)</label>
+        <div class="rule-checkbox-group">
+          ${SPECIALITE_ORDER.map((s) => `<label><input type="checkbox" class="globalRuleSpecialite" value="${s}"> ${SPECIALITES[s].label}</label>`).join("")}
+        </div>
+        <span class="form-hint">Si coché : seulement les personnes ciblées qui ont une de ces spécialités, ou la compétence correspondante. Rien de coché = pas de filtre.</span>
+      </div>
       <div class="form-row">
         <label>Personne(s) concernée(s)</label>
         <div class="global-rule-staff-picker">
@@ -631,6 +647,7 @@ function renderGlobalRuleForm(container, existingRule) {
   const dayCheckboxes = [...container.querySelectorAll(".globalRuleDay")];
   const creneauCheckboxes = [...container.querySelectorAll(".globalRuleCreneau")];
   const statusCheckboxes = [...container.querySelectorAll(".globalRuleStatus")];
+  const specialiteCheckboxes = [...container.querySelectorAll(".globalRuleSpecialite")]; // RG-043
   const staffCheckboxes = [...container.querySelectorAll(".globalRuleStaff")];
 
   if (existingRule) {
@@ -642,6 +659,7 @@ function renderGlobalRuleForm(container, existingRule) {
     creneauCheckboxes.forEach((cb) => { cb.checked = (existingRule.creneaux || []).includes(cb.value); });
     statusCheckboxes.forEach((cb) => { cb.checked = (existingRule.statuses || []).includes(cb.value); });
     staffCheckboxes.forEach((cb) => { cb.checked = (existingRule.staffIds || []).includes(cb.value); });
+    specialiteCheckboxes.forEach((cb) => { cb.checked = (existingRule.specialites || []).includes(cb.value); });
     allActivitiesCheckbox.checked = !!existingRule.allActivities;
     // Rétrocompatibilité (10/08/2026) : une règle "ignoreSpecialite" créée avant l'ajout de la
     // granularité jour/créneau n'a ni `days` ni `allDays` -- se comportait comme "tous les jours" en
@@ -694,8 +712,10 @@ function renderGlobalRuleForm(container, existingRule) {
   // conditionnelle du créneau Astreinte dans renderRuleForm() (updateAstreinteVisibility()).
   const updateTypeSpecificVisibility = () => {
     const isExcludePosting = typeSelect.value === "excludePosting";
+    const isCountAsSenior = typeSelect.value === "countAsSenior"; // RG-043 : ni sévérité ni mode, mais un filtre spécialité
     document.getElementById("globalRuleSeverityRow").style.display = isExcludePosting ? "block" : "none";
-    document.getElementById("globalRuleModeRow").style.display = isExcludePosting ? "none" : "block";
+    document.getElementById("globalRuleModeRow").style.display = isExcludePosting || isCountAsSenior ? "none" : "block";
+    document.getElementById("globalRuleSpecialitesRow").style.display = isCountAsSenior ? "block" : "none";
   };
 
   const updatePreview = () => {
@@ -713,6 +733,7 @@ function renderGlobalRuleForm(container, existingRule) {
       allStatuses: allStatusesCheckbox.checked,
       statuses: statusCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value),
       staffIds: staffCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value),
+      specialites: specialiteCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value),
     };
     preview.textContent = `Aperçu : ${describeGlobalRule(draft)}.`;
   };
@@ -723,7 +744,7 @@ function renderGlobalRuleForm(container, existingRule) {
   allDaysCheckbox.addEventListener("change", () => { updateDayCheckboxesDisabled(); updatePreview(); });
   allCreneauxCheckbox.addEventListener("change", () => { updateCreneauCheckboxesDisabled(); updatePreview(); });
   allStatusesCheckbox.addEventListener("change", () => { updateStatusCheckboxesDisabled(); updatePreview(); });
-  [...activityCheckboxes, ...dayCheckboxes, ...creneauCheckboxes, ...statusCheckboxes, ...staffCheckboxes].forEach((cb) => cb.addEventListener("change", updatePreview));
+  [...activityCheckboxes, ...dayCheckboxes, ...creneauCheckboxes, ...statusCheckboxes, ...staffCheckboxes, ...specialiteCheckboxes].forEach((cb) => cb.addEventListener("change", updatePreview));
   updateTypeSpecificVisibility();
   updatePreview();
 
@@ -750,7 +771,12 @@ function renderGlobalRuleForm(container, existingRule) {
     if (!allCreneaux && creneaux.length === 0) { errorEl.textContent = "Choisis au moins un créneau, ou coche \"Tous les créneaux\"."; return; }
 
     let payload;
-    if (type === "excludePosting") {
+    if (type === "countAsSenior") {
+      payload = {
+        type, allActivities, activityIds, allDays, days, allCreneaux, creneaux, allStatuses, statuses, staffIds,
+        specialites: specialiteCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value),
+      };
+    } else if (type === "excludePosting") {
       payload = {
         type, allActivities, activityIds, allDays, days, allCreneaux, creneaux, allStatuses, statuses, staffIds,
         severity: severitySelect.value,
