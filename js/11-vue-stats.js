@@ -259,10 +259,11 @@ function effectiveAssignedIdsForWeek(key, weekKeyPart) {
   if (Object.prototype.hasOwnProperty.call(state.assignments, key)) {
     return state.assignments[key];
   }
-  if (weekKeyPart >= weekKey(getMonday(0))) {
+  const ids = trameIdsForWeek(trameKeyFromCellKey(key), weekKeyPart); // trame datée (24/10/2026)
+  if (ids) {
     const [, day, creneauId] = trameKeyFromCellKey(key).split("|");
     const iso = weekIsoDates(mondayFromWeekKey(weekKeyPart))[DAYS.indexOf(day)];
-    return filterAbsentFromTrame(state.trame[trameKeyFromCellKey(key)] || [], iso, creneauId);
+    return filterAbsentFromTrame(ids, iso, creneauId);
   }
   return [];
 }

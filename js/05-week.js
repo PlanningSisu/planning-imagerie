@@ -105,12 +105,104 @@ function vacationSpecKey(activityId, day, creneauId) {
 // à la trame, AUCUNE notion de "case touchée qui se découple" -- une exception, une fois posée, reste
 // simplement une exception pour cette semaine, pour toujours (jamais réécrite par un changement
 // structurel ultérieur), pas besoin de matérialisation.
+// ---------- Historique des trames (24/10/2026) ----------
+// Règle de Samir : "quand je modifie une trame (Trame Vacation OU Trame Personnel), elle s'applique à
+// partir de la semaine EN COURS et pour les semaines à venir -- ne touche plus jamais aux semaines
+// passées". state.trame/state.vacationSpecialites restent la valeur ACTUELLE (semaine en cours et
+// futures) ; state.trameHistory garde ce qui était en vigueur avant :
+//   { since: weekKey, baseTrame, baseSpecs, trame: { trameKey: [{ from, value }] }, specs: {...} }
+// - `since` = semaine réelle où l'historique a démarré ; `baseTrame`/`baseSpecs` = les trames telles
+//   qu'elles étaient à ce moment-là (valables de `since` jusqu'au 1er changement enregistré).
+// - Chaque changement est enregistré AUTOMATIQUEMENT par recordTrameHistory() (appelée par saveState())
+//   en comparant les trames actuelles à la dernière valeur connue -- aucune des nombreuses façons de
+//   modifier une trame (popover, glisser-déposer, Temps Partiel, import, départ programmé...) n'a
+//   besoin de le faire elle-même. `from` = toujours la semaine RÉELLE en cours (getMonday(0)), jamais
+//   la semaine affichée -- plusieurs changements la même semaine écrasent la même entrée.
+// - Lecture pour une semaine W : W >= semaine en cours -> trame actuelle ; since <= W < semaine en
+//   cours -> valeur historique en vigueur en W ; W < since -> comportement d'avant (inconnu, voir
+//   trameIdsForWeek()/vacationSpecForWeekFromHistory()).
+// Pas de bump de STATE_SCHEMA_VERSION : objet absent -> {} via applyPersistedState(), initialisé
+// paresseusement par ensureTrameHistoryInitialized() (appelée en tête de render(), donc juste après
+// tout chargement et avant toute modification).
+function ensureTrameHistoryInitialized() {
+  const h = state.trameHistory;
+  if (h && h.since) return h;
+  state.trameHistory = {
+    since: weekKey(getMonday(0)),
+    baseTrame: JSON.parse(JSON.stringify(state.trame || {})),
+    baseSpecs: { ...(state.vacationSpecialites || {}) },
+    trame: {},
+    specs: {},
+  };
+  return state.trameHistory;
+}
+
+function trameHistoryValueAt(list, base, key, wk) {
+  let value = base[key];
+  (list[key] || []).forEach((entry) => { if (entry.from <= wk) value = entry.value; });
+  return value;
+}
+
+function sameTrameValue(a, b) {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return [...(a || [])].sort().join("|") === [...(b || [])].sort().join("|");
+  }
+  return (a || null) === (b || null);
+}
+
+function recordTrameHistoryFor(current, list, base, from, clone) {
+  const keys = new Set([...Object.keys(current || {}), ...Object.keys(base), ...Object.keys(list)]);
+  keys.forEach((key) => {
+    const entries = list[key];
+    const latest = entries && entries.length ? entries[entries.length - 1].value : base[key];
+    const cur = current[key];
+    if (sameTrameValue(latest, cur)) return;
+    if (entries && entries.length && entries[entries.length - 1].from === from) {
+      entries[entries.length - 1].value = clone(cur);
+      // Revenu à la valeur précédente dans la même semaine -> l'entrée n'a plus lieu d'être.
+      const before = entries.length > 1 ? entries[entries.length - 2].value : base[key];
+      if (sameTrameValue(before, cur)) entries.pop();
+      if (entries.length === 0) delete list[key];
+    } else {
+      if (!list[key]) list[key] = [];
+      list[key].push({ from, value: clone(cur) });
+    }
+  });
+}
+
+function recordTrameHistory() {
+  const h = ensureTrameHistoryInitialized();
+  const from = weekKey(getMonday(0));
+  recordTrameHistoryFor(state.trame || {}, h.trame, h.baseTrame, from, (v) => (v ? [...v] : []));
+  recordTrameHistoryFor(state.vacationSpecialites || {}, h.specs, h.baseSpecs, from, (v) => v || null);
+}
+
+// Trame Personnel en vigueur pour la case `tKey` la semaine `wk`. `null` = semaine antérieure au
+// démarrage de l'historique : comportement d'avant (la trame ne s'applique pas aux semaines passées).
+function trameIdsForWeek(tKey, wk) {
+  if (wk >= weekKey(getMonday(0))) return state.trame[tKey] || [];
+  const h = state.trameHistory;
+  if (!h || !h.since || wk < h.since) return null;
+  return trameHistoryValueAt(h.trame, h.baseTrame, tKey, wk) || [];
+}
+
+// Trame Vacation : `undefined` = pas d'historique applicable (semaine en cours/future, ou antérieure au
+// démarrage de l'historique) -> l'appelant retombe sur la valeur actuelle comme avant.
+function vacationSpecForWeekFromHistory(baseKey, wk) {
+  if (wk >= weekKey(getMonday(0))) return undefined;
+  const h = state.trameHistory;
+  if (!h || !h.since || wk < h.since) return undefined;
+  return trameHistoryValueAt(h.specs, h.baseSpecs, baseKey, wk) || null;
+}
+
 function effectiveVacationSpecialiteForWeek(activityId, day, creneauId, weekKeyPart) {
   const baseKey = vacationSpecKey(activityId, day, creneauId);
   const weeklyKey = `${weekKeyPart}|${baseKey}`;
   if (Object.prototype.hasOwnProperty.call(state.vacationSpecialitesWeekly, weeklyKey)) {
     return state.vacationSpecialitesWeekly[weeklyKey];
   }
+  const fromHistory = vacationSpecForWeekFromHistory(baseKey, weekKeyPart); // trame datée (24/10/2026)
+  if (fromHistory !== undefined) return fromHistory || undefined;
   return state.vacationSpecialites[baseKey];
 }
 
@@ -179,10 +271,13 @@ function effectiveAssignedIds(key) {
   if (Object.prototype.hasOwnProperty.call(state.assignments, key)) {
     return state.assignments[key];
   }
-  if (state.weekOffset >= 0) {
+  // Trame datée (24/10/2026) : semaine en cours/future -> trame actuelle ; semaine passée -> la trame
+  // telle qu'elle était CETTE semaine-là (trameIdsForWeek()), ou rien si antérieure à l'historique.
+  const ids = trameIdsForWeek(trameKeyFromCellKey(key), key.split("|")[0]);
+  if (ids) {
     const [, day, creneauId] = trameKeyFromCellKey(key).split("|");
     const iso = weekIsoDates(getMonday(state.weekOffset))[DAYS.indexOf(day)];
-    return filterAbsentFromTrame(state.trame[trameKeyFromCellKey(key)] || [], iso, creneauId);
+    return filterAbsentFromTrame(ids, iso, creneauId);
   }
   return [];
 }

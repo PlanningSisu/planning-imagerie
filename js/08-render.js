@@ -198,6 +198,7 @@ function autoDepostAbsentAssignmentsForDisplayedWeek() {
 }
 
 function render() {
+  ensureTrameHistoryInitialized(); // trame datée (24/10/2026) -- avant toute modification possible
   autoDepostAbsentAssignmentsForDisplayedWeek();
   renderWeekLabel();
   renderWeekLockButton();
