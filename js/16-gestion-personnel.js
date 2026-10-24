@@ -366,6 +366,31 @@ function replacePersonFrom(oldId, newId, cutoffIso) {
   // simplifié le 24/10/2026 : utilisait auparavant une simulation de state.weekOffset autour de
   // saveState(), devenue inutile depuis que recordTrameHistory() accepte un `fromOverride` direct.
   if (added) recordTrameHistory(trameEffectiveFromDate(cutoffIso));
+
+  // ⚠️ Bug trouvé par Samir (24/10/2026, "les trames sont pas appliquées") : scheduleStaffDepartureFrom()
+  // (étape 3) retire bien l'ancienne personne de toute case déjà MATÉRIALISÉE à partir de la coupure,
+  // mais une case matérialisée ne retombe plus JAMAIS sur la trame (RG-017, "découplée" dès qu'on y
+  // touche) -- donc la nouvelle personne n'y apparaissait jamais, laissant un trou au lieu de prendre
+  // la relève. Fréquent en pratique : le générateur automatique (§6.57) matérialise massivement les
+  // semaines à venir. Complète ici : pour chaque case déjà matérialisée qui correspond à une des
+  // entrées de trame transférées, dont la date réelle tombe à partir de la coupure, on ajoute la
+  // nouvelle personne si elle n'y est pas déjà -- semaine verrouillée (RG-022) exclue comme toute
+  // autre mutation d'assignments.
+  const trameSuffixesToTransfer = new Set(trameKeysToTransfer);
+  Object.keys(state.assignments).forEach((key) => {
+    const parts = key.split("|");
+    if (parts.length !== 4) return;
+    const suffix = `${parts[1]}|${parts[2]}|${parts[3]}`;
+    if (!trameSuffixesToTransfer.has(suffix)) return;
+    const wk = parts[0];
+    if (isWeekLocked(wk)) return;
+    const iso = weekIsoDates(mondayFromWeekKey(wk))[DAYS.indexOf(parts[2])];
+    if (iso < cutoffIso) return;
+    if (!state.assignments[key].includes(newId)) {
+      state.assignments[key] = [...state.assignments[key], newId];
+      if (state.trameSourced[key]) state.trameSourced[key] = [...state.trameSourced[key], newId];
+    }
+  });
 }
 
 // Comme specialiteOptionsHtml(), avec une option vide en tête -- réservé au formulaire Hors Sisu
