@@ -321,7 +321,7 @@ function pickGenerationCandidate({ activityId, day, creneau, wantGrade, vacSpec,
   let best = null;
   let bestScore = Infinity;
   state.staff.forEach((person) => {
-    if (person.grade !== wantGrade) return;
+    if (compositionGrade(person, activityId, creneau.id) !== wantGrade) return; // RG-042 (Docteur Junior)
     if (excludeIds.includes(person.id)) return;
     if (!isGenerationCandidateEligible(person, day, creneau.id)) return;
     if (hasActivityExclusivityConflict(person.id, day, creneau.id, activityId)) return;
@@ -367,12 +367,12 @@ function tryStealForGeneration({ activityId, day, creneau, wantGrade, vacSpec, b
     otherList.forEach((candidateId) => {
       if (excludeIds.includes(candidateId)) return;
       const person = staffById(candidateId);
-      if (!person || person.grade !== wantGrade) return;
+      if (!person || compositionGrade(person, activityId, creneau.id) !== wantGrade) return; // RG-042
       if (isGenerationCandidateHardBlocked(person, activityId, day, creneau.id)) return;
       if (!generationCandidateMatchesSpecialite(person, activityId, day, creneau.id, vacSpec)) return; // jamais voler pour dégrader la spécialité
       const remaining = otherList.filter((id) => id !== candidateId).map(staffById).filter(Boolean);
-      const remainingSeniors = remaining.filter((p) => p.grade === "senior").length;
-      const remainingInternes = remaining.filter((p) => p.grade !== "senior").length;
+      const remainingSeniors = remaining.filter((p) => compositionGrade(p, otherActivityId, creneau.id) === "senior").length; // RG-042
+      const remainingInternes = remaining.length - remainingSeniors;
       if (remainingSeniors < otherRule.seniorMin) return;
       if (otherRule.interneMin !== null && remainingInternes < otherRule.interneMin) return;
 
@@ -417,8 +417,8 @@ function fillGenerationCell({ key, activityId, day, creneau, rule, load, capacit
   let guard = 0;
   while (guard++ < 12) {
     const people = list.map(staffById).filter(Boolean);
-    const nbSeniors = people.filter((p) => p.grade === "senior").length;
-    const nbInternes = people.filter((p) => p.grade !== "senior").length;
+    const nbSeniors = people.filter((p) => compositionGrade(p, activityId, creneau.id) === "senior").length; // RG-042
+    const nbInternes = people.length - nbSeniors;
     const needSenior = nbSeniors < rule.seniorMin;
     const needInterne = rule.interneMin !== null && nbInternes < rule.interneMin;
     if (!needSenior && !needInterne) break;

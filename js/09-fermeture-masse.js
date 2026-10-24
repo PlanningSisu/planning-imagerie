@@ -410,7 +410,7 @@ function renderStaffPerson(ul, person, { divider = false, boxed = false, boxEnd 
   // RG-016 : une personne "Hors Sisu" sans grade renseigné n'est ni "Sénior" ni "Interne" -- éviter
   // de retomber par défaut sur "Interne — socle" (trompeur, laisse croire à un grade qu'elle n'a
   // pas). "socle" lui-même n'a de sens que pour un interne sans spécialité encore.
-  const gradeLabel = person.grade === "senior" ? "Sénior" : person.grade === "interne" ? "Interne" : "Hors Sisu";
+  const gradeLabel = person.grade === "senior" ? "Sénior" : person.grade === "interne" ? (person.docteurJunior ? "Docteur Junior" : "Interne") : "Hors Sisu";
   const specs = orderedSpecialites(person);
   const specLabel = specs.length ? specs.map((s) => SPECIALITES[s].label).join(" + ") : person.grade === "interne" ? "socle" : "";
   const suffix = specLabel ? ` — ${specLabel}` : "";

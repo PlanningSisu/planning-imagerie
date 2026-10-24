@@ -349,7 +349,9 @@ function renderStaffAddForm(container, existingPerson = null, replaceMode = fals
   const specs = existingPerson ? orderedSpecialites(existingPerson) : [];
   const initialHorsSisu = existingPerson ? !!existingPerson.horsSisu : false;
   const initialGrade = existingPerson ? existingPerson.grade || "" : "senior";
-  const initialType = specs.length === 2 ? "specialise" : specs.length === 1 ? "mono" : "socle";
+  const initialType = existingPerson && existingPerson.grade === "interne" && existingPerson.docteurJunior
+    ? "dj" // RG-042
+    : specs.length === 2 ? "specialise" : specs.length === 1 ? "mono" : "socle";
   const oldLabel = existingPerson ? `${existingPerson.prenom} ${existingPerson.nom}` : "";
 
   container.innerHTML = `
@@ -390,6 +392,7 @@ function renderStaffAddForm(container, existingPerson = null, replaceMode = fals
           <option value="socle">Socle (pas encore de spécialité)</option>
           <option value="mono">Mono-spécialisé (1 spécialité)</option>
           <option value="specialise">Spécialisé (2 spécialités)</option>
+          <option value="dj">Docteur Junior (1 spécialité, compte comme sénior en Scan U l'après-midi)</option>
         </select>
       </div>
       <div class="form-row" id="formSpec1Row">
@@ -553,7 +556,7 @@ function renderStaffAddForm(container, existingPerson = null, replaceMode = fals
           return;
         }
         specialites = [s1, s2];
-      } else if (typeSelect.value === "mono") {
+      } else if (typeSelect.value === "mono" || typeSelect.value === "dj") {
         specialites = [spec1Select.value];
       }
     }
@@ -565,6 +568,8 @@ function renderStaffAddForm(container, existingPerson = null, replaceMode = fals
     // mais évite tout risque si le DOM était dans un état inattendu).
     const cca = grade === "senior" && ccaCheckbox.checked;
     const tempsPlein = tempsPleinCheckbox.checked; // 05/08/2026 -- sénior ou interne, pas restreint comme CCA
+    // RG-042 (24/10/2026) : Docteur Junior = statut d'interne (mono-spécialisé), jamais vrai sinon.
+    const docteurJunior = !horsSisu && grade === "interne" && typeSelect.value === "dj";
 
     // RG-041 (24/10/2026) : remplacement -- une seule confirmation récapitulative avant d'appliquer
     // quoi que ce soit (si refusée, rien n'est modifié, ni les champs ni les congés), puis on vide
@@ -588,8 +593,9 @@ function renderStaffAddForm(container, existingPerson = null, replaceMode = fals
       existingPerson.competences = competences;
       existingPerson.cca = cca;
       existingPerson.tempsPlein = tempsPlein;
+      existingPerson.docteurJunior = docteurJunior;
     } else {
-      state.staff.push({ id: generateStaffId(), prenom, nom, horsSisu, grade, specialites, competences, cca, tempsPlein });
+      state.staff.push({ id: generateStaffId(), prenom, nom, horsSisu, grade, specialites, competences, cca, tempsPlein, docteurJunior });
     }
     saveState();
     render();

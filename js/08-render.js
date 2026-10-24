@@ -382,6 +382,7 @@ function renderLegend() {
   addChip("Sénior", "grades", "senior", neutral + "border-radius:4px;font-weight:700;");
   addChip("Interne", "grades", "interne", neutral);
   addChip("CCA", "grades", "cca", neutral);
+  addChip("DJ", "grades", "docteurJunior", neutral); // RG-042 (24/10/2026) -- Docteur Junior
   addChip("TP", "grades", "tempsPlein", neutral); // 05/08/2026 -- "TP" pour Temps Plein, libellé court demandé par Samir
 
   // Saut de ligne forcé : les spécialités passent sous Sénior/Interne, sans réduire leur propre largeur.
@@ -715,8 +716,10 @@ function buildModaliteCell(activity, day, creneau) {
       }
     } else {
       const people = assigned.map(staffById).filter(Boolean);
-      const seniors = people.filter((p) => p.grade === "senior").sort(compareSpecialiteKeys);
-      const internes = people.filter((p) => p.grade !== "senior").sort(compareSpecialiteKeys);
+      // RG-042 : un Docteur Junior sur Scan U l'après-midi est rangé avec les séniors (il compte comme
+      // tel) -- sa pastille garde la forme arrondie d'un interne, la forme code toujours le vrai grade.
+      const seniors = people.filter((p) => compositionGrade(p, activity.id, creneau.id) === "senior").sort(compareSpecialiteKeys);
+      const internes = people.filter((p) => compositionGrade(p, activity.id, creneau.id) !== "senior").sort(compareSpecialiteKeys);
 
       const addCellGroup = (group) => {
         if (group.length === 0) return;

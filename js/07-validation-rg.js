@@ -6,6 +6,21 @@
 
 // Accord français : "s" au pluriel seulement à partir de 2 (0 et 1 restent au singulier).
 // Ex. plural(0,"sénior") -> "0 sénior", plural(1,"sénior") -> "1 sénior", plural(2,"sénior") -> "2 séniors".
+// RG-042 (24/10/2026) : Docteur Junior (`person.docteurJunior`) -- un interne mono-spécialisé qui
+// COMPTE COMME UN SÉNIOR dans la composition quand il est posté sur Scan U l'après-midi, et comme
+// un interne partout ailleurs (garde comprise). Point d'entrée UNIQUE pour "quel grade compte pour
+// cette case" -- utilisé par checkComposition(), compositionShortfallMessage(), le générateur
+// automatique et l'affichage des cases (ligne des séniors). Sans case (`activityId` absent) : grade réel.
+const DOCTEUR_JUNIOR_SENIOR_SLOTS = [{ activityId: "scan-u", creneauId: "apres-midi" }];
+
+function compositionGrade(person, activityId, creneauId) {
+  if (person.grade === "senior") return "senior";
+  if (person.docteurJunior && DOCTEUR_JUNIOR_SENIOR_SLOTS.some((s) => s.activityId === activityId && s.creneauId === creneauId)) {
+    return "senior";
+  }
+  return person.grade;
+}
+
 function plural(count, word) {
   return `${count} ${word}${count > 1 ? "s" : ""}`;
 }
@@ -27,9 +42,11 @@ function plural(count, word) {
 // -> sénior) n'est jamais imposé nulle part, c'est bien à sens unique. `comp.allowSubstitution: false`
 // (nouveau, 09/08/2026) désactive ce mécanisme pour une règle donnée -- seule RG-012 (astreinte) s'en
 // sert : un sénior n'y "compense" jamais un manque d'interne, sa présence est simplement indésirable.
-function checkComposition(assigned, comp, rg, label, violations, recommendations) {
-  const nbSeniors = assigned.filter((p) => p.grade === "senior").length;
-  const internes = assigned.filter((p) => p.grade !== "senior");
+function checkComposition(assigned, comp, rg, label, violations, recommendations, slot = {}) {
+  // `slot` = { activityId, creneauId } de la case (RG-042, Docteur Junior) -- absent pour la garde.
+  const isSeniorHere = (p) => compositionGrade(p, slot.activityId, slot.creneauId) === "senior";
+  const nbSeniors = assigned.filter(isSeniorHere).length;
+  const internes = assigned.filter((p) => !isSeniorHere(p));
   const nbInternes = internes.length;
   const allowSubstitution = comp.allowSubstitution !== false; // défaut true (RG-008)
   const mentionSenior = comp.mentionSeniorInText !== false; // défaut true
@@ -225,8 +242,8 @@ function compositionShortfallMessage(activityId, day, creneauId) {
     .map(staffById)
     .filter(Boolean)
     .filter((p) => !isPersonAbsentOnSlot(p.id, day, creneauId));
-  const nbSeniors = present.filter((p) => p.grade === "senior").length;
-  const nbInternes = present.filter((p) => p.grade !== "senior").length;
+  const nbSeniors = present.filter((p) => compositionGrade(p, activityId, creneauId) === "senior").length; // RG-042
+  const nbInternes = present.length - nbSeniors;
   const seniorShort = Math.max(0, rule.seniorMin - nbSeniors);
   // RG-035 (18/08/2026) : même suppression que dans validateCompositionRules() -- doit rester en
   // synchro avec elle, sinon la case resterait entourée en rouge alors que la violation a disparu
@@ -257,6 +274,7 @@ const GLOBAL_RULE_STATUS_OPTIONS = [
   { id: "interne-mono", label: "Interne mono-spécialisé", test: (p) => p.grade === "interne" && orderedSpecialites(p).length === 1 },
   { id: "interne-specialise", label: "Interne spécialisé (2 spé)", test: (p) => p.grade === "interne" && orderedSpecialites(p).length === 2 },
   { id: "cca", label: "CCA", test: (p) => !!p.cca },
+  { id: "docteur-junior", label: "Docteur Junior", test: (p) => p.grade === "interne" && !!p.docteurJunior }, // RG-042
 ];
 
 function personMatchesAnyGlobalRuleStatus(person, statusIds) {
@@ -464,7 +482,7 @@ function validateCompositionRules() {
           state.fixedRuleToggles["RG-035"] && day === "Jeudi" && creneau.id === "matin"
             ? { ...rule, interneMin: null, interneMax: null, encourageInterneGrowth: false }
             : rule;
-        checkComposition(present, effectiveComp, rule.rg, label, violations, recommendations);
+        checkComposition(present, effectiveComp, rule.rg, label, violations, recommendations, { activityId: activity.id, creneauId: creneau.id });
 
         // Spécialité (RG-001) : une violation par personne présente qui ne correspond pas, jamais une
         // seule ligne pour toute la case (voir hasSpecialiteMismatch()). Passe-droit (10/08/2026) :

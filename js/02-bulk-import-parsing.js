@@ -197,7 +197,7 @@ function orderedCompetences(person) {
 // elle en a (rien d'ajouté sinon, pour ne pas alourdir le tooltip des personnes sans compétence
 // renseignée). Centralisé pour que toutes les vues qui affichent un nom au survol restent cohérentes.
 function personTooltip(person) {
-  const base = `${person.prenom} ${person.nom}`;
+  const base = `${person.prenom} ${person.nom}` + (person.grade === "interne" && person.docteurJunior ? " (Docteur Junior)" : "");
   const competences = orderedCompetences(person);
   if (competences.length === 0) return base;
   return `${base} — Compétences : ${competences.map((k) => competenceLabel(k)).join(", ")}`;
@@ -374,6 +374,7 @@ function personMatchesFilters(person) {
     const matchesGrade = [...staffFilters.grades].some((g) => {
       if (g === "cca") return !!person.cca;
       if (g === "tempsPlein") return !!person.tempsPlein;
+      if (g === "docteurJunior") return person.grade === "interne" && !!person.docteurJunior; // RG-042, sous-ensemble d'Interne (même principe que CCA)
       return person.grade === g;
     });
     if (!matchesGrade) return false;
