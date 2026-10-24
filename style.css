@@ -545,6 +545,20 @@ body {
 .staff-modal-edit:hover {
   background: #dbeafe;
 }
+/* RG-041 (24/10/2026) : remplacement -- indigo, distinct du bleu (Modifier), de l'ambre (Départ
+   programmé) et du rouge (Supprimer). */
+.staff-modal-replace {
+  background: transparent;
+  border: 1px solid #a5b4fc;
+  color: #4338ca;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.staff-modal-replace:hover {
+  background: #e0e7ff;
+}
 .staff-modal-delete {
   background: transparent;
   border: 1px solid #fca5a5;

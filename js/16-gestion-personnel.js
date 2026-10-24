@@ -114,6 +114,20 @@ function renderStaffModalList(container) {
       });
       row.appendChild(editBtn);
 
+      // RG-041 (24/10/2026) : remplacement -- réutilise le même formulaire que "Modifier" (même id
+      // conservé, donc trame/affectations déjà posées suivent automatiquement), voir renderStaffAddForm().
+      const replaceBtn = document.createElement("button");
+      replaceBtn.type = "button";
+      replaceBtn.className = "staff-modal-replace";
+      replaceBtn.textContent = "Remplacement...";
+      replaceBtn.addEventListener("click", () => {
+        document.getElementById("bulkImportContainer").innerHTML = "";
+        const formContainer = document.getElementById("staffFormContainer");
+        renderStaffAddForm(formContainer, person, true);
+        formContainer.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+      row.appendChild(replaceBtn);
+
       // RG-040 (24/10/2026) : départ programmé à une date -- voir openStaffDepartureForm().
       const departBtn = document.createElement("button");
       departBtn.type = "button";
@@ -327,16 +341,21 @@ function specialiteOptionsHtmlWithNone() {
 }
 
 // existingPerson non fourni -> mode "ajouter". Fourni -> mode "modifier" (formulaire pré-rempli,
-// mise à jour en place au lieu d'un push).
-function renderStaffAddForm(container, existingPerson = null) {
+// mise à jour en place au lieu d'un push). RG-041 (24/10/2026) : `replaceMode` -- même formulaire
+// que "modifier" (même id conservé, donc trame/affectations déjà posées suivent automatiquement),
+// mais encadré comme un remplacement (titre/texte/bouton dédiés) et vide en plus les congés de la
+// personne à la sauvegarde -- voir le bloc dédié dans le gestionnaire de #formSubmit plus bas.
+function renderStaffAddForm(container, existingPerson = null, replaceMode = false) {
   const specs = existingPerson ? orderedSpecialites(existingPerson) : [];
   const initialHorsSisu = existingPerson ? !!existingPerson.horsSisu : false;
   const initialGrade = existingPerson ? existingPerson.grade || "" : "senior";
   const initialType = specs.length === 2 ? "specialise" : specs.length === 1 ? "mono" : "socle";
+  const oldLabel = existingPerson ? `${existingPerson.prenom} ${existingPerson.nom}` : "";
 
   container.innerHTML = `
     <div class="staff-form">
-      <h3>${existingPerson ? "Modifier un membre" : "Ajouter un membre"}</h3>
+      <h3>${replaceMode ? `Remplacer ${oldLabel}` : existingPerson ? "Modifier un membre" : "Ajouter un membre"}</h3>
+      ${replaceMode ? `<span class="form-hint">La trame et les affectations déjà posées pour ${oldLabel} restent liées à cette personne (même identité technique) -- changez juste son prénom/nom/spécialité ci-dessous. Les congés déjà enregistrés pour ${oldLabel} seront supprimés à l'enregistrement.</span>` : ""}
       <div class="form-row">
         <label for="formPrenom">Prénom</label>
         <input type="text" id="formPrenom" autocomplete="off">
@@ -389,7 +408,7 @@ function renderStaffAddForm(container, existingPerson = null) {
         <span class="form-hint">Indépendant de la spécialité ci-dessus -- une compétence compte aussi comme la spécialité correspondante pour le moteur de règles (RG-001), en plus de la spécialité "officielle" -- affiché seulement au survol (jamais de couleur).</span>
       </div>
       <div class="form-actions">
-        <button type="button" id="formSubmit">${existingPerson ? "Enregistrer" : "Ajouter"}</button>
+        <button type="button" id="formSubmit">${replaceMode ? "Remplacer" : existingPerson ? "Enregistrer" : "Ajouter"}</button>
         <button type="button" id="formCancel">Annuler</button>
       </div>
       <div class="form-error" id="formError"></div>
@@ -546,6 +565,19 @@ function renderStaffAddForm(container, existingPerson = null) {
     // mais évite tout risque si le DOM était dans un état inattendu).
     const cca = grade === "senior" && ccaCheckbox.checked;
     const tempsPlein = tempsPleinCheckbox.checked; // 05/08/2026 -- sénior ou interne, pas restreint comme CCA
+
+    // RG-041 (24/10/2026) : remplacement -- une seule confirmation récapitulative avant d'appliquer
+    // quoi que ce soit (si refusée, rien n'est modifié, ni les champs ni les congés), puis on vide
+    // les congés enregistrés pour cette personne (demande explicite de Samir : "les congés tu peux
+    // les vider dans ce cas") -- trame/affectations déjà posées ne sont jamais touchées, elles
+    // suivent automatiquement puisque l'id ne change pas.
+    if (replaceMode) {
+      const message = `Remplacer ${oldLabel} par ${prenom} ${nom} ?\n\n`
+        + `La trame et les affectations déjà posées pour ${oldLabel} restent liées à cette personne (même identité technique) -- elles afficheront désormais ${prenom} ${nom}.\n`
+        + `Les congés enregistrés pour ${oldLabel} seront supprimés.`;
+      if (!confirm(message)) return;
+      state.conges = state.conges.filter((c) => c.staffId !== existingPerson.id);
+    }
 
     if (existingPerson) {
       existingPerson.prenom = prenom;

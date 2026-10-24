@@ -79,6 +79,7 @@ const RG_REFERENCE = [
   { code: "RG-038", label: "Règle de repli \"Toutes les vraies vacations\" (hors Bureau/Off/Hors SISU)" },
   { code: "RG-039", label: "Grille Jours x Créneaux : créneaux différents par jour dans un même segment" },
   { code: "RG-040", label: "Départ programmé d'une personne à une date (Gestion Personnel)" },
+  { code: "RG-041", label: "Remplacement d'une personne (même id, congés vidés)" },
 ];
 
 // Repliée par défaut (34 entrées -- trop long pour rester ouvert en permanence) -- transitoire,
