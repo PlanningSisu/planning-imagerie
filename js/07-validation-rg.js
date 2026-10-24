@@ -711,6 +711,7 @@ function validateGardes() {
   const violations = [];
   const recommendations = [];
   const monday = getMonday(state.weekOffset);
+  if (state.gardeRule.deleted) return { violations, recommendations }; // règle de garde supprimée (24/10/2026)
 
   weekIsoDates(monday).forEach((iso, i) => {
     const onGarde = gardeStaffForDate(iso);

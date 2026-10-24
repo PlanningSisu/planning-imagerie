@@ -795,6 +795,32 @@ function renderGardeRuleSummary(container) {
   const row = document.createElement("div");
   row.className = "rules-row";
 
+  // Règle de garde supprimée (24/10/2026, demande de Samir : "tu peux la rendre supprimable ?") --
+  // `state.gardeRule.deleted` : plus aucune vérification de composition de la garde (RG-015) ;
+  // "+ Ajouter" la recrée avec les valeurs par défaut (DEFAULT_GARDE_RULE) et ouvre le formulaire.
+  if (state.gardeRule.deleted) {
+    const desc = document.createElement("div");
+    desc.className = "rules-row-desc";
+    desc.textContent = "Aucune règle de garde -- la composition des gardes n'est pas vérifiée.";
+    row.appendChild(desc);
+    const actions = document.createElement("div");
+    actions.className = "rules-row-actions";
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "staff-modal-edit";
+    addBtn.textContent = "+ Ajouter une règle de garde";
+    addBtn.addEventListener("click", () => {
+      state.gardeRule = normalizeGardeRule(undefined);
+      saveState();
+      render();
+      renderGardeRuleForm(document.getElementById("gardeRuleFormContainer"));
+    });
+    actions.appendChild(addBtn);
+    row.appendChild(actions);
+    container.appendChild(row);
+    return;
+  }
+
   const desc = document.createElement("div");
   desc.className = "rules-row-desc";
   desc.textContent = `${describeRuleComposition(state.gardeRule)} attendu(s), chaque jour calendaire.`;
@@ -808,6 +834,17 @@ function renderGardeRuleSummary(container) {
   editBtn.textContent = "Modifier";
   editBtn.addEventListener("click", () => renderGardeRuleForm(document.getElementById("gardeRuleFormContainer")));
   actions.appendChild(editBtn);
+  const delBtn = document.createElement("button");
+  delBtn.type = "button";
+  delBtn.className = "staff-modal-delete";
+  delBtn.textContent = "Supprimer";
+  delBtn.addEventListener("click", () => {
+    if (!confirm("Supprimer la règle de garde ? La composition des gardes ne sera plus vérifiée (tu pourras la recréer).")) return;
+    state.gardeRule = { ...state.gardeRule, deleted: true };
+    saveState();
+    render();
+  });
+  actions.appendChild(delBtn);
   row.appendChild(actions);
 
   container.appendChild(row);
@@ -815,9 +852,10 @@ function renderGardeRuleSummary(container) {
 
 // Mêmes champs de composition que renderRuleForm() (séniors min/max, internes réglementés ou non
 // min/max, substitution, "encourager la cible") -- volontairement SANS modalité/créneau(x)/jours/
-// spécialité, qui n'ont pas de sens pour la garde. Toujours en mode "modifier" (jamais "ajouter" --
-// une seule règle de garde existe, jamais créée/supprimée) : la sauvegarde remplace directement
-// `state.gardeRule`, aucun garde-fou anti-doublon nécessaire.
+// spécialité, qui n'ont pas de sens pour la garde. Toujours en mode "modifier" (une seule règle de
+// garde existe au plus ; supprimable depuis le 24/10/2026 via `deleted: true`, voir
+// renderGardeRuleSummary()) : la sauvegarde remplace directement `state.gardeRule` (sans `deleted`),
+// aucun garde-fou anti-doublon nécessaire.
 function renderGardeRuleForm(container) {
   const rule = state.gardeRule;
   container.innerHTML = `
