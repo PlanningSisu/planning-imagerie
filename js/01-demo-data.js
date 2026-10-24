@@ -40,10 +40,17 @@ const SPECIALITE_ORDER = ["digestif", "uro", "gyneco", "thorax", "os"];
 // chaînes, donc `orderedCompetences()`/le rendu des cases à cocher (js/16-gestion-personnel.js,
 // entièrement piloté par COMPETENCE_ORDER) fonctionnent SANS AUCUN changement de leur côté.
 const COMPETENCE_SCAN_IRM_SPECIALITES = ["digestif", "uro", "gyneco"];
-const COMPETENCE_SCOPE_LABELS = { scan: "Scan", irm: "IRM" };
+// Gynéco (écho) (24/10/2026, demande de Samir : "ça correspond à pouvoir être placé en ECN (1 ou 2)
+// quand c'est rose") -- même principe que Scan/IRM ci-dessus, mais une seule spécialité concernée
+// (pas demandé pour Digestif/Uro) : tableau à part plutôt que d'ajouter "gyneco" une 2e fois dans
+// COMPETENCE_SCAN_IRM_SPECIALITES (qui boucle sur scan ET irm pour chaque spécialité listée -- on ne
+// veut pas de "digestif:echo"/"uro:echo" fantômes).
+const COMPETENCE_ECHO_SPECIALITES = ["gyneco"];
+const COMPETENCE_SCOPE_LABELS = { scan: "Scan", irm: "IRM", echo: "Écho" };
 const COMPETENCE_EXTRA_LABELS = { mammo: "Mammo" };
 const COMPETENCE_ORDER = [
   ...COMPETENCE_SCAN_IRM_SPECIALITES.flatMap((spec) => [`${spec}:scan`, `${spec}:irm`]),
+  ...COMPETENCE_ECHO_SPECIALITES.map((spec) => `${spec}:echo`),
   "thorax",
   "mammo",
 ];
@@ -56,13 +63,18 @@ function competenceLabel(key) {
   return (SPECIALITES[key] && SPECIALITES[key].label) || COMPETENCE_EXTRA_LABELS[key] || key;
 }
 
-// Quelle "portée" de compétence Scan/IRM une activité représente-t-elle, pour le cheat code RG-001 ?
-// UNIQUEMENT ces 4 activités précises (Scan U/Echo U/ECN-1/ECN-2/Mammo exclues -- portée volontairement
-// restreinte, comme demandé : "Scan (donc A et B)"/"IRM (1.5 et 3)", pas "tout ce qui y ressemble").
-// `null` = cette activité n'est concernée par aucune des deux portées.
+// Quelle "portée" de compétence Scan/IRM/Écho une activité représente-t-elle, pour le cheat code
+// RG-001 ? UNIQUEMENT ces 6 activités précises (Scan U/Echo U/Mammo exclues -- portée volontairement
+// restreinte, comme demandé : "Scan (donc A et B)"/"IRM (1.5 et 3)"/"ECN (1 ou 2)", pas "tout ce qui
+// y ressemble"). ECN-1/ECN-2 ajoutées le 24/10/2026 (scope "echo") -- seule "gyneco:echo" existe
+// dans COMPETENCE_ORDER (voir COMPETENCE_ECHO_SPECIALITES ci-dessus), donc en pratique ce scope ne
+// profite qu'à Gynéco, même si la fonction renvoie "echo" pour ECN quelle que soit la spécialité de
+// la case -- personSatisfiesSpecialite() ne trouve simplement jamais "digestif:echo"/"uro:echo".
+// `null` = cette activité n'est concernée par aucune des trois portées.
 function competenceScopeForActivity(activityId) {
   if (activityId === "scan-a" || activityId === "scan-b") return "scan";
   if (activityId === "irm-15t" || activityId === "irm-3t") return "irm";
+  if (activityId === "ecn-1" || activityId === "ecn-2") return "echo";
   return null;
 }
 
