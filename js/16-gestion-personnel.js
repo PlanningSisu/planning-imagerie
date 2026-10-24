@@ -105,6 +105,14 @@ function renderStaffModalList(container) {
       });
       row.appendChild(editBtn);
 
+      // RG-040 (24/10/2026) : départ programmé à une date -- voir openStaffDepartureForm().
+      const departBtn = document.createElement("button");
+      departBtn.type = "button";
+      departBtn.className = "staff-modal-departure";
+      departBtn.textContent = "Départ programmé...";
+      departBtn.addEventListener("click", () => openStaffDepartureForm(person));
+      row.appendChild(departBtn);
+
       const delBtn = document.createElement("button");
       delBtn.type = "button";
       delBtn.className = "staff-modal-delete";
@@ -141,6 +149,127 @@ function deleteStaffMember(personId) {
   saveState();
   render();
   renderStaffModalList(document.getElementById("staffModalList"));
+}
+
+// RG-040 (24/10/2026, demande de Samir : "les internes sont changés tous les 6 mois, je voudrais que
+// cette transition soit la plus fluide possible") -- ouvre le petit formulaire de date dans le même
+// conteneur que Ajouter/Modifier (staffFormContainer), sur le même principe.
+function openStaffDepartureForm(person) {
+  document.getElementById("bulkImportContainer").innerHTML = "";
+  const formContainer = document.getElementById("staffFormContainer");
+  renderStaffDepartureForm(formContainer, person);
+  formContainer.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function renderStaffDepartureForm(container, person) {
+  const todayIso = toISODateLocal(new Date());
+  container.innerHTML = `
+    <div class="staff-form staff-departure-form">
+      <h3>Départ programmé -- ${person.prenom} ${person.nom}</h3>
+      <div class="form-row">
+        <label for="formDepartureDate">À partir du</label>
+        <input type="date" id="formDepartureDate" value="${todayIso}">
+      </div>
+      <span class="form-hint">Avant cette date : rien ne change (affectations déjà posées, congés, gardes, trame conservés tels quels). À partir de cette date (incluse) : ${person.prenom} disparaît complètement -- affectations (déjà posées ou à venir), trame, congés, gardes, temps partiel -- et est retiré(e) du personnel.</span>
+      <div class="form-actions">
+        <button type="button" id="formSubmit">Confirmer le départ</button>
+        <button type="button" id="formCancel">Annuler</button>
+      </div>
+      <div class="form-error" id="formError"></div>
+    </div>
+  `;
+
+  document.getElementById("formCancel").addEventListener("click", () => {
+    container.innerHTML = "";
+  });
+
+  document.getElementById("formSubmit").addEventListener("click", () => {
+    const dateInput = document.getElementById("formDepartureDate");
+    const errorEl = document.getElementById("formError");
+    errorEl.textContent = "";
+    if (!dateInput.value) {
+      errorEl.textContent = "La date est obligatoire.";
+      return;
+    }
+    const cutoffIso = dateInput.value;
+    const displayDate = new Date(`${cutoffIso}T00:00:00`).toLocaleDateString("fr-FR");
+    const message = `Supprimer ${person.prenom} ${person.nom} à partir du ${displayDate} ?\n\n`
+      + `Avant cette date : rien ne change (affectations déjà posées, congés, gardes, trame conservés tels quels).\n`
+      + `À partir de cette date (incluse) : ${person.prenom} disparaît complètement -- affectations (déjà posées ou à venir), trame, congés, gardes, temps partiel -- et est retiré(e) du personnel.\n\n`
+      + `Action irréversible.`;
+    if (!confirm(message)) return;
+    scheduleStaffDepartureFrom(person.id, cutoffIso);
+    saveState();
+    render();
+    container.innerHTML = "";
+    renderStaffModalList(document.getElementById("staffModalList"));
+  });
+}
+
+// Coeur de RG-040 : `cutoffIso` ("YYYY-MM-DD") sépare ce qui reste intact (strictement avant) de ce
+// qui disparaît (à partir de cette date, incluse). Ordre des étapes important -- voir commentaires.
+function scheduleStaffDepartureFrom(personId, cutoffIso) {
+  // 1) Avant de retirer la personne de la trame (étape 2), on verrouille ("matérialise") toute case
+  // pas encore matérialisée mais AVANT la coupure qui dépend de la trame pour cette personne --
+  // sinon l'étape 2 la viderait aussi, alors qu'elle doit rester inchangée (RG-017, voir
+  // ensureMaterializedAssignmentsForWeek()). Un garde-fou de 104 semaines (2 ans) évite toute
+  // boucle infinie si cutoffIso est aberrant -- une rotation réelle est bien plus courte.
+  Object.keys(state.trame).forEach((trameKeyStr) => {
+    if (!(state.trame[trameKeyStr] || []).includes(personId)) return;
+    const [activityId, day, creneauId] = trameKeyStr.split("|");
+    const dayIdx = DAYS.indexOf(day);
+    let monday = getMonday(0);
+    for (let i = 0; i < 104; i++) {
+      const iso = weekIsoDates(monday)[dayIdx];
+      if (iso >= cutoffIso) break;
+      const wk = weekKey(monday);
+      ensureMaterializedAssignmentsForWeek(`${wk}|${activityId}|${day}|${creneauId}`, wk);
+      monday = new Date(monday);
+      monday.setDate(monday.getDate() + 7);
+    }
+  });
+
+  // 2) Retirée de la trame -- ne doit plus jamais être reproposée pour une semaine future pas encore
+  // touchée, quelle que soit la date (les semaines protégées à l'étape 1 sont déjà décorrélées de la
+  // trame, donc intactes -- voir ensureMaterializedAssignments() dans js/05-week.js).
+  Object.keys(state.trame).forEach((trameKeyStr) => {
+    state.trame[trameKeyStr] = (state.trame[trameKeyStr] || []).filter((id) => id !== personId);
+  });
+
+  // 3) Retirée de toute case déjà matérialisée (y compris celles protégées à l'étape 1) dont la date
+  // réelle tombe à partir de la coupure -- une semaine verrouillée (RG-022) n'est jamais modifiée,
+  // comme pour toute autre mutation d'assignments (voir removeFromAssignments()).
+  Object.keys(state.assignments).forEach((key) => {
+    const [wk, , day] = key.split("|");
+    if (isWeekLocked(wk)) return;
+    const iso = weekIsoDates(mondayFromWeekKey(wk))[DAYS.indexOf(day)];
+    if (iso < cutoffIso) return;
+    if (state.assignments[key].includes(personId)) {
+      state.assignments[key] = state.assignments[key].filter((id) => id !== personId);
+    }
+  });
+
+  // 4) Temps Partiel (RG-020) : structurel, sans date -- la personne partant, retirée entièrement.
+  Object.keys(state.tempsPartiel).forEach((key) => {
+    if (key.startsWith(`${personId}|`)) delete state.tempsPartiel[key];
+  });
+
+  // 5) Congés : tronqués à la coupure (le jour juste avant reste, ce jour-là et après disparaissent)
+  // -- même principe de découpe que removeCongeDay(), borné à une date plutôt qu'un seul jour.
+  state.conges = state.conges
+    .filter((c) => c.staffId !== personId || c.dateDebut < cutoffIso)
+    .map((c) => (c.staffId === personId && c.dateFin >= cutoffIso) ? { ...c, dateFin: isoAddDays(cutoffIso, -1) } : c);
+
+  // 6) Gardes : toujours un seul jour (pas de plage) -- simple filtre par date.
+  state.gardes = state.gardes.filter((g) => g.staffId !== personId || g.date < cutoffIso);
+
+  // 7) Règles globales qui la ciblent nommément (RG-026/028) -- nettoyage, même esprit que le reste.
+  (state.globalRules || []).forEach((gr) => {
+    if (Array.isArray(gr.staffIds)) gr.staffIds = gr.staffIds.filter((id) => id !== personId);
+  });
+
+  // 8) Et enfin, comme une suppression classique (deleteStaffMember()) : disparaît du personnel.
+  state.staff = state.staff.filter((p) => p.id !== personId);
 }
 
 // Comme specialiteOptionsHtml(), avec une option vide en tête -- réservé au formulaire Hors Sisu

@@ -78,6 +78,7 @@ const RG_REFERENCE = [
   { code: "RG-037", label: "Conflit entre segments à égale spécificité : le plus bas dans la liste gagne" },
   { code: "RG-038", label: "Règle de repli \"Toutes les vraies vacations\" (hors Bureau/Off/Hors SISU)" },
   { code: "RG-039", label: "Grille Jours x Créneaux : créneaux différents par jour dans un même segment" },
+  { code: "RG-040", label: "Départ programmé d'une personne à une date (Gestion Personnel)" },
 ];
 
 // Repliée par défaut (34 entrées -- trop long pour rester ouvert en permanence) -- transitoire,

@@ -557,6 +557,21 @@ body {
 .staff-modal-delete:hover {
   background: #fee2e2;
 }
+/* RG-040 (24/10/2026) : départ programmé à une date -- ambre, même convention que
+   .week-label-annotated/weekNotes, pour signaler une action "différée"/particulière plutôt qu'une
+   suppression immédiate (rouge, .staff-modal-delete) ou une édition classique (bleu, .staff-modal-edit). */
+.staff-modal-departure {
+  background: transparent;
+  border: 1px solid #fcd34d;
+  color: #b45309;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.staff-modal-departure:hover {
+  background: #fef3c7;
+}
 .staff-modal-empty {
   color: #9ca3af;
   font-size: 13px;
