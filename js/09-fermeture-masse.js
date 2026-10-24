@@ -478,6 +478,17 @@ function isFullyOnLeaveThisWeek(person) {
   return coveredDaysForWeek(person.id, getMonday(state.weekOffset)).length === DAYS.length;
 }
 
+// RG-040 (24/10/2026) : une personne avec un départ programmé (person.departureDate) ne doit
+// disparaître du panneau Personnel qu'À PARTIR de la semaine qui atteint sa date de départ -- jamais
+// avant (elle reste un membre normal tant que la semaine affichée est strictement avant), et jamais
+// en la retirant de state.staff (voir le bug corrigé dans scheduleStaffDepartureFrom(), qui aurait
+// aussi rendu ses affectations PASSÉES invisibles). Même logique "semaine affichée, pas 'aujourd'hui'"
+// que isFullyOnLeaveThisWeek() juste au-dessus -- navigue naturellement avec le calendrier réel
+// puisque getMonday(0) dépend de la vraie date du jour.
+function isDepartedForDisplayedWeek(person) {
+  return !!person.departureDate && weekKey(getMonday(state.weekOffset)) >= person.departureDate;
+}
+
 function renderStaffList() {
   const ul = document.getElementById("staffList");
   ul.innerHTML = "";
@@ -485,6 +496,7 @@ function renderStaffList() {
   const visible = state.staff
     .filter(personMatchesFilters)
     .filter((p) => !isFullyOnLeaveThisWeek(p))
+    .filter((p) => !isDepartedForDisplayedWeek(p))
     .filter(personMatchesFocusFilter);
   const normalVisible = visible.filter((p) => !p.horsSisu);
   // RG-016 : à part, jamais mélangées aux séniors/internes (pas forcément de grade/spécialité) --

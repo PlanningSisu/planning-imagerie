@@ -572,6 +572,26 @@ body {
 .staff-modal-departure:hover {
   background: #fef3c7;
 }
+.staff-modal-departure-flag {
+  font-size: 11px;
+  font-weight: 600;
+  color: #b45309;
+  background: #fef3c7;
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.staff-modal-departure-cancel {
+  background: transparent;
+  border: 1px solid #e5e7eb;
+  color: #6b7280;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.staff-modal-departure-cancel:hover {
+  background: #f3f4f6;
+}
 .staff-modal-empty {
   color: #9ca3af;
   font-size: 13px;

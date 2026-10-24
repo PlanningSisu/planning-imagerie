@@ -93,6 +93,15 @@ function renderStaffModalList(container) {
       specSpan.textContent = specLabel;
       row.appendChild(specSpan);
 
+      // RG-040 : départ déjà programmé -- affiché pour qu'on sache pourquoi elle va disparaître/a
+      // disparu des filtres sans avoir à rouvrir le formulaire pour le découvrir.
+      if (person.departureDate) {
+        const departSpan = document.createElement("span");
+        departSpan.className = "staff-modal-departure-flag";
+        departSpan.textContent = `Départ le ${new Date(`${person.departureDate}T00:00:00`).toLocaleDateString("fr-FR")}`;
+        row.appendChild(departSpan);
+      }
+
       const editBtn = document.createElement("button");
       editBtn.type = "button";
       editBtn.className = "staff-modal-edit";
@@ -109,9 +118,18 @@ function renderStaffModalList(container) {
       const departBtn = document.createElement("button");
       departBtn.type = "button";
       departBtn.className = "staff-modal-departure";
-      departBtn.textContent = "Départ programmé...";
+      departBtn.textContent = person.departureDate ? "Modifier le départ..." : "Départ programmé...";
       departBtn.addEventListener("click", () => openStaffDepartureForm(person));
       row.appendChild(departBtn);
+
+      if (person.departureDate) {
+        const cancelDepartBtn = document.createElement("button");
+        cancelDepartBtn.type = "button";
+        cancelDepartBtn.className = "staff-modal-departure-cancel";
+        cancelDepartBtn.textContent = "Annuler le départ";
+        cancelDepartBtn.addEventListener("click", () => cancelStaffDeparture(person.id));
+        row.appendChild(cancelDepartBtn);
+      }
 
       const delBtn = document.createElement("button");
       delBtn.type = "button";
@@ -163,16 +181,17 @@ function openStaffDepartureForm(person) {
 
 function renderStaffDepartureForm(container, person) {
   const todayIso = toISODateLocal(new Date());
+  const isEdit = !!person.departureDate;
   container.innerHTML = `
     <div class="staff-form staff-departure-form">
-      <h3>Départ programmé -- ${person.prenom} ${person.nom}</h3>
+      <h3>${isEdit ? "Modifier le" : "Programmer un"} départ -- ${person.prenom} ${person.nom}</h3>
       <div class="form-row">
         <label for="formDepartureDate">À partir du</label>
-        <input type="date" id="formDepartureDate" value="${todayIso}">
+        <input type="date" id="formDepartureDate" value="${person.departureDate || todayIso}">
       </div>
-      <span class="form-hint">Avant cette date : rien ne change (affectations déjà posées, congés, gardes, trame conservés tels quels). À partir de cette date (incluse) : ${person.prenom} disparaît complètement -- affectations (déjà posées ou à venir), trame, congés, gardes, temps partiel -- et est retiré(e) du personnel.</span>
+      <span class="form-hint">Avant cette date : ${person.prenom} reste un membre du personnel tout à fait normal (affectable, visible dans les filtres). À partir de cette date (incluse) : ${person.prenom} disparaît des filtres/listes d'affectation -- mais reste dans le personnel pour que son historique (affectations, congés, gardes passés) reste consultable. Les affectations déjà posées ou à venir sur des cases à partir de cette date, la trame, et le Temps Partiel sont nettoyés dès maintenant (congés/gardes tronqués en conséquence).</span>
       <div class="form-actions">
-        <button type="button" id="formSubmit">Confirmer le départ</button>
+        <button type="button" id="formSubmit">${isEdit ? "Enregistrer" : "Confirmer le départ"}</button>
         <button type="button" id="formCancel">Annuler</button>
       </div>
       <div class="form-error" id="formError"></div>
@@ -193,10 +212,10 @@ function renderStaffDepartureForm(container, person) {
     }
     const cutoffIso = dateInput.value;
     const displayDate = new Date(`${cutoffIso}T00:00:00`).toLocaleDateString("fr-FR");
-    const message = `Supprimer ${person.prenom} ${person.nom} à partir du ${displayDate} ?\n\n`
-      + `Avant cette date : rien ne change (affectations déjà posées, congés, gardes, trame conservés tels quels).\n`
-      + `À partir de cette date (incluse) : ${person.prenom} disparaît complètement -- affectations (déjà posées ou à venir), trame, congés, gardes, temps partiel -- et est retiré(e) du personnel.\n\n`
-      + `Action irréversible.`;
+    const message = `Programmer le départ de ${person.prenom} ${person.nom} à partir du ${displayDate} ?\n\n`
+      + `Avant cette date : ${person.prenom} reste un membre du personnel normal (affectable, visible dans les filtres).\n`
+      + `À partir de cette date (incluse) : ${person.prenom} disparaît des filtres/listes d'affectation (reste dans le personnel pour l'historique). Affectations déjà posées ou à venir sur des cases à partir de cette date, trame, Temps Partiel : nettoyés dès maintenant.\n\n`
+      + `Le nettoyage des affectations/trame déjà effectué n'est pas restauré si vous modifiez ou annulez le départ ensuite.`;
     if (!confirm(message)) return;
     scheduleStaffDepartureFrom(person.id, cutoffIso);
     saveState();
@@ -206,9 +225,26 @@ function renderStaffDepartureForm(container, person) {
   });
 }
 
+// Annule un départ programmé : retire uniquement `person.departureDate`, donc arrête toute future
+// disparition des filtres -- mais ne restaure PAS le nettoyage déjà effectué (trame/affectations
+// déjà retirées) au moment où le départ avait été programmé, cohérent avec le reste de l'appli
+// (rouvrir une fermeture, RG-010, ne restaure jamais personne non plus).
+function cancelStaffDeparture(personId) {
+  const person = staffById(personId);
+  if (!person || !person.departureDate) return;
+  if (!confirm(`Annuler le départ programmé de ${person.prenom} ${person.nom} ?\n\nLe nettoyage déjà effectué (affectations/trame retirées à partir de la date programmée) n'est pas restauré -- seule la disparition future des filtres est annulée.`)) return;
+  delete person.departureDate;
+  saveState();
+  render();
+  renderStaffModalList(document.getElementById("staffModalList"));
+}
+
 // Coeur de RG-040 : `cutoffIso` ("YYYY-MM-DD") sépare ce qui reste intact (strictement avant) de ce
 // qui disparaît (à partir de cette date, incluse). Ordre des étapes important -- voir commentaires.
 function scheduleStaffDepartureFrom(personId, cutoffIso) {
+  const person = staffById(personId);
+  if (!person) return;
+
   // 1) Avant de retirer la personne de la trame (étape 2), on verrouille ("matérialise") toute case
   // pas encore matérialisée mais AVANT la coupure qui dépend de la trame pour cette personne --
   // sinon l'étape 2 la viderait aussi, alors qu'elle doit rester inchangée (RG-017, voir
@@ -268,8 +304,18 @@ function scheduleStaffDepartureFrom(personId, cutoffIso) {
     if (Array.isArray(gr.staffIds)) gr.staffIds = gr.staffIds.filter((id) => id !== personId);
   });
 
-  // 8) Et enfin, comme une suppression classique (deleteStaffMember()) : disparaît du personnel.
-  state.staff = state.staff.filter((p) => p.id !== personId);
+  // 8) ⚠️ Corrigé le 24/10/2026 (retour de Samir, testé avec une date future : "les affectations
+  // actuelles et passées ont sauté, et la personne saute immédiatement des filtres") -- retirer la
+  // personne de state.staff ICI, tout de suite, cassait tout : staffById(personId) ne la résolvait
+  // plus nulle part, pas seulement à partir de la coupure -- donc ses affectations PASSÉES/ACTUELLES
+  // (pourtant jamais touchées par les étapes ci-dessus) devenaient invisibles au rendu (résolution
+  // id -> personne manquante, filtrée silencieusement comme un id orphelin), et elle disparaissait
+  // du panneau Personnel/des filtres immédiatement, pas seulement à partir de la date choisie. La
+  // personne ne doit JAMAIS être retirée de state.staff par cette action -- seulement marquée, pour
+  // que son historique reste résolu normalement pour toujours. C'est isDepartedForDisplayedWeek()
+  // (js/09-fermeture-masse.js), pas state.staff, qui la fait disparaître des filtres -- et seulement
+  // une fois que la semaine affichée tombe à partir de cette date.
+  person.departureDate = cutoffIso;
 }
 
 // Comme specialiteOptionsHtml(), avec une option vide en tête -- réservé au formulaire Hors Sisu
