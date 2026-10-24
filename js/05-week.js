@@ -107,20 +107,21 @@ function vacationSpecKey(activityId, day, creneauId) {
 // structurel ultérieur), pas besoin de matérialisation.
 // ---------- Historique des trames (24/10/2026) ----------
 // Règle de Samir : "quand je modifie une trame (Trame Vacation OU Trame Personnel), elle s'applique à
-// partir de la semaine EN COURS et pour les semaines à venir -- ne touche plus jamais aux semaines
-// passées". state.trame/state.vacationSpecialites restent la valeur ACTUELLE (semaine en cours et
-// futures) ; state.trameHistory garde ce qui était en vigueur avant :
+// partir de la semaine sélectionnée et pour les semaines à venir -- ne touche plus jamais aux
+// semaines passées". "Semaine sélectionnée" = la semaine AFFICHÉE (flèches ←/→), jamais avant la
+// semaine réelle en cours -- voir trameEffectiveFromWeek() (tranché avec Samir : permet de préparer
+// un changement "à partir du 15/11"). state.trame/state.vacationSpecialites = la DERNIÈRE valeur
+// saisie ; state.trameHistory garde ce qui est en vigueur semaine par semaine :
 //   { since: weekKey, baseTrame, baseSpecs, trame: { trameKey: [{ from, value }] }, specs: {...} }
 // - `since` = semaine réelle où l'historique a démarré ; `baseTrame`/`baseSpecs` = les trames telles
 //   qu'elles étaient à ce moment-là (valables de `since` jusqu'au 1er changement enregistré).
 // - Chaque changement est enregistré AUTOMATIQUEMENT par recordTrameHistory() (appelée par saveState())
 //   en comparant les trames actuelles à la dernière valeur connue -- aucune des nombreuses façons de
 //   modifier une trame (popover, glisser-déposer, Temps Partiel, import, départ programmé...) n'a
-//   besoin de le faire elle-même. `from` = toujours la semaine RÉELLE en cours (getMonday(0)), jamais
-//   la semaine affichée -- plusieurs changements la même semaine écrasent la même entrée.
-// - Lecture pour une semaine W : W >= semaine en cours -> trame actuelle ; since <= W < semaine en
-//   cours -> valeur historique en vigueur en W ; W < since -> comportement d'avant (inconnu, voir
-//   trameIdsForWeek()/vacationSpecForWeekFromHistory()).
+//   besoin de le faire elle-même. Une nouvelle modif à partir de la semaine E remplace toute modif
+//   déjà programmée APRÈS E pour la même case (la dernière saisie gagne à partir de E).
+// - Lecture pour une semaine W >= since : valeur en vigueur en W (trameIdsForWeek()/
+//   vacationSpecForWeekFromHistory()) ; W < since : comportement d'avant (voir ces fonctions).
 // Pas de bump de STATE_SCHEMA_VERSION : objet absent -> {} via applyPersistedState(), initialisé
 // paresseusement par ensureTrameHistoryInitialized() (appelée en tête de render(), donc juste après
 // tout chargement et avant toute modification).
@@ -135,6 +136,14 @@ function ensureTrameHistoryInitialized() {
     specs: {},
   };
   return state.trameHistory;
+}
+
+// Semaine à partir de laquelle une modification de trame s'applique : la semaine affichée, jamais
+// avant la semaine réelle en cours.
+function trameEffectiveFromWeek() {
+  const displayed = weekKey(getMonday(state.weekOffset));
+  const current = weekKey(getMonday(0));
+  return displayed > current ? displayed : current;
 }
 
 function trameHistoryValueAt(list, base, key, wk) {
@@ -153,46 +162,74 @@ function sameTrameValue(a, b) {
 function recordTrameHistoryFor(current, list, base, from, clone) {
   const keys = new Set([...Object.keys(current || {}), ...Object.keys(base), ...Object.keys(list)]);
   keys.forEach((key) => {
-    const entries = list[key];
-    const latest = entries && entries.length ? entries[entries.length - 1].value : base[key];
+    const entries = list[key] || [];
+    const latest = entries.length ? entries[entries.length - 1].value : base[key];
     const cur = current[key];
     if (sameTrameValue(latest, cur)) return;
-    if (entries && entries.length && entries[entries.length - 1].from === from) {
-      entries[entries.length - 1].value = clone(cur);
-      // Revenu à la valeur précédente dans la même semaine -> l'entrée n'a plus lieu d'être.
-      const before = entries.length > 1 ? entries[entries.length - 2].value : base[key];
-      if (sameTrameValue(before, cur)) entries.pop();
-      if (entries.length === 0) delete list[key];
-    } else {
-      if (!list[key]) list[key] = [];
-      list[key].push({ from, value: clone(cur) });
-    }
+    // La dernière saisie gagne à partir de `from` : on oublie tout changement programmé plus tard.
+    const kept = entries.filter((e) => e.from < from);
+    const before = kept.length ? kept[kept.length - 1].value : base[key];
+    if (!sameTrameValue(before, cur)) kept.push({ from, value: clone(cur) });
+    if (kept.length) list[key] = kept; else delete list[key];
   });
 }
 
 function recordTrameHistory() {
   const h = ensureTrameHistoryInitialized();
-  const from = weekKey(getMonday(0));
+  const from = trameEffectiveFromWeek();
   recordTrameHistoryFor(state.trame || {}, h.trame, h.baseTrame, from, (v) => (v ? [...v] : []));
   recordTrameHistoryFor(state.vacationSpecialites || {}, h.specs, h.baseSpecs, from, (v) => v || null);
 }
 
-// Trame Personnel en vigueur pour la case `tKey` la semaine `wk`. `null` = semaine antérieure au
-// démarrage de l'historique : comportement d'avant (la trame ne s'applique pas aux semaines passées).
+// Trame Personnel en vigueur pour la case `tKey` la semaine `wk`. `null` = rien (semaine passée
+// antérieure au démarrage de l'historique : comportement d'avant, la trame ne s'appliquait pas au passé).
 function trameIdsForWeek(tKey, wk) {
-  if (wk >= weekKey(getMonday(0))) return state.trame[tKey] || [];
   const h = state.trameHistory;
-  if (!h || !h.since || wk < h.since) return null;
+  const current = weekKey(getMonday(0));
+  if (!h || !h.since || wk < h.since) return wk >= current ? (state.trame[tKey] || []) : null;
   return trameHistoryValueAt(h.trame, h.baseTrame, tKey, wk) || [];
 }
 
-// Trame Vacation : `undefined` = pas d'historique applicable (semaine en cours/future, ou antérieure au
-// démarrage de l'historique) -> l'appelant retombe sur la valeur actuelle comme avant.
+// Trame Vacation : `undefined` = pas d'historique applicable (semaine antérieure au démarrage de
+// l'historique) -> l'appelant retombe sur la valeur actuelle comme avant.
 function vacationSpecForWeekFromHistory(baseKey, wk) {
-  if (wk >= weekKey(getMonday(0))) return undefined;
   const h = state.trameHistory;
   if (!h || !h.since || wk < h.since) return undefined;
   return trameHistoryValueAt(h.specs, h.baseSpecs, baseKey, wk) || null;
+}
+
+// ---------- Origine des affectations : trame vs manuel (24/10/2026) ----------
+// Demande de Samir : distinguer les affectations mises AUTOMATIQUEMENT par la trame de celles ajoutées
+// à la main, pour qu'un retrait dans la Trame Personnel nettoie les premières sans toucher aux
+// secondes ("si je me trompe dans la trame de quelqu'un, ça me met plein d'affectations que je dois
+// enlever à la main"). state.trameSourced[cellKey] = ids de la case qui viennent de la trame :
+// renseigné quand une case est matérialisée à partir de la trame (ensureMaterializedAssignments()/
+// ...ForWeek()) et quand un ajout de trame est propagé (propagateTrameAdditionToTouchedWeeks()) ;
+// tout autre id de la case (popover, glisser-déposer, générateur automatique) est "manuel". Un id
+// retiré à la main (removeFromAssignments()) sort aussi de la liste. Une case SANS entrée (matérialisée
+// avant cette fonctionnalité) est traitée comme venant de la trame pour une personne qui est retirée
+// de la trame -- c'est précisément le cas à nettoyer.
+function markTrameSourced(key, ids) {
+  state.trameSourced[key] = [...ids];
+}
+
+function propagateTrameRemovalFromWeeks(activityId, day, creneauId, staffId) {
+  const fromWeek = trameEffectiveFromWeek();
+  const suffix = `${activityId}|${day}|${creneauId}`;
+  let removed = 0;
+  Object.keys(state.assignments).forEach((assignKey) => {
+    const parts = assignKey.split("|");
+    if (parts.length !== 4 || `${parts[1]}|${parts[2]}|${parts[3]}` !== suffix) return;
+    if (parts[0] < fromWeek || isWeekLocked(parts[0])) return;
+    const list = state.assignments[assignKey];
+    if (!list.includes(staffId)) return;
+    const record = state.trameSourced[assignKey];
+    if (record && !record.includes(staffId)) return; // ajouté à la main -> on n'y touche pas
+    state.assignments[assignKey] = list.filter((id) => id !== staffId);
+    if (record) state.trameSourced[assignKey] = record.filter((id) => id !== staffId);
+    removed++;
+  });
+  return removed;
 }
 
 function effectiveVacationSpecialiteForWeek(activityId, day, creneauId, weekKeyPart) {
@@ -304,6 +341,7 @@ function ensureMaterializedAssignments(key) {
   if (isWeekLocked(key.split("|")[0])) return [];
   if (!Object.prototype.hasOwnProperty.call(state.assignments, key)) {
     state.assignments[key] = effectiveAssignedIds(key).slice();
+    markTrameSourced(key, state.assignments[key]); // origine trame (24/10/2026)
   }
   return state.assignments[key];
 }
@@ -317,6 +355,7 @@ function ensureMaterializedAssignments(key) {
 function removeFromAssignments(key, staffId) {
   if (isWeekLocked(key.split("|")[0])) return;
   state.assignments[key] = effectiveAssignedIds(key).filter((id) => id !== staffId);
+  if (state.trameSourced[key]) state.trameSourced[key] = state.trameSourced[key].filter((id) => id !== staffId);
 }
 
 // RG-010 : ferme/rouvre la case `key` -- point d'entrée UNIQUE pour toute écriture dans
@@ -329,6 +368,7 @@ function setFermeture(key, closed) {
   if (closed) {
     state.fermetures[key] = true;
     state.assignments[key] = [];
+    state.trameSourced[key] = [];
   } else {
     delete state.fermetures[key];
   }
@@ -355,8 +395,9 @@ function setFermeture(key, closed) {
 // de la déclaration, voir depostAssignmentsForDay()) qu'on ajoute ENSUITE à sa trame se retrouvait
 // quand même repostée ici, cette fonction ne vérifiant jusque-là jamais l'absence avant de pousser.
 function propagateTrameAdditionToTouchedWeeks(activityId, day, creneauId, staffId) {
-  const currentWeekKey = weekKey(getMonday(0)); // semaine réelle actuelle (pas state.weekOffset,
-  // qui reflète juste la semaine affichée à l'écran au moment de l'édition, sans rapport ici).
+  // Depuis le 24/10/2026 : à partir de la semaine affichée (jamais avant la semaine réelle en cours),
+  // même règle que l'historique des trames -- voir trameEffectiveFromWeek().
+  const currentWeekKey = trameEffectiveFromWeek();
   const suffix = `${activityId}|${day}|${creneauId}`;
   let addedCount = 0;
   Object.keys(state.assignments).forEach((assignKey) => {
@@ -369,6 +410,7 @@ function propagateTrameAdditionToTouchedWeeks(activityId, day, creneauId, staffI
     if (isPersonAbsentOnIsoSlot(staffId, iso, creneauId)) return; // RG-023 : jamais vers un créneau où la personne est absente.
     if (!state.assignments[assignKey].includes(staffId)) {
       state.assignments[assignKey].push(staffId);
+      if (state.trameSourced[assignKey]) state.trameSourced[assignKey].push(staffId); // origine trame
       addedCount++;
     }
   });

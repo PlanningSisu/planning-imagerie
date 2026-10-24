@@ -330,7 +330,7 @@ function migrateState(rawData) {
 // pour ne jamais en oublier un dans l'un des trois chemins). Délibérément SANS `activities` (piloté
 // par le code, jamais par des données utilisateur -- voir CLAUDE.md §4) ni `schemaVersion` (ajouté à
 // part par buildPersistedState()).
-const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "statsColumnVisibility", "statsCounterMode", "customColors", "weekLocks", "weekNotes", "rules", "rulesGroupOrder", "globalRules", "gardeRule", "fixedRuleToggles", "weekDayFlags", "statsResets", "trameHistory"];
+const PERSISTED_KEYS = ["staff", "assignments", "vacationSpecialites", "vacationSpecialitesWeekly", "fermetures", "conges", "gardes", "trame", "tempsPartiel", "weekOffset", "statsColumnOrder", "statsColumnVisibility", "statsCounterMode", "customColors", "weekLocks", "weekNotes", "rules", "rulesGroupOrder", "globalRules", "gardeRule", "fixedRuleToggles", "weekDayFlags", "statsResets", "trameHistory", "trameSourced"];
 
 // Personnalisation (25/07/2026, ⚙ → "Personnalisation") : quelques couleurs éditables depuis
 // l'appli sans toucher au code -- une entrée par variable CSS `--custom-xxx` (voir :root dans
@@ -537,6 +537,7 @@ let state = {
   // une entrée jamais laissée à `[]` (voir toggleWeekDayFlag(), js/10-vue-conges.js -- la clé est
   // retirée entièrement dès que le dernier jour coché est décoché, même convention que weekNotes).
   statsResets: [], // remises à zéro de la vue Stats (24/10/2026) -- { id, date, allStaff, statuses, staffIds }, voir js/11-vue-stats.js
+  trameSourced: {}, // cellKey -> ids venus de la trame (vs ajoutés à la main), 24/10/2026, voir markTrameSourced() dans js/05-week.js
   trameHistory: {}, // historique daté des trames (24/10/2026), voir ensureTrameHistoryInitialized() dans js/05-week.js
   weekDayFlags: {}, // key: weekKey (Lundi ISO) -> tableau de DAYS (ex. ["Jeudi", "Vendredi"])
 };

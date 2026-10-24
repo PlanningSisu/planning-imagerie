@@ -276,6 +276,7 @@ function ensureMaterializedAssignmentsForWeek(key, weekKeyPart) {
   if (isWeekLocked(weekKeyPart)) return []; // verrouillage (29/07/2026), voir ensureMaterializedAssignments().
   if (!Object.prototype.hasOwnProperty.call(state.assignments, key)) {
     state.assignments[key] = effectiveAssignedIdsForWeek(key, weekKeyPart).slice();
+    markTrameSourced(key, state.assignments[key]); // origine trame (24/10/2026)
   }
   return state.assignments[key];
 }

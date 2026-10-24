@@ -16,9 +16,22 @@ function trameActivitiesForPersonSlot(personId, day, creneauId) {
   });
 }
 
+// Retrait d'une personne d'une case de la Trame Personnel (24/10/2026, demande de Samir) : ses
+// affectations VENUES DE LA TRAME sur cette case sont aussi retirées des semaines déjà matérialisées,
+// à partir de la semaine affichée (jamais avant la semaine en cours) -- les ajouts manuels restent.
+// Les semaines jamais touchées suivent déjà la trame (historique daté), rien à faire pour elles.
+// Volontairement appelé ici, depuis les actions de la Trame Personnel, et PAS de façon générique
+// sur tout changement de state.trame : le départ programmé (RG-040) retire aussi de la trame mais
+// protège exprès les semaines d'avant la date de départ.
+function propagateTrameRemovalFromKey(key, staffId) {
+  const [activityId, day, creneauId] = key.split("|");
+  return propagateTrameRemovalFromWeeks(activityId, day, creneauId, staffId);
+}
+
 function removeTrameAssignment(key, staffId) {
   const list = state.trame[key] || [];
   state.trame[key] = list.filter((id) => id !== staffId);
+  propagateTrameRemovalFromKey(key, staffId);
   saveState();
   render();
 }
@@ -32,7 +45,10 @@ function setPersonTPForSlot(staffId, day, creneauId, value) {
   if (value) {
     state.activities.forEach((activity) => {
       const key = trameKey(activity.id, day, creneauId);
-      if (state.trame[key]) state.trame[key] = state.trame[key].filter((id) => id !== staffId);
+      if ((state.trame[key] || []).includes(staffId)) {
+        state.trame[key] = state.trame[key].filter((id) => id !== staffId);
+        propagateTrameRemovalFromKey(key, staffId);
+      }
     });
     state.tempsPartiel[flagKey] = true;
   } else {
@@ -107,6 +123,7 @@ function handleTrameModaliteDrop(e, targetStaffId, targetDay, targetCreneauId) {
 
   if (sourceKey) {
     state.trame[sourceKey] = (state.trame[sourceKey] || []).filter((id) => id !== draggedStaffId);
+    propagateTrameRemovalFromKey(sourceKey, draggedStaffId);
   }
   if (!state.trame[targetKey]) state.trame[targetKey] = [];
   if (!state.trame[targetKey].includes(targetStaffId)) {

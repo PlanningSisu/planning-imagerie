@@ -113,6 +113,7 @@ function clearGenerationManagedRange(weekOffsets) {
           const key = `${wk}|${activityId}|${day}|${creneau.id}`;
           if (state.fermetures[key]) return; // case fermée : jamais vidée.
           delete state.assignments[key];
+          delete state.trameSourced[key];
         });
       });
     });
