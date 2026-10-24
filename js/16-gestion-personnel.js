@@ -114,8 +114,9 @@ function renderStaffModalList(container) {
       });
       row.appendChild(editBtn);
 
-      // RG-041 (24/10/2026) : remplacement -- réutilise le même formulaire que "Modifier" (même id
-      // conservé, donc trame/affectations déjà posées suivent automatiquement), voir renderStaffAddForm().
+      // RG-041 (24/10/2026, corrigé le même jour -- voir renderStaffAddForm()) : remplacement --
+      // CRÉE une nouvelle personne (jamais de rétro-action sur l'ancienne), qui reprend juste la
+      // trame de `person` à partir d'une date choisie.
       const replaceBtn = document.createElement("button");
       replaceBtn.type = "button";
       replaceBtn.className = "staff-modal-replace";
@@ -123,7 +124,7 @@ function renderStaffModalList(container) {
       replaceBtn.addEventListener("click", () => {
         document.getElementById("bulkImportContainer").innerHTML = "";
         const formContainer = document.getElementById("staffFormContainer");
-        renderStaffAddForm(formContainer, person, true);
+        renderStaffAddForm(formContainer, null, person);
         formContainer.scrollIntoView({ behavior: "smooth", block: "nearest" });
       });
       row.appendChild(replaceBtn);
@@ -332,6 +333,38 @@ function scheduleStaffDepartureFrom(personId, cutoffIso) {
   person.departureDate = cutoffIso;
 }
 
+// RG-041 (24/10/2026, corrigé le même jour -- "jamais de rétro action", retour de Samir : "un
+// remplacement, c'est comme une nouvelle personne (donc vierge de congés et de stat par exemple)
+// qui récupère juste une trame") : fait partir `oldId` en départ programmé (RG-040, réutilise
+// scheduleStaffDepartureFrom() déjà testée -- protège tout ce qui est avant `cutoffIso`, nettoie
+// trame/affectations futures/congés/gardes/règles globales à partir de cette date) PUIS transfère
+// la trame que `oldId` avait (capturée AVANT, puisque le départ la vide) vers `newId`. `newId` est
+// un id fraîchement créé par l'appelant (aucune donnée n'y réfère encore) -- rien à "vider" pour
+// lui, il est vierge par construction (congés/gardes/affectations/stats).
+function replacePersonFrom(oldId, newId, cutoffIso) {
+  const trameKeysToTransfer = Object.keys(state.trame).filter((k) => (state.trame[k] || []).includes(oldId));
+
+  scheduleStaffDepartureFrom(oldId, cutoffIso);
+
+  trameKeysToTransfer.forEach((trameKeyStr) => {
+    if (!state.trame[trameKeyStr]) state.trame[trameKeyStr] = [];
+    if (!state.trame[trameKeyStr].includes(newId)) state.trame[trameKeyStr].push(newId);
+  });
+
+  // La date d'effet de ce changement de trame doit être `cutoffIso`, pas forcément la semaine
+  // actuellement affichée dans le planning principal (`state.weekOffset`, dont dépend
+  // trameEffectiveFromWeek() -- voir js/05-week.js, "trames datées" du 24/10/2026) -- on simule donc
+  // temporairement state.weekOffset pour la durée du saveState() qui enregistre l'historique, comme
+  // le fait déjà le générateur automatique (§6.57 CLAUDE.md) pour la même raison. `trameEffectiveFromWeek()`
+  // borne elle-même le résultat à la semaine réelle en cours au minimum -- une coupure dans le passé
+  // n'aurait donc aucun effet rétroactif, cohérent avec "jamais de rétro action".
+  const savedWeekOffset = state.weekOffset;
+  const targetMonday = mondayOfDate(new Date(`${cutoffIso}T00:00:00`));
+  state.weekOffset = Math.round((targetMonday - getMonday(0)) / (7 * 24 * 60 * 60 * 1000));
+  saveState();
+  state.weekOffset = savedWeekOffset;
+}
+
 // Comme specialiteOptionsHtml(), avec une option vide en tête -- réservé au formulaire Hors Sisu
 // (23/07/2026, RG-016), où une spécialité n'est jamais obligatoire. Fonction à part plutôt que de
 // modifier specialiteOptionsHtml() elle-même, qui reste utilisée ici pour le cas normal (senior/
@@ -341,23 +374,29 @@ function specialiteOptionsHtmlWithNone() {
 }
 
 // existingPerson non fourni -> mode "ajouter". Fourni -> mode "modifier" (formulaire pré-rempli,
-// mise à jour en place au lieu d'un push). RG-041 (24/10/2026) : `replaceMode` -- même formulaire
-// que "modifier" (même id conservé, donc trame/affectations déjà posées suivent automatiquement),
-// mais encadré comme un remplacement (titre/texte/bouton dédiés) et vide en plus les congés de la
-// personne à la sauvegarde -- voir le bloc dédié dans le gestionnaire de #formSubmit plus bas.
-function renderStaffAddForm(container, existingPerson = null, replaceMode = false) {
-  const specs = existingPerson ? orderedSpecialites(existingPerson) : [];
-  const initialHorsSisu = existingPerson ? !!existingPerson.horsSisu : false;
-  const initialGrade = existingPerson ? existingPerson.grade || "" : "senior";
-  const initialType = existingPerson && existingPerson.grade === "interne" && existingPerson.docteurJunior
+// mise à jour en place au lieu d'un push). RG-041 (24/10/2026, corrigé le même jour -- "jamais de
+// rétro action", voir regles-gestion.md) : `replaceSource` -- CRÉE une nouvelle personne (jamais
+// `existingPerson`, donc toujours vierge de congés/gardes/affectations/stats -- rien ne référence
+// encore son id) préremplie avec les champs de `replaceSource` par confort, qui reprend juste la
+// trame de `replaceSource` à partir d'une date choisie -- voir replacePersonFrom() plus bas.
+function renderStaffAddForm(container, existingPerson = null, replaceSource = null) {
+  const prefillFrom = existingPerson || replaceSource;
+  const specs = prefillFrom ? orderedSpecialites(prefillFrom) : [];
+  const initialHorsSisu = prefillFrom ? !!prefillFrom.horsSisu : false;
+  const initialGrade = prefillFrom ? prefillFrom.grade || "" : "senior";
+  const initialType = prefillFrom && prefillFrom.grade === "interne" && prefillFrom.docteurJunior
     ? "dj" // RG-042
     : specs.length === 2 ? "specialise" : specs.length === 1 ? "mono" : "socle";
-  const oldLabel = existingPerson ? `${existingPerson.prenom} ${existingPerson.nom}` : "";
+  const oldLabel = replaceSource ? `${replaceSource.prenom} ${replaceSource.nom}` : existingPerson ? `${existingPerson.prenom} ${existingPerson.nom}` : "";
 
   container.innerHTML = `
     <div class="staff-form">
-      <h3>${replaceMode ? `Remplacer ${oldLabel}` : existingPerson ? "Modifier un membre" : "Ajouter un membre"}</h3>
-      ${replaceMode ? `<span class="form-hint">La trame et les affectations déjà posées pour ${oldLabel} restent liées à cette personne (même identité technique) -- changez juste son prénom/nom/spécialité ci-dessous. Les congés déjà enregistrés pour ${oldLabel} seront supprimés à l'enregistrement.</span>` : ""}
+      <h3>${replaceSource ? `Remplacer ${oldLabel}` : existingPerson ? "Modifier un membre" : "Ajouter un membre"}</h3>
+      ${replaceSource ? `<span class="form-hint">Crée une NOUVELLE personne (préremplie à partir de ${oldLabel}, modifiez ce qui change) qui reprend la trame de ${oldLabel} à partir de la date choisie -- jamais de rétro-action : ${oldLabel} garde tout son historique (congés, affectations, stats) tel quel, et disparaît des filtres à partir de cette même date, comme un départ programmé.</span>
+      <div class="form-row">
+        <label for="formReplaceDate">Remplacement à partir du</label>
+        <input type="date" id="formReplaceDate" value="${toISODateLocal(new Date())}">
+      </div>` : ""}
       <div class="form-row">
         <label for="formPrenom">Prénom</label>
         <input type="text" id="formPrenom" autocomplete="off">
@@ -411,7 +450,7 @@ function renderStaffAddForm(container, existingPerson = null, replaceMode = fals
         <span class="form-hint">Indépendant de la spécialité ci-dessus -- une compétence compte aussi comme la spécialité correspondante pour le moteur de règles (RG-001), en plus de la spécialité "officielle" -- affiché seulement au survol (jamais de couleur).</span>
       </div>
       <div class="form-actions">
-        <button type="button" id="formSubmit">${replaceMode ? "Remplacer" : existingPerson ? "Enregistrer" : "Ajouter"}</button>
+        <button type="button" id="formSubmit">${replaceSource ? "Créer le remplacement" : existingPerson ? "Enregistrer" : "Ajouter"}</button>
         <button type="button" id="formCancel">Annuler</button>
       </div>
       <div class="form-error" id="formError"></div>
@@ -427,18 +466,21 @@ function renderStaffAddForm(container, existingPerson = null, replaceMode = fals
   const spec2Select = document.getElementById("formSpec2");
 
   horsSisuCheckbox.checked = initialHorsSisu;
-  ccaCheckbox.checked = existingPerson ? !!existingPerson.cca : false;
-  tempsPleinCheckbox.checked = existingPerson ? !!existingPerson.tempsPlein : false;
+  ccaCheckbox.checked = prefillFrom ? !!prefillFrom.cca : false;
+  tempsPleinCheckbox.checked = prefillFrom ? !!prefillFrom.tempsPlein : false;
 
   const competenceCheckboxes = [...container.querySelectorAll(".formCompetence")];
-  if (existingPerson) {
-    const initialCompetences = new Set(existingPerson.competences || []);
+  if (prefillFrom) {
+    const initialCompetences = new Set(prefillFrom.competences || []);
     competenceCheckboxes.forEach((cb) => { cb.checked = initialCompetences.has(cb.value); });
   }
 
-  if (existingPerson) {
-    document.getElementById("formPrenom").value = existingPerson.prenom;
-    document.getElementById("formNom").value = existingPerson.nom;
+  if (prefillFrom) {
+    // RG-041 (24/10/2026) : pour un remplacement, préremplit quand même avec l'ANCIENNE personne --
+    // confort ("comme une modif"), Samir n'a qu'à changer ce qui diffère -- mais `existingPerson`
+    // reste `null`, donc la sauvegarde crée bien une personne à part (jamais de rétro-action).
+    document.getElementById("formPrenom").value = prefillFrom.prenom;
+    document.getElementById("formNom").value = prefillFrom.nom;
     gradeSelect.value = initialGrade;
     typeSelect.value = initialType;
     if (initialHorsSisu) {
@@ -571,17 +613,22 @@ function renderStaffAddForm(container, existingPerson = null, replaceMode = fals
     // RG-042 (24/10/2026) : Docteur Junior = statut d'interne (mono-spécialisé), jamais vrai sinon.
     const docteurJunior = !horsSisu && grade === "interne" && typeSelect.value === "dj";
 
-    // RG-041 (24/10/2026) : remplacement -- une seule confirmation récapitulative avant d'appliquer
-    // quoi que ce soit (si refusée, rien n'est modifié, ni les champs ni les congés), puis on vide
-    // les congés enregistrés pour cette personne (demande explicite de Samir : "les congés tu peux
-    // les vider dans ce cas") -- trame/affectations déjà posées ne sont jamais touchées, elles
-    // suivent automatiquement puisque l'id ne change pas.
-    if (replaceMode) {
-      const message = `Remplacer ${oldLabel} par ${prenom} ${nom} ?\n\n`
-        + `La trame et les affectations déjà posées pour ${oldLabel} restent liées à cette personne (même identité technique) -- elles afficheront désormais ${prenom} ${nom}.\n`
-        + `Les congés enregistrés pour ${oldLabel} seront supprimés.`;
+    // RG-041 (24/10/2026, corrigé le même jour -- "jamais de rétro action") : un remplacement ne
+    // modifie JAMAIS `replaceSource` en place -- une seule confirmation récapitulative, avant toute
+    // création, pour la date de remplacement choisie (obligatoire). Si refusée, rien n'est créé.
+    let replaceCutoffIso = null;
+    if (replaceSource) {
+      const dateInput = document.getElementById("formReplaceDate");
+      if (!dateInput.value) {
+        errorEl.textContent = "La date de remplacement est obligatoire.";
+        return;
+      }
+      replaceCutoffIso = dateInput.value;
+      const displayDate = new Date(`${replaceCutoffIso}T00:00:00`).toLocaleDateString("fr-FR");
+      const message = `Remplacer ${oldLabel} par ${prenom} ${nom} à partir du ${displayDate} ?\n\n`
+        + `${prenom} ${nom} est une NOUVELLE personne (aucun congé/garde/affectation/stat hérité) qui reprend la trame de ${oldLabel} à partir de cette date.\n`
+        + `${oldLabel} garde tout son historique avant cette date (jamais de rétro-action) et disparaît des filtres à partir de cette même date, comme un départ programmé.`;
       if (!confirm(message)) return;
-      state.conges = state.conges.filter((c) => c.staffId !== existingPerson.id);
     }
 
     if (existingPerson) {
@@ -595,7 +642,9 @@ function renderStaffAddForm(container, existingPerson = null, replaceMode = fals
       existingPerson.tempsPlein = tempsPlein;
       existingPerson.docteurJunior = docteurJunior;
     } else {
-      state.staff.push({ id: generateStaffId(), prenom, nom, horsSisu, grade, specialites, competences, cca, tempsPlein, docteurJunior });
+      const newPersonData = { id: generateStaffId(), prenom, nom, horsSisu, grade, specialites, competences, cca, tempsPlein, docteurJunior };
+      state.staff.push(newPersonData);
+      if (replaceSource) replacePersonFrom(replaceSource.id, newPersonData.id, replaceCutoffIso);
     }
     saveState();
     render();
