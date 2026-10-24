@@ -177,8 +177,9 @@ function renderStaffModalList(container) {
 function deleteStaffMember(personId) {
   const person = staffById(personId);
   if (!person) return;
-  if (!confirm(`Retirer ${person.prenom} ${person.nom} du personnel ? Ses éventuelles assignations existantes seront simplement masquées, pas supprimées.`)) return;
+  if (!confirm(`Retirer ${person.prenom} ${person.nom} du personnel ?\n\nÀ partir de la semaine en cours, la personne sera aussi retirée de la trame et de toutes ses affectations, congés et gardes à venir. Le passé n'est pas modifié.`)) return;
   state.staff = state.staff.filter((p) => p.id !== personId);
+  purgeStaffIdFromCurrentAndFuture(personId); // 24/10/2026 -- voir js/05-week.js
   saveState();
   render();
   renderStaffModalList(document.getElementById("staffModalList"));

@@ -174,9 +174,9 @@ function recordTrameHistoryFor(current, list, base, from, clone) {
   });
 }
 
-function recordTrameHistory() {
+function recordTrameHistory(fromOverride) {
   const h = ensureTrameHistoryInitialized();
-  const from = trameEffectiveFromWeek();
+  const from = fromOverride || trameEffectiveFromWeek();
   recordTrameHistoryFor(state.trame || {}, h.trame, h.baseTrame, from, (v) => (v ? [...v] : []));
   recordTrameHistoryFor(state.vacationSpecialites || {}, h.specs, h.baseSpecs, from, (v) => v || null);
 }
@@ -196,6 +196,71 @@ function vacationSpecForWeekFromHistory(baseKey, wk) {
   const h = state.trameHistory;
   if (!h || !h.since || wk < h.since) return undefined;
   return trameHistoryValueAt(h.specs, h.baseSpecs, baseKey, wk) || null;
+}
+
+// ---------- Personne supprimée : nettoyage du présent et du futur (24/10/2026) ----------
+// Demande de Samir ("on s'en fiche qu'elle existe encore dans le futur, on te laisse gérer l'aspect
+// technique"), après avoir trouvé l'id d'une personne supprimée encore présent dans 290 cases et 10
+// cases de trame : une personne qui n'existe plus dans state.staff est retirée de tout ce qui
+// concerne la semaine EN COURS et les suivantes -- affectations (sauf semaine verrouillée, RG-022),
+// trame (historisée à partir de la semaine en cours, jamais de la semaine affichée), Temps Partiel,
+// congés/gardes à venir, règles globales et remises à zéro qui la nommaient. Le PASSÉ n'est jamais
+// touché (règle "ne touche plus jamais aux semaines passées") -- il est de toute façon déjà ignoré
+// partout à l'affichage (staffById() renvoie null). Renvoie true si quelque chose a changé.
+function purgeStaffIdFromCurrentAndFuture(staffId) {
+  const currentWeek = weekKey(getMonday(0));
+  const todayIso = toISODateLocal(new Date());
+  let changed = false;
+  Object.keys(state.assignments).forEach((key) => {
+    const wk = key.split("|")[0];
+    if (wk < currentWeek || isWeekLocked(wk)) return;
+    const list = state.assignments[key];
+    if (!list.includes(staffId)) return;
+    state.assignments[key] = list.filter((id) => id !== staffId);
+    if (state.trameSourced[key]) state.trameSourced[key] = state.trameSourced[key].filter((id) => id !== staffId);
+    changed = true;
+  });
+  let trameChanged = false;
+  Object.keys(state.trame).forEach((key) => {
+    if (!(state.trame[key] || []).includes(staffId)) return;
+    state.trame[key] = state.trame[key].filter((id) => id !== staffId);
+    trameChanged = true;
+  });
+  if (trameChanged) { recordTrameHistory(currentWeek); changed = true; }
+  Object.keys(state.tempsPartiel).forEach((key) => {
+    if (key.startsWith(`${staffId}|`)) { delete state.tempsPartiel[key]; changed = true; }
+  });
+  const congesBefore = state.conges.length;
+  state.conges = state.conges.filter((c) => c.staffId !== staffId || c.dateFin < todayIso);
+  const gardesBefore = state.gardes.length;
+  state.gardes = state.gardes.filter((g) => g.staffId !== staffId || g.date < todayIso);
+  if (state.conges.length !== congesBefore || state.gardes.length !== gardesBefore) changed = true;
+  [...(state.globalRules || []), ...(state.statsResets || [])].forEach((r) => {
+    if ((r.staffIds || []).includes(staffId)) { r.staffIds = r.staffIds.filter((id) => id !== staffId); changed = true; }
+  });
+  return changed;
+}
+
+// Rattrapage des personnes DÉJÀ supprimées avant ce nettoyage (appelé en tête de render()) : tout id
+// référencé par la trame ou une affectation présente/future qui n'existe plus dans state.staff.
+// Garde-fou : jamais si le personnel n'est pas chargé (repli sur DEMO_STAFF) ou si les "inconnus"
+// sont trop nombreux (> 3 ids différents, ou plus d'un quart des ids référencés) -- signe d'une
+// liste du personnel incomplète/corrompue plutôt que de quelques suppressions, où purger effacerait
+// à tort une bonne partie du planning.
+function purgeOrphanStaffIds() {
+  if (state.staff === DEMO_STAFF || state.staff.length === 0) return false;
+  const known = new Set(state.staff.map((p) => p.id));
+  const currentWeek = weekKey(getMonday(0));
+  const referenced = new Set();
+  Object.values(state.trame).forEach((ids) => (ids || []).forEach((id) => referenced.add(id)));
+  Object.entries(state.assignments).forEach(([key, ids]) => {
+    if (key.split("|")[0] >= currentWeek) (ids || []).forEach((id) => referenced.add(id));
+  });
+  const orphans = [...referenced].filter((id) => !known.has(id));
+  if (orphans.length === 0 || orphans.length > 3 || orphans.length > referenced.size / 4) return false;
+  let changed = false;
+  orphans.forEach((id) => { if (purgeStaffIdFromCurrentAndFuture(id)) changed = true; });
+  return changed;
 }
 
 // ---------- Origine des affectations : trame vs manuel (24/10/2026) ----------

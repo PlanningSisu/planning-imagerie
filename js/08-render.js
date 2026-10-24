@@ -199,6 +199,7 @@ function autoDepostAbsentAssignmentsForDisplayedWeek() {
 
 function render() {
   ensureTrameHistoryInitialized(); // trame datée (24/10/2026) -- avant toute modification possible
+  if (purgeOrphanStaffIds()) saveState(); // personnes supprimées : nettoyage présent/futur (24/10/2026)
   autoDepostAbsentAssignmentsForDisplayedWeek();
   renderWeekLabel();
   renderWeekLockButton();
